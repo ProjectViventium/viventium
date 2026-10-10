@@ -5,6 +5,7 @@ import asyncio
 from dataclasses import replace
 from types import SimpleNamespace
 from unittest.mock import patch
+from livekit import rtc
 
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
@@ -14,6 +15,7 @@ from worker import (
     AuthoritativeCallModeState,
     VoiceRouteError,
     _abandon_voice_session_claim,
+    _close_voice_auth_planes_and_release_terminal_claim,
     _apply_requested_voice_route,
     _classify_runtime_voice_provider_failure,
     _claim_voice_session,
@@ -21,6 +23,7 @@ from worker import (
     _mark_voice_session_ready,
     _parse_dispatch_claim_id,
     _report_voice_gateway_failure,
+    _register_terminal_room_failure_report,
     _report_voice_gateway_initialization_failure_and_abandon,
     _report_voice_initialization_failure_and_abandon,
     _owner_wait_seconds,
@@ -72,6 +75,119 @@ def _claim(**overrides):
 
 
 class VoiceClaimBoundaryTests(unittest.TestCase):
+    def test_terminal_lease_release_waits_for_report_and_all_auth_planes(self):
+        async def run():
+            report_done = asyncio.Event()
+            close_done = asyncio.Event()
+            accepted = [False]
+            operations = []
+
+            async def report():
+                await report_done.wait()
+                accepted[0] = True
+                operations.append("failed")
+
+            async def close():
+                operations.append("closing")
+                await close_done.wait()
+                operations.append("closed")
+
+            async def abandon():
+                operations.append("released")
+                return True
+
+            report_task = asyncio.create_task(report())
+            cleanup = asyncio.create_task(_close_voice_auth_planes_and_release_terminal_claim(
+                close_planes=[close], pending_reports={report_task},
+                terminal_failure_accepted=lambda: accepted[0], abandon=abandon,
+            ))
+            await asyncio.sleep(0)
+            self.assertEqual(operations, [])
+            report_done.set()
+            for _ in range(4):
+                await asyncio.sleep(0)
+            self.assertNotIn("released", operations)
+            close_done.set()
+            self.assertTrue(await cleanup)
+            self.assertEqual(operations, ["failed", "closing", "closed", "released"])
+        asyncio.run(run())
+
+    def test_rejected_terminal_report_or_failed_auth_cleanup_cannot_release_lease(self):
+        async def run():
+            operations = []
+            async def close():
+                operations.append("closed")
+            async def abandon():
+                operations.append("released")
+                return True
+            self.assertFalse(await _close_voice_auth_planes_and_release_terminal_claim(
+                close_planes=[close], pending_reports=set(),
+                terminal_failure_accepted=lambda: False, abandon=abandon,
+            ))
+            self.assertEqual(operations, ["closed"])
+            async def broken_close():
+                raise RuntimeError("cleanup failed")
+            with self.assertRaises(RuntimeError):
+                await _close_voice_auth_planes_and_release_terminal_claim(
+                    close_planes=[broken_close], pending_reports=set(),
+                    terminal_failure_accepted=lambda: True, abandon=abandon,
+                )
+            self.assertNotIn("released", operations)
+        asyncio.run(run())
+
+    def test_terminal_room_failure_is_reported_once_after_native_recovery_ends(self):
+        async def run():
+            room = rtc.EventEmitter()
+            reports = []
+            pending = set()
+
+            async def report():
+                reports.append("failed")
+
+            stop = _register_terminal_room_failure_report(
+                room, is_ready=lambda: True, report_failure=report, pending_reports=pending
+            )
+            room.emit("reconnecting")
+            room.emit("reconnected")
+            await asyncio.sleep(0)
+            self.assertEqual(reports, [])
+            self.assertEqual(pending, set())
+            room.emit("disconnected", rtc.DisconnectReason.CONNECTION_TIMEOUT)
+            room.emit("disconnected", rtc.DisconnectReason.CONNECTION_TIMEOUT)
+            await asyncio.gather(*tuple(pending))
+            await asyncio.sleep(0)
+            self.assertEqual(reports, ["failed"])
+            self.assertEqual(pending, set())
+            await stop()
+
+        asyncio.run(run())
+
+    def test_local_end_and_unready_or_removed_room_handler_never_report_failure(self):
+        async def run():
+            room = rtc.EventEmitter()
+            reports = []
+            ready = [False]
+            pending = set()
+
+            async def report():
+                reports.append("failed")
+
+            stop = _register_terminal_room_failure_report(
+                room, is_ready=lambda: ready[0], report_failure=report, pending_reports=pending
+            )
+            room.emit("disconnected", rtc.DisconnectReason.JOIN_FAILURE)
+            ready[0] = True
+            room.emit("disconnected", rtc.DisconnectReason.CLIENT_INITIATED)
+            await asyncio.sleep(0)
+            self.assertEqual(reports, [])
+            self.assertEqual(pending, set())
+            await stop()
+            room.emit("disconnected", rtc.DisconnectReason.SERVER_SHUTDOWN)
+            await asyncio.sleep(0)
+            self.assertEqual(reports, [])
+
+        asyncio.run(run())
+
     def test_dispatch_claim_id_is_structural_and_bounded(self):
         self.assertEqual(
             _parse_dispatch_claim_id('{"callSessionId":"call-1","dispatchClaimId":"claim-1"}'),

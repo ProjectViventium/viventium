@@ -10,12 +10,14 @@ import unittest
 import asyncio
 import json
 from types import SimpleNamespace
+from dataclasses import replace
 from unittest.mock import MagicMock, patch
 
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
 from worker import (
+    _build_current_call_runtime_context,
     _apply_requested_voice_route,
     _attach_room_diagnostics,
     _build_assemblyai_stt_kwargs,
@@ -54,6 +56,7 @@ from worker import (
     load_turn_detection,
     optional_module_available,
 )
+from livekit import rtc
 from livekit.agents import StopResponse
 from livekit.agents.stt import SpeechData, SpeechEvent, SpeechEventType
 from livekit.agents.llm.chat_context import ChatContext, ChatMessage
@@ -310,12 +313,10 @@ class TestWorkerTurnHandling(unittest.TestCase):
             def suspend_until_authoritative(self):
                 self.suspensions += 1
 
-        progress = Plane()
         followup = Plane()
         attached_generation = {"state": "streaming", "finals": 0}
 
         gated = _suspend_call_response_playout_until_authoritative(
-            progress_controller=progress,
             followup_scheduler=followup,
             audio_gate=gate,
             authoritative_mode_state=mode_state,
@@ -325,7 +326,6 @@ class TestWorkerTurnHandling(unittest.TestCase):
 
         self.assertTrue(gated)
         self.assertFalse(mode_state.allows_agent_dispatch)
-        self.assertEqual(progress.suspensions, 1)
         self.assertEqual(followup.suspensions, 1)
         self.assertEqual(session.output.audio.pauses, 1)
         self.assertEqual(session.interrupts, [])
@@ -405,6 +405,7 @@ class TestWorkerTurnHandling(unittest.TestCase):
         class Session:
             def __init__(self):
                 self.handlers = {}
+                self.current_speech = SimpleNamespace(done=lambda: False, interrupted=False)
 
             def on(self, name):
                 def register(handler):
@@ -421,7 +422,7 @@ class TestWorkerTurnHandling(unittest.TestCase):
             def register_speech_handle(self, handle):
                 self.handles.append(handle)
 
-            def note_provisional_interruption(self):
+            def note_provisional_interruption(self, *, speech_handle):
                 self.provisional += 1
 
         session = Session()
@@ -1325,35 +1326,23 @@ class TestWorkerTurnHandling(unittest.TestCase):
 
     def test_cancel_acceptance_synchronously_stops_all_task_speech_but_not_backend(self) -> None:
         calls = []
-        progress = SimpleNamespace(suppress_task=lambda task_id: calls.append(("progress", task_id)))
         followup = SimpleNamespace(cancel_pending=lambda: calls.append(("followup", None)))
         session = SimpleNamespace(interrupt=lambda *, force=False: calls.append(("main", force)))
         backend_task_state = {"state": "cancelling"}
 
         _apply_task_cancel_suppression(
             "task_1",
-            progress_controller=progress,
             followup_scheduler=followup,
             session=session,
         )
 
         self.assertEqual(
             calls,
-            [("progress", "task_1"), ("followup", None), ("main", True)],
+            [("followup", None), ("main", True)],
         )
         self.assertEqual(backend_task_state, {"state": "cancelling"})
 
-    def test_mode_transition_halts_main_progress_and_followup_without_cancelling_task(self) -> None:
-        class Progress:
-            def __init__(self):
-                self.modes = []
-                self.suspensions = 0
-
-            def set_mode(self, mode):
-                self.modes.append(mode)
-
-            def suspend_until_authoritative(self):
-                self.suspensions += 1
+    def test_mode_transition_halts_main_and_followup_without_cancelling_task(self) -> None:
 
         class Plane:
             def __init__(self):
@@ -1373,7 +1362,6 @@ class TestWorkerTurnHandling(unittest.TestCase):
             def interrupt(self, *, force=False):
                 self.interrupts.append(force)
 
-        progress = Progress()
         ambient = Plane()
         followup = Plane()
         session = Session()
@@ -1381,21 +1369,17 @@ class TestWorkerTurnHandling(unittest.TestCase):
 
         _apply_authoritative_call_mode_to_speech_planes(
             "listen_only",
-            progress_controller=progress,
             ambient_ingress=ambient,
             followup_scheduler=followup,
             session=session,
         )
         _suspend_all_call_speech_until_authoritative(
-            progress_controller=progress,
             followup_scheduler=followup,
             session=session,
         )
 
-        self.assertEqual(progress.modes, ["listen_only"])
         self.assertEqual(ambient.modes, ["listen_only"])
         self.assertEqual(followup.modes, ["listen_only"])
-        self.assertEqual(progress.suspensions, 1)
         self.assertEqual(followup.suspensions, 1)
         self.assertEqual(session.interrupts, [True, True])
         self.assertEqual(backend_task_state, {"state": "running"})
@@ -1422,6 +1406,7 @@ class TestWorkerTurnHandling(unittest.TestCase):
         self.assertEqual(completed.forces, [])
         self.assertEqual(handles, set())
 
+
     def test_listen_only_transition_interrupts_main_speech_without_reconnect(self) -> None:
         class FakeSession:
             def __init__(self) -> None:
@@ -1442,12 +1427,20 @@ class TestWorkerTurnHandling(unittest.TestCase):
         guest = SimpleNamespace(
             identity="aaa-guest",
             name="Guest",
-            track_publications={"guest": SimpleNamespace(sid="TR_guest", source="SOURCE_MICROPHONE")},
+            track_publications={"guest": SimpleNamespace(
+                sid="TR_guest", source=rtc.TrackSource.SOURCE_MICROPHONE,
+                kind=rtc.TrackKind.KIND_AUDIO, subscribed=True,
+                track=SimpleNamespace(sid="TR_guest"),
+            )},
         )
         owner = SimpleNamespace(
             identity="zzz-owner",
             name="Owner",
-            track_publications={"owner": SimpleNamespace(sid="TR_owner", source="SOURCE_MICROPHONE")},
+            track_publications={"owner": SimpleNamespace(
+                sid="TR_owner", source=rtc.TrackSource.SOURCE_MICROPHONE,
+                kind=rtc.TrackKind.KIND_AUDIO, subscribed=True,
+                track=SimpleNamespace(sid="TR_owner"),
+            )},
         )
         room = SimpleNamespace(remote_participants={"guest": guest, "owner": owner})
 
@@ -1469,7 +1462,19 @@ class TestWorkerTurnHandling(unittest.TestCase):
         )
 
         self.assertEqual(_linked_participant_speaker_context(room, ""), {})
-        self.assertEqual(_linked_participant_speaker_context(room, "owner-not-connected"), {})
+        context = _linked_participant_speaker_context(room, "owner-not-connected")
+        self.assertIs(context.get("owner_signed", False), False)
+        self.assertEqual(context.get("track_sid", ""), "")
+        self.assertNotEqual(context.get("participant_identity"), "guest")
+        tracker = SpeakerSegmentTracker(call_session_id="call_1", **context)
+        tracker.ingest(
+            transcript="Synthetic request", is_final=True, created_at=100.0,
+            provider_speaker_id=None, allow_owner_participant_track=True,
+        )
+        segment = tracker._segments_by_id["segment_000001"]
+        self.assertEqual(segment["speaker"]["actorTrust"], "unknown")
+        self.assertEqual(segment["speaker"]["source"], "unknown")
+        self.assertTrue(segment["uncertain"])
 
     def test_voice_agent_consumes_speaker_side_channel_once_before_llm(self) -> None:
         tracker = SpeakerSegmentTracker(
@@ -1944,6 +1949,30 @@ class TestWorkerTurnHandling(unittest.TestCase):
         self.assertEqual(updated.voice_min_consecutive_speech_delay_s, 0.2)
         self.assertEqual(_silero_vad_kwargs_for_env(updated)["min_silence_duration"], 0.5)
 
+    def test_current_call_facts_use_resolved_detection_after_runtime_fallback(self) -> None:
+        cases = [
+            ("turn_detector", "assemblyai", True, "stt"),
+            ("turn_detector", "pywhispercpp", True, "vad"),
+            ("vad", "pywhispercpp", False, "stt"),
+        ]
+        for requested, provider, has_vad, expected in cases:
+            with (
+                self.subTest(requested=requested, provider=provider, has_vad=has_vad),
+                patch.dict(os.environ, {}, clear=True),
+                patch("worker._semantic_turn_detector_status", return_value=(False, "unavailable")),
+            ):
+                env = replace(load_env(), voice_turn_detection=requested, stt_provider=provider)
+                resolved, _reason = load_turn_detection(env, has_vad=has_vad)
+                facts = _build_current_call_runtime_context(env, "call-current", turn_detection=resolved)
+                self.assertEqual(facts["turnHandling"]["turnDetection"], expected)
+                self.assertEqual(env.voice_turn_detection, requested)
+
+    def test_current_call_facts_keep_available_semantic_detection_label(self) -> None:
+        with patch.dict(os.environ, {}, clear=True):
+            env = load_env()
+        facts = _build_current_call_runtime_context(env, "call-current", turn_detection=object())
+        self.assertEqual(facts["turnHandling"]["turnDetection"], "turn_detector")
+
     def test_requested_local_override_recomputes_turn_profile_from_assemblyai_default(self) -> None:
         with (
             patch.dict(
@@ -1971,6 +2000,14 @@ class TestWorkerTurnHandling(unittest.TestCase):
 
         self.assertEqual(updated.stt_provider, "pywhispercpp")
         self.assertEqual(updated.stt_model, "tiny.en")
+        resolved, _reason = load_turn_detection(updated, has_vad=True)
+        facts = _build_current_call_runtime_context(updated, "call-current", turn_detection=resolved)
+        self.assertEqual(facts["readyRoute"]["stt"], {"provider": "pywhispercpp", "variant": "tiny.en"})
+        self.assertEqual(facts["readyRoute"]["tts"], {"provider": "openai", "variant": "gpt-4o-mini-tts"})
+        self.assertEqual(facts["turnHandling"]["turnDetection"], "vad")
+        self.assertEqual(facts["turnHandling"]["minEndpointingDelayS"], updated.voice_min_endpointing_delay_s)
+        self.assertEqual(facts["turnHandling"]["maxEndpointingDelayS"], updated.voice_max_endpointing_delay_s)
+        self.assertNotIn("api_key", json.dumps(facts))
         self.assertEqual(updated.voice_turn_detection, "vad")
         self.assertEqual(updated.voice_min_endpointing_delay_s, 0.5)
         self.assertEqual(updated.voice_max_endpointing_delay_s, 3.0)
@@ -2491,6 +2528,7 @@ class TestWorkerTurnHandling(unittest.TestCase):
         class Session:
             def __init__(self):
                 self.handlers = {}
+                self.current_speech = SimpleNamespace(done=lambda: False, interrupted=False)
 
             def on(self, name):
                 def register(handler):
@@ -2507,7 +2545,7 @@ class TestWorkerTurnHandling(unittest.TestCase):
             def register_speech_handle(self, handle):
                 self.handles.append(handle)
 
-            def note_provisional_interruption(self):
+            def note_provisional_interruption(self, *, speech_handle):
                 self.provisional += 1
 
         session = Session()
@@ -2541,3 +2579,205 @@ class TestWorkerTurnHandling(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestActualTTSMetricsTrace(unittest.TestCase):
+    def _attach_actual_callback(self, llm):
+        import ast
+        from pathlib import Path
+        import worker
+
+        tree = ast.parse(Path(worker.__file__).read_text())
+        names = {"_record_completed_tts_trace", "_attach_tts_latency_logger"}
+        nodes = [node for node in ast.walk(tree)
+                 if isinstance(node, ast.FunctionDef) and node.name in names]
+        namespace = {
+            "llm_impl": llm,
+            "attached_tts_metric_sources": set(),
+            "logger": MagicMock(),
+            "call_session_id": "synthetic-call",
+            "_metric_value": lambda metrics, key: getattr(metrics, key, None),
+            "_metric_ms": lambda metrics, key: getattr(metrics, key, 0) * 1000,
+        }
+        module = ast.Module(body=ast.parse("from __future__ import annotations").body + nodes,
+                            type_ignores=[])
+        exec(compile(ast.fix_missing_locations(module), "actual-worker-tts-metrics", "exec"), namespace)
+        callbacks = {}
+        tts = SimpleNamespace(on=lambda event, callback: callbacks.setdefault(event, callback))
+        namespace["_attach_tts_latency_logger"]("synthetic-provider", tts)
+        return callbacks["metrics_collected"], namespace
+
+    def test_actual_metrics_event_retains_the_completion_trace_join(self):
+        llm = MagicMock()
+        llm.record_next_trace_hop.return_value = "synthetic-trace"
+        callback, namespace = self._attach_actual_callback(llm)
+        callback(SimpleNamespace(type="tts_metrics", timestamp=10.0, duration=2.0,
+                                 ttfb=0.25, cancelled=False))
+        llm.record_next_trace_hop.assert_called_once_with("tts_first_byte", 8250.0)
+        llm.record_completed_trace_stage.assert_called_once_with("synthetic-trace", "tts.completed")
+        self.assertEqual(namespace["logger"].info.call_args.args[2], "synthetic-trace")
+
+    def test_cancelled_metrics_do_not_confirm_completion(self):
+        llm = MagicMock()
+        llm.record_next_trace_hop.return_value = "synthetic-trace"
+        callback, _ = self._attach_actual_callback(llm)
+        callback(SimpleNamespace(type="tts_metrics", timestamp=10.0, duration=2.0,
+                                 ttfb=0.25, cancelled=True))
+        llm.record_completed_trace_stage.assert_not_called()
+
+    def test_missing_metrics_identity_stays_unmatched(self):
+        llm = MagicMock()
+        callback, namespace = self._attach_actual_callback(llm)
+        callback(SimpleNamespace(type="tts_metrics", duration=2.0, ttfb=0.25, cancelled=False))
+        llm.record_next_trace_hop.assert_not_called()
+        llm.record_completed_trace_stage.assert_not_called()
+        self.assertEqual(namespace["logger"].info.call_args.args[2], "unmatched")
+
+class TestNativePublicPartFlush(unittest.TestCase):
+    def _marker(self, part='run-a:1'):
+        return {'version': 1, 'complete': True, 'request_id': 'request-a', 'run_id': 'run-a',
+                'part_id': part, 'message_id': 'message-a', 'stream_id': 'stream-a'}
+
+    async def _node(self, chunks):
+        from livekit.agents.llm import ChatChunk
+        from livekit.agents.types import FlushSentinel
+        from worker import Agent
+        async def source(*args):
+            for chunk in chunks: yield chunk
+        agent = ViventiumVoiceAgent(instructions='Synthetic')
+        with patch.object(Agent.default, 'llm_node', source):
+            return [chunk async for chunk in agent.llm_node(None, [], None)]
+
+    def test_native_flush_after_exact_content_then_later_words_without_control_metadata(self):
+        from livekit.agents.llm import ChatChunk, ChoiceDelta
+        from livekit.agents.types import FlushSentinel
+        def c(text=None, marker=None):
+            return ChatChunk(id='stream-a', delta=ChoiceDelta(content=text, extra={'viventium_public_part_complete': marker} if marker else {}))
+        text = '<emphasis>First complete part.</emphasis>'
+        chunks = asyncio.run(self._node([c(text), c(marker=self._marker()), c(marker=self._marker()),
+                                         c(' Later long part.'), c(marker=self._marker('run-a:2'))]))
+        self.assertEqual([str(type(c).__name__) for c in chunks], ['ChatChunk', 'FlushSentinel', 'ChatChunk', 'FlushSentinel'])
+        self.assertEqual(''.join(c.delta.content or '' for c in chunks if isinstance(c, ChatChunk)), text+' Later long part.')
+        self.assertTrue(all(not c.delta.extra for c in chunks if isinstance(c, ChatChunk)))
+
+    def test_no_content_or_untyped_extra_never_invents_flush(self):
+        from livekit.agents.llm import ChatChunk, ChoiceDelta
+        from livekit.agents.types import FlushSentinel
+        inputs = [ChatChunk(id='a', delta=ChoiceDelta(extra={'viventium_public_part_complete': self._marker()})),
+                  ChatChunk(id='a', delta=ChoiceDelta(content='Public.', extra={'other': True})),
+                  ChatChunk(id='a', delta=ChoiceDelta(extra={'viventium_public_part_complete': {'complete': True}}))]
+        chunks = asyncio.run(self._node(inputs))
+        self.assertFalse(any(isinstance(c, FlushSentinel) for c in chunks))
+        self.assertEqual(''.join(c.delta.content or '' for c in chunks), 'Public.')
+        self.assertEqual(chunks[0].delta.extra, {'other': True})
+
+    def test_actual_sdk_serializes_fresh_tts_nodes_and_drains_word_tag_buffers(self):
+        from livekit.agents.types import FlushSentinel
+        from livekit.agents.voice.generation import perform_tts_inference
+        from worker import Agent
+        first = '<emphasis>First complete part.</emphasis>'
+        later = '<soft>' + ('Many words with intact punctuation. ' * 60) + 'Last word.</soft>'
+        async def run():
+            gate = asyncio.Event(); events = []; segments = []
+            async def input_text():
+                yield first[:17]; yield first[17:]; yield FlushSentinel(); yield later; yield FlushSentinel()
+            async def native_node(agent, text, settings):
+                index = len(segments); segments.append(''); events.append(('start', index))
+                async for chunk in text: segments[index] += chunk
+                if index == 0: await gate.wait()
+                if segments[index]:
+                    yield rtc.AudioFrame(data=b'\0\0'*240, sample_rate=24000, num_channels=1, samples_per_channel=240)
+                events.append(('done', index))
+            agent = ViventiumVoiceAgent(instructions='Synthetic', llm=SimpleNamespace(_voice_native_streaming=True, _voice_accepts_inline_controls=True))
+            # The selected native route is already resolved; no provider/model invocation.
+            agent._get_activity_or_raise = lambda: SimpleNamespace(llm=SimpleNamespace(_voice_native_streaming=True, _voice_accepts_inline_controls=True))
+            with patch.object(Agent.default, 'tts_node', native_node):
+                task, data = perform_tts_inference(node=agent.tts_node, input=input_text(), model_settings=None, text_transforms=None)
+                for _ in range(10):
+                    await asyncio.sleep(0)
+                    if segments: break
+                self.assertEqual(len(segments), 1)
+                gate.set()
+                await task
+                frames = [frame async for frame in data.audio_ch]
+            return segments, events, frames
+        segments, events, frames = asyncio.run(run())
+        self.assertEqual(segments[:2], [first, later])
+        self.assertTrue(all(not s for s in segments[2:]))
+        self.assertLess(events.index(('done', 0)), events.index(('start', 1)))
+        self.assertEqual(len(frames), 2)
+
+    def test_cancellation_closes_native_input_and_does_not_start_later_segment(self):
+        from livekit.agents.types import FlushSentinel
+        from livekit.agents.voice.generation import perform_tts_inference
+        async def run():
+            entered = asyncio.Event(); closed = []; starts = []
+            async def source():
+                try:
+                    yield 'First complete.'; yield FlushSentinel(); yield 'Forbidden later.'
+                finally: closed.append('source')
+            async def node(text, settings):
+                starts.append(len(starts))
+                try:
+                    async for _ in text: pass
+                    entered.set(); await asyncio.Event().wait()
+                    yield None
+                finally: closed.append('node')
+            task, data = perform_tts_inference(node=node, input=source(), model_settings=None, text_transforms=None)
+            await entered.wait(); task.cancel()
+            with self.assertRaises(asyncio.CancelledError): await task
+            return starts, closed
+        starts, closed = asyncio.run(run())
+        self.assertEqual(starts, [0]); self.assertIn('node', closed); self.assertIn('source', closed)
+
+
+class TestNativeStartedPresentationProjection(unittest.TestCase):
+    def test_native_started_callback_is_synchronous_exact_handle_and_ignores_other_states(self):
+        import inspect
+        from unittest.mock import Mock, patch
+        from types import SimpleNamespace
+        from worker import _register_presentation_lifecycle_handlers
+        class Session:
+            def __init__(self):
+                self.handlers = {}
+                self.current_speech = object()
+            def on(self, name):
+                def register(handler):
+                    self.handlers[name] = handler
+                    return handler
+                return register
+        session = Session()
+        llm = SimpleNamespace(record_speech_started=Mock(), register_speech_handle=Mock(),
+                              note_provisional_interruption=Mock())
+        _register_presentation_lifecycle_handlers(session, llm)
+        callback = session.handlers["agent_state_changed"]
+        self.assertFalse(inspect.iscoroutinefunction(callback))
+        with patch("librechat_llm.aiohttp.ClientSession") as no_network:
+            callback(SimpleNamespace(new_state="speaking", created_at=2.5))
+            callback(SimpleNamespace(new_state="listening", created_at=3.0))
+        no_network.assert_not_called()
+        llm.record_speech_started.assert_called_once_with(session.current_speech, 2500.0)
+
+
+class TestFalseInterruptionPresentationConsumer(unittest.TestCase):
+    def test_actual_false_interruption_event_keeps_handle_identity_and_resume_outcome(self):
+        from unittest.mock import Mock, call
+        class Session:
+            def __init__(self):
+                self.handlers = {}
+                self.current_speech = object()
+            def on(self, name):
+                def register(handler):
+                    self.handlers[name] = handler
+                    return handler
+                return register
+        session = Session()
+        llm = SimpleNamespace(resolve_false_interruption=Mock())
+        _register_presentation_lifecycle_handlers(session, llm)
+        callback = session.handlers["agent_false_interruption"]
+        callback(SimpleNamespace(resumed=True))
+        callback(SimpleNamespace(resumed=False))
+        self.assertEqual(llm.resolve_false_interruption.call_args_list, [
+            call(session.current_speech, resumed=True),
+            call(session.current_speech, resumed=False),
+        ])

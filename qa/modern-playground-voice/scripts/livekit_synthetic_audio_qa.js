@@ -23,6 +23,8 @@ const librechatRequire = createRequire(
 const { chromium } = librechatRequire("playwright");
 const { MongoClient, ObjectId } = librechatRequire("mongodb");
 const bcrypt = librechatRequire("bcryptjs");
+const yaml = librechatRequire("js-yaml");
+const { isAgentProviderCapabilityEnabled } = librechatRequire("librechat-data-provider");
 
 const CALL_CAPABILITY_HEADER = "X-VIVENTIUM-CALL-CAPABILITY";
 const CALL_CAPABILITY_STORAGE_PREFIX = "viventium.call.capability.v1:";
@@ -30,6 +32,24 @@ const CALL_CAPABILITY_SCOPE = "call_browser_v1";
 const CALL_SESSION_TTL_MS = 15 * 60 * 1000;
 const SAFE_CALL_ID = /^[A-Za-z0-9._:-]{1,160}$/;
 const SAFE_BROWSER_CAPABILITY = /^[A-Za-z0-9_-]{43}$/;
+
+function readCompiledProviderCapabilities(
+  configPath = process.env.CONFIG_PATH || path.join(LIBRECHAT_DIR, "librechat.yaml"),
+) {
+  const config = yaml.load(fs.readFileSync(configPath, "utf8"));
+  return config?.endpoints?.agents?.providerCapabilities || {};
+}
+
+function voicePipelineSupported(interactive, assistantRoute, providerCapabilities) {
+  return (
+    interactive === true &&
+    Boolean(assistantRoute?.provider) &&
+    isAgentProviderCapabilityEnabled(
+      providerCapabilities?.[assistantRoute.provider],
+      "voice_pipeline_llm",
+    )
+  );
+}
 
 function createBrowserCallCapability(now = new Date()) {
   const capability = crypto.randomBytes(32).toString("base64url");
@@ -2062,7 +2082,7 @@ async function run() {
     deliveredAudioEnergyDelta: 0,
     deliveredAudioDurationSecondsDelta: 0,
     assistantRoute: null,
-    voiceLlmProviderIsIndependent: false,
+    voiceLlmProviderSupportsPipeline: false,
     activeJobPresent: false,
     speakerSegmentCount: 0,
     speakerLabelCount: 0,
@@ -2136,7 +2156,6 @@ async function run() {
     const chromiumArgs = [
       "--use-fake-ui-for-media-stream",
       "--use-fake-device-for-media-stream",
-      "--disable-features=LocalNetworkAccessChecks",
       `--use-file-for-fake-audio-capture=${args.audio}`,
     ];
     if (args.turnProxyHostRule) {
@@ -2469,10 +2488,11 @@ async function run() {
           model: effectiveAssistantRoute.model || "",
         }
       : null;
-    result.voiceLlmProviderIsIndependent =
-      args.interactive &&
-      Boolean(result.assistantRoute?.provider) &&
-      result.assistantRoute.provider !== "glasshive-harness";
+    result.voiceLlmProviderSupportsPipeline = voicePipelineSupported(
+      args.interactive,
+      result.assistantRoute,
+      args.interactive ? readCompiledProviderCapabilities() : {},
+    );
     result.activeJobPresent = Boolean(
       sessionAfter?.activeJobId || sessionAfter?.activeWorkerId,
     );
@@ -2585,12 +2605,12 @@ async function run() {
         ? result.listenOnlyIsolationObserved
         : args.expectSilence
           ? result.intentionalSilenceObserved &&
-            result.voiceLlmProviderIsIndependent
+            result.voiceLlmProviderSupportsPipeline
           : result.interactiveTurnCompleted &&
             result.assistantResponsePresent &&
             result.deliveredAudioPresent &&
             result.playbackCompleted &&
-            result.voiceLlmProviderIsIndependent) &&
+            result.voiceLlmProviderSupportsPipeline) &&
       (!result.externalTurnConfigured || result.externalRelaySelected) &&
       (!result.publicMediaProxyConfigured || result.externalTcpMediaSelected) &&
       (!result.turnProxyConfigured || result.turnTlsRelaySelected) &&
@@ -2671,6 +2691,8 @@ module.exports = {
   parseArgs,
   persistCapturedOutputAudio,
   preflightPlaygroundProxies,
+  readCompiledProviderCapabilities,
   seedCallSession,
   verifySyntheticCoreBrowser,
+  voicePipelineSupported,
 };

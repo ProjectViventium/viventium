@@ -59,6 +59,10 @@ internals.
 
 - **ONB-013:** Stop records one intentional stopped state that helpers and supervisors honor until
   explicit Start or Restart.
+- Broad checkout or process-pattern cleanup requires verified ownership of the selected runtime
+  process group. A missing or removed group receipt cannot authorize a same-checkout sweep.
+  Legacy recovery remains limited to configured service ports and owned PID files; another
+  runtime using the same source stays outside that recovery scope.
 - Native GUI installation releases the lifecycle lock before opening the installed helper, which
   starts fresh worker services. Upgrade retires only the owned prior helper; failed startup restores
   the prior app, configuration, and runtime state. Setup acknowledgement and user preferences survive.
@@ -80,6 +84,16 @@ internals.
 - **ONB-011:** Use the smallest reviewable manifest and checks. Add another registry or launcher only
   after measured drift or isolation needs prove its value.
 
+### Local native database
+
+Both local native MongoDB starters disable the optional FTDC collector, whose failures can stop
+MongoDB. Ordinary server logs and Viventium stage telemetry remain available. This loses MongoDB
+support time-series diagnostics. MongoDB advises against disabling FTDC for production deployments;
+see the [MongoDB FTDC documentation](https://www.mongodb.com/docs/v8.0/administration/full-time-diagnostic-data-capture/).
+Recovery preserves crash evidence and verifies the existing storage identity, writable replica,
+transaction support, and live consumer reads before reporting readiness.
+Native fallback startup appends to the existing server log without clearing prior failure evidence.
+
 ### Worker component cutover
 
 - xPerfect is the managed worker source at `viventium_v0_4/xPerfect/`. The original
@@ -93,6 +107,11 @@ internals.
   schema compatibility or recover a consistent matching pre-upgrade state through the supported
   recovery procedure. The stopped source-upgrade checkpoint includes the Native worker provider
   account home as well as runtime state, so failed activation restores both exact prior roots.
+- The source checkout launcher preserves an explicit `WPR_GROK_BIN` and an existing PATH selection.
+  If neither is available, it can use an executable in Grok's standard per-user install location.
+  It does not reorder PATH, source shell profiles, change account state, or substitute a provider.
+  A missing or non-executable install remains unavailable. Packaged Native retains its declared
+  bundled worker inventory; this host lookup does not add a packaged Grok body.
 - Native payload assembly and release verification select the same xPerfect component pin.
   The packaged `runtime/glasshive` path remains compatible; its license inventory identifies
   xPerfect as Apache-2.0 and preserves both `LICENSE` and `NOTICE`.

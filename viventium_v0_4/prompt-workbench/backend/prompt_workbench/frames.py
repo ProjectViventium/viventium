@@ -300,16 +300,22 @@ def _valid_trace(value: object) -> bool:
 
 
 def _project_trace(value: dict[str, Any]) -> dict[str, Any]:
-    return {
+    projected = {
+        "version": value["version"],
         "time": value["time"],
         "surface": value["surface"],
         "family": value["family"],
         "provider": value["provider"],
         "model": value["model"],
+        "request_identity_hash": value["request_identity_hash"],
+        "source_hashes": dict(value["source_hashes"]),
         "layer_hashes": dict(value["layer_hashes"]),
         "layer_tokens": dict(value["layer_tokens"]),
         "decision": dict(value["decision"]),
     }
+    if value["version"] == 2:
+        projected.update({key: value[key] for key in _TRACE_V2_ONLY_KEYS})
+    return projected
 
 
 def _trusted_file_stat(value: os.stat_result) -> bool:

@@ -1,9 +1,19 @@
 # Main Continuity Kernel
 
+Active owners: [`capabilities/main-scheduling-continuity.md`](capabilities/main-scheduling-continuity.md)
+and [`capabilities/interaction-delivery.md`](capabilities/interaction-delivery.md). This preserved page
+contains implementation detail and history; its dated status is not current acceptance.
+
+
 **Document Version:** 1.1-draft
 **Date:** 2026-08-21
 **Owner:** Viventium Core
 **Status:** Required; implementation and real-user acceptance are in progress
+
+Only stable agent instructions, policy, tool schemas, declared capabilities, workspace/access
+binding, and native provider policy may replace a native session. Time, Feelings, Active Work,
+reply ancestry, schedule metadata, current memory/recall health, and other invocation state travel
+as per-turn context.
 
 ## Purpose
 
@@ -26,6 +36,34 @@ Content-only edits therefore invalidate derived accepted history; receipts, acti
 token bookkeeping do not. Existing accepted-message IDs, positions, revision markers and retained
 legacy artifacts are not rewritten. Current reads use the authored evidence; derived summaries must
 still satisfy their existing source-digest checks.
+
+The completed-cohort candidate also retains exact background evidence on its canonical assistant
+parent in `metadata.viventium.backgroundInputs`. Each immutable record binds the Main invocation,
+delivery ID, original context bytes and digest, and cortex source IDs and insight digests. Preparation
+uses the existing accepted-source transaction and generation fence before native transport. Foreground
+snapshots preserve this source, and later hydration, quoted continuity context and compaction use it.
+It remains background evidence; it does not replace authored user text or invent a tool result.
+Later Main graph or fallback dispatch reads this exact current parent again before the native body
+is hashed. It adds newly accepted evidence through the existing quoted context carrier, once per
+source identity. Owner, source, logical-turn, Stop and incarnation checks remain in force; a completed
+initial native step does not by itself discard evidence while the owning Core turn still runs.
+After that step reports unsupported, the shared host save guard still preserves canonical inputs,
+transport receipts, Native admission and completed cortex cards. The host graph owns its text and
+completion flags. Foreground snapshots retain presentation acknowledgements; a failed acknowledgement
+also survives background augmentation. A successful empty-parent promotion can start a new presentation.
+
+`backgroundInputReceipts` stores transport state separately. Offered, queued and pending do not prove
+model consumption or user presentation. Receipt changes do not alter the accepted source digest or
+generation. The existing after-Main relevance, NTA and durable surface-delivery path remains active.
+Recent raw source stays complete; existing context budgets and compaction still apply. Native
+generation framing and real Voice/Text/Telegram acceptance remain separate delivery gates.
+
+Required Main continuity must remain in the selected instruction context or fail with the existing
+typed source-context error. The native route with its declared source-chain body converter uses
+the existing JSON `metadata.turn_context` carrier with a 128 KiB context bound. The converter
+checks the source at serialization and removes the context headers before transport. Routes that
+send a real context header retain the 16 KiB bound. Neither lane silently omits required accepted
+background evidence; context above its applicable bound remains a typed failure.
 
 The Main context carrier uses the provider formatter's stored-user-text normalization and its
 shared typed delivery/status exclusions. A completed assistant row containing only internal
@@ -598,6 +636,10 @@ identity. Restricted voice turns cannot stamp or schedule accepted-turn compacti
 recovery retains an existing stamp; historical unstamped responses remain unattributed rather than
 being assigned the current configuration.
 
+Accepted internal compaction uses its own isolated, tool-free signed request and claim. It does not
+inherit the triggering live-call permission frame. The configured native model and effort remain
+unchanged; read-only maintenance receives no tools, worker controls or speaker action authority.
+
 Explicit source changes advance the domain generation and invalidate derived summaries. Both source
 Messages participate in acceptance. Actual hard deletion retains a per-logical-turn revision floor
 in the existing continuity collection; floors stay outside model context. Missing reads never prove
@@ -796,6 +838,12 @@ handoff so normal error delivery can finish the stream. An uncertain persisted a
 fenced; cleanup must not authorize ordinary publication over a recoverable native result.
 
 An exact native result that reports failure or cancellation must publish a durable error FINAL and release the current conversation composer. The existing Message admission stores a distinct terminal snapshot marker; it does not assert user Stop or successful Main delivery. Saved terminal content uses the normal public error renderer and audio suppression. Recovery reuses that snapshot and the existing job FINAL, without another model invocation, memory admission, title generation, or continuity-success acknowledgement.
+
+If canonical Native persistence fails because that exact row was removed, preserve the internal
+missing-row error type through the message boundary. The existing revoked-response failure owner
+may terminate only the matching current, cancelled, unfinished job with revoked commit authority.
+It must not recreate the row or replace a stored Stop FINAL. Normal producer cleanup still runs
+after that terminal failure.
 
 Legacy unmarked terminal admissions are discovery candidates only: the existing current-job identity check rejects retired jobs before provider lookup, and the Mongo transaction verifies current source/parent evidence before accepting the authoritative terminal result. Explicit edits and deletes retire terminal replay; ordinary background augmentation preserves canonical text, error state and delivery disposition.
 

@@ -437,9 +437,12 @@ def release_services(root: Path) -> tuple[str, ...]:
     return tuple(service for service in SERVICE_ORDER if service in selected)
 
 
-def native_glasshive_transport_environment(root: Path, support: Path) -> dict[str, str]:
+def native_glasshive_transport_environment(
+    root: Path, support: Path, *, database_path: Path | None = None,
+) -> dict[str, str]:
     if not native_body_paths(root):
         return {}
+    database_path = database_path or support / "state/runtime/native/glasshive/runtime.sqlite"
     key = bytes.fromhex(runtime_secrets(support)["CREDS_KEY"])
     token_domains = {
         "WPR_API_TOKEN": "api",
@@ -469,7 +472,9 @@ def native_glasshive_transport_environment(root: Path, support: Path) -> dict[st
         "GLASSHIVE_PROVIDER_ALLOWED_WORKSPACE_ROOTS": str(support / "state/runtime/native/glasshive/workspaces"),
         "WPR_HOST_WORKSPACE_ROOT": str(support / "state/runtime/native/glasshive/workspaces"),
         "WPR_LIBRECHAT_UPLOADS_ROOT": str(support / "data/uploads"),
-        "WPR_BOOTSTRAP_SOURCE_ROOTS": str(support / "data/uploads"),
+        "WPR_BOOTSTRAP_SOURCE_ROOTS": os.pathsep.join((
+            str(support / "data/uploads"), str(database_path.parent / "managed-files"),
+        )),
     })
     return environment
 
@@ -523,7 +528,9 @@ def native_glasshive_environment(root: Path, support: Path) -> dict[str, str]:
     if bodies:
         environment.update({name: value for name, value in load_native_runtime_env(support / "runtime/runtime.env").items()
                             if name in NATIVE_ALLOWED_PLAIN_ENV or name.startswith("VIVENTIUM_")})
-        environment.update(native_glasshive_transport_environment(root, support))
+        environment.update(native_glasshive_transport_environment(
+            root, support, database_path=Path(environment["WPR_DB_PATH"]),
+        ))
         environment.update(native_scheduling_environment(root, support))
         environment.update({
             "GLASSHIVE_HOST_WORKERS_ENABLED": "true",
@@ -832,6 +839,7 @@ NATIVE_ALLOWED_PLAIN_ENV = {
     "WPR_MODEL_CLAUDE_CODE",
     "WPR_MODEL_GROK_BUILD",
     "WPR_GROK_REASONING_EFFORT",
+    "WPR_GROK_REVIEWED_BINARY_SHA256",
     "WPR_CODEX_CLI_REASONING_EFFORT",
     "WPR_CODEX_CLI_PERSONALITY",
     "WPR_CODEX_CLI_CONVERSATION_PROJECT_INSTRUCTIONS",

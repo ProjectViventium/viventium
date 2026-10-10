@@ -408,7 +408,10 @@ def state_is_healthy(state: dict[str, Any]) -> bool:
 
     if provider == "public_https_edge":
         caddy = state.get("caddy") or {}
-        return pid_is_running(caddy.get("pid"))
+        saved_lan_ip = str((state.get("router") or {}).get("local_ip") or "").strip()
+        return pid_is_running(caddy.get("pid")) and (
+            not saved_lan_ip or saved_lan_ip in assigned_local_ipv4s()
+        )
 
     return False
 
@@ -853,6 +856,7 @@ def parse_upnpc_listing(output: str) -> dict[str, Any]:
     external_ip = ""
     local_ip = ""
     mappings: dict[tuple[str, int], tuple[str, int]] = {}
+    mapping_descriptions: dict[tuple[str, int], str] = {}
     for raw_line in str(output or "").splitlines():
         line = raw_line.rstrip()
         external_match = UPNPC_EXTERNAL_IP_RE.search(line)
@@ -869,11 +873,16 @@ def parse_upnpc_listing(output: str) -> dict[str, Any]:
             external_port = int(mapping_match.group(2))
             internal_host = mapping_match.group(3)
             internal_port = int(mapping_match.group(4))
-            mappings[(protocol, external_port)] = (internal_host, internal_port)
+            key = (protocol, external_port)
+            mappings[key] = (internal_host, internal_port)
+            description_match = re.match(r"\s*'([^']*)'", line[mapping_match.end():])
+            if description_match:
+                mapping_descriptions[key] = description_match.group(1)
     return {
         "external_ip": external_ip,
         "local_ip": local_ip,
         "mappings": mappings,
+        "mapping_descriptions": mapping_descriptions,
     }
 
 
@@ -1222,16 +1231,34 @@ def ensure_upnp_mapping(
     internal_port: int,
     description: str,
     lease_seconds: int = 14400,
+    previous_internal_host: str = "",
+    renew_existing: bool = False,
 ) -> None:
     protocol = protocol.upper()
     state = list_upnpc_state(upnpc_bin)
     existing = (state.get("mappings") or {}).get((protocol, external_port))
+    observed_description = (state.get("mapping_descriptions") or {}).get((protocol, external_port))
     if existing == (internal_host, internal_port):
-        return
+        if not renew_existing:
+            return
+        if observed_description != description:
+            raise RuntimeError(f"Router mapping ownership changed for {protocol} {external_port}")
     if existing and existing != (internal_host, internal_port):
         existing_host = str(existing[0] or "").strip()
         existing_port = int(existing[1])
-        if existing_host == internal_host and not mapping_target_reachable(existing_host, existing_port):
+        assigned_ips = assigned_local_ipv4s() if previous_internal_host else set()
+        owned_lan_transfer = (
+            bool(previous_internal_host)
+            and existing == (previous_internal_host, internal_port)
+            and observed_description == description
+            and state.get("local_ip") == internal_host
+            and internal_host in assigned_ips
+            and previous_internal_host not in assigned_ips
+        )
+        if owned_lan_transfer:
+            # UPnP cannot replace an existing mapping's InternalClient in place.
+            remove_upnp_mapping(upnpc_bin, external_port=external_port, protocol=protocol)
+        elif existing_host == internal_host and not mapping_target_reachable(existing_host, existing_port):
             remove_upnp_mapping(
                 upnpc_bin,
                 external_port=external_port,
@@ -1323,12 +1350,52 @@ def refresh_public_https_edge_mappings(state: dict[str, Any], *, lease_seconds: 
     if not isinstance(mappings, list) or not mappings:
         return state
 
+    live_router = list_upnpc_state(upnpc_bin)
+    previous_lan_ip = str(router.get("local_ip") or "").strip()
+    current_lan_ip = str(live_router.get("local_ip") or "").strip()
+    assigned_ips = assigned_local_ipv4s()
+    if not current_lan_ip or current_lan_ip not in assigned_ips:
+        raise RuntimeError("Public edge current LAN address is unavailable")
+    lan_changed = current_lan_ip != previous_lan_ip
+    if lan_changed:
+        if (
+            not previous_lan_ip
+            or current_lan_ip not in assigned_ips
+            or previous_lan_ip in assigned_ips
+            or not state.get("public_ip")
+            or live_router.get("external_ip") != state.get("public_ip")
+            or not pid_is_running((state.get("caddy") or {}).get("pid"))
+        ):
+            raise RuntimeError("Public edge LAN address changed without matching current edge ownership")
+        for mapping in mappings:
+            if not isinstance(mapping, dict):
+                raise RuntimeError("Public edge saved mapping identity is invalid")
+            protocol = str(mapping.get("protocol") or "TCP").upper()
+            external_port = int(mapping.get("external_port") or 0)
+            internal_port = int(mapping.get("internal_port") or 0)
+            expected_description = public_edge_mapping_description(protocol, external_port)
+            existing = (live_router.get("mappings") or {}).get((protocol, external_port))
+            if (
+                protocol not in {"TCP", "UDP"}
+                or not 0 < external_port <= 65535
+                or not 0 < internal_port <= 65535
+                or (protocol == "TCP" and external_port == 80 and internal_port != (state.get("caddy") or {}).get("http_port"))
+                or (protocol == "TCP" and external_port == 443 and internal_port != (state.get("caddy") or {}).get("https_port"))
+                or mapping.get("internal_host") != previous_lan_ip
+                or existing not in (None, (previous_lan_ip, internal_port), (current_lan_ip, internal_port))
+                or (existing is not None and (live_router.get("mapping_descriptions") or {}).get((protocol, external_port)) != expected_description)
+            ):
+                raise RuntimeError(f"Public edge owned mapping changed for {protocol} {external_port}")
+        if mapping_target_reachable(previous_lan_ip, int((state.get("caddy") or {}).get("https_port") or 0)):
+            raise RuntimeError("Public edge previous LAN target is still reachable")
+
+    refreshed_mappings = []
     for mapping in mappings:
         if not isinstance(mapping, dict):
             continue
         protocol = str(mapping.get("protocol") or "TCP").upper()
         external_port = int(mapping.get("external_port") or 0)
-        internal_host = str(mapping.get("internal_host") or "").strip()
+        internal_host = current_lan_ip if lan_changed else str(mapping.get("internal_host") or "").strip()
         internal_port = int(mapping.get("internal_port") or 0)
         if external_port <= 0 or internal_port <= 0 or not internal_host:
             continue
@@ -1340,10 +1407,16 @@ def refresh_public_https_edge_mappings(state: dict[str, Any], *, lease_seconds: 
             internal_port=internal_port,
             description=public_edge_mapping_description(protocol, external_port),
             lease_seconds=lease_seconds,
+            previous_internal_host=previous_lan_ip if lan_changed else "",
+            renew_existing=True,
         )
+        refreshed_mappings.append({**mapping, "internal_host": internal_host})
 
     refreshed_state = dict(state)
     refreshed_router = dict(router) if isinstance(router, dict) else {}
+    if lan_changed:
+        refreshed_router["local_ip"] = current_lan_ip
+    refreshed_router["mappings"] = refreshed_mappings
     refreshed_router["mapping_lease_seconds"] = int(max(0, lease_seconds))
     refreshed_router["last_refreshed_at"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
     refreshed_state["router"] = refreshed_router
@@ -1930,16 +2003,23 @@ def cmd_status(args: argparse.Namespace) -> int:
 
 def cmd_refresh_mappings(args: argparse.Namespace) -> int:
     state_path = Path(args.state_file)
-    state = load_state(state_path)
-    if not state:
-        raise RuntimeError(f"No remote access state found at {state_path}")
-    refreshed_state = refresh_public_https_edge_mappings(
-        state,
-        lease_seconds=int(args.upnp_lease_seconds or DEFAULT_PUBLIC_EDGE_UPNP_LEASE_SECONDS),
-    )
-    save_state(state_path, refreshed_state)
-    print(json.dumps(refreshed_state))
-    return 0
+    lock_handle = with_lock(state_path.with_suffix(".lock"))
+    try:
+        state = load_state(state_path)
+        if not state:
+            raise RuntimeError(f"No remote access state found at {state_path}")
+        refreshed_state = refresh_public_https_edge_mappings(
+            state,
+            lease_seconds=int(args.upnp_lease_seconds or DEFAULT_PUBLIC_EDGE_UPNP_LEASE_SECONDS),
+        )
+        save_state(state_path, refreshed_state)
+        print(json.dumps(refreshed_state))
+        return 0
+    finally:
+        try:
+            fcntl.flock(lock_handle.fileno(), fcntl.LOCK_UN)
+        finally:
+            lock_handle.close()
 
 
 def main() -> int:

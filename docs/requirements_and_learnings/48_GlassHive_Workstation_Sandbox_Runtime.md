@@ -329,7 +329,7 @@ Selenium base:
 - **System**: bash, curl, file, git, jq, LibreOffice Writer/Impress/Calc, Pandoc, poppler-utils,
   ripgrep, screen, tmux, vim, wmctrl, xdotool, xterm, pcmanfm
 - **Node.js 22.x** via nodesource
-- **npm runtimes**: pinned Codex and Claude Code specs (`@openai/codex@0.155.0-alpha.9.2`,
+- **npm runtimes**: pinned Codex and Claude Code specs (`@openai/codex@0.159.0`,
   `@anthropic-ai/claude-code@2.1.280`) plus the app-owned OpenClaw 2026.7.1-2 runtime installed
   from the reviewed `runtime_locks/openclaw` package lock. Operators may override the Codex and
   Claude specs with `WPR_SANDBOX_CODEX_NPM_SPEC` and `WPR_SANDBOX_CLAUDE_CODE_NPM_SPEC` after
@@ -1250,6 +1250,25 @@ without pretending the worker path is the only supported product route.
   form is available. The bootstrap writer should materialize broker `Authorization` headers as
   `Bearer ${GLASSHIVE_CAPABILITY_BROKER_TOKEN}` and keep the grant itself in the worker runtime env.
 
+### Current-turn background interjection
+
+The optional native interjection route binds one retained delivery ID and body digest to the
+current owner, invocation, native run, attempt and active session. It must not cancel, replay or
+start another authoring turn. Current-request, Stop and native transport-write fences remain in
+force. A reviewed installed-artifact digest enables the optional Grok capability; an absent or
+different artifact leaves ordinary generation available. It is not a consumption receipt.
+
+The producer returns queued, pending, unsupported or not-running transport state without waiting
+for model completion. The host retains exact background evidence and durable after-Main delivery.
+Automatic cohort dispatch requires the admitted messaging delivery contract used for native
+generation framing. An absent or unframed contract returns unsupported before native dispatch;
+ordinary worker/operator controls and model selection are unchanged.
+The installed Grok native API introduces interjected text through its native user-query wrapper.
+Source-labelled evidence, hostile-context evaluation and later-turn provenance therefore remain
+required; a successful native RPC does not establish developer authority or feature parity.
+The production Codex exec and Anthropic adapters do not expose this live-control hook. Their
+after-Main delivery remains supported; the separate App Server authority gate above is unchanged.
+
 ### Critical Boundary
 
 GlassHive must **NOT** directly depend on or read LibreChat/parent internals (Mongo schemas, token
@@ -1959,6 +1978,11 @@ runtime intent classifier.
   preserving workspace state, the worker record must carry a durable release marker so periodic
   reaper passes do not repeatedly stop the same already-released compute or emit duplicate lifecycle
   events. Starting/resuming compute clears that marker.
+- Ephemeral workspace GC must refuse before compute or file cleanup while retained run, mission,
+  replay, lifecycle, security, or peer history still references the workspace or its runs. Keep
+  those records and files; do not cascade or detach them to complete cleanup. An idle `gc_claimed`
+  workspace must use container teardown without probing or starting historical screen sessions.
+  Workspace-owned disposable metadata still follows the existing GC finalizer's cleanup rules.
 - Public QA artifacts must sanitize local paths, personal emails, account ids, subscription ids,
   raw logs, DB exports, screenshots with private content, and secret-bearing commands.
 - Enterprise service managers must disable raw uvicorn access logs or prove redaction before logs
@@ -2199,7 +2223,7 @@ persistent home and workspace mounts.
 | `GLASSHIVE_ENTERPRISE_TENANT_ID`                                                          | `local`                                                                                 | Single-tenant deployment identifier used when the request does not carry a tenant header                                                                                                                                                                                                                                                                                            |
 | `WPR_SANDBOX_IMAGE`                                                                       | `workers-projects-runtime-workstation:phase1-node22-docs9`                              | Docker image with native CLI, browser/computer substrate, optional managed AI-worker browser extensions, worker-local native-host bootstrap, stale disabled-extension cleanup, and professional document toolchain                                                                                                                                                                  |
 | `GLASSHIVE_AI_WORKER_BROWSER_EXTENSIONS` / `WPR_AI_WORKER_BROWSER_EXTENSIONS`             | `none`                                                                                  | Comma-separated optional Docker browser extensions to force-install (`claude`, `codex`, or `all`). The default is `none` because extension policy/profile install is not proof of a connected bridge; opt in only when the selected worker image has a proven compatible browser, native host, auth/session, and user-grade QA evidence.                                            |
-| `WPR_SANDBOX_CODEX_NPM_SPEC`                                                              | `@openai/codex@0.155.0-alpha.9.2`                                                       | Pinned Codex CLI package installed into rebuilt workstation images; update only with dated version/QA evidence                                                                                                                                                                                                                                                                      |
+| `WPR_SANDBOX_CODEX_NPM_SPEC`                                                              | `@openai/codex@0.159.0`                                                                    | Pinned Codex CLI package installed into rebuilt workstation images; update only with dated version/QA evidence                                                                                                                                                                                                                                                                      |
 | `WPR_SANDBOX_CLAUDE_CODE_NPM_SPEC`                                                        | `@anthropic-ai/claude-code@2.1.280`                                                     | Pinned Claude Code package installed into rebuilt workstation images; update only with dated version/QA evidence                                                                                                                                                                                                                                                                    |
 | `WPR_CODEX_CHROME_PLUGIN_ROOT` / `CODEX_CHROME_PLUGIN_ROOT`                               | unset                                                                                   | Optional worker-local first-party Codex Chrome plugin root containing `extension-host/linux/<arch>/extension-host`; when present with a reachable node-repl executable, bootstrap writes the Codex native messaging manifest and config                                                                                                                                             |
 | `WPR_CODEX_NODE_REPL_PATH` / `CODEX_NODE_REPL_PATH`                                       | unset                                                                                   | Optional worker-local node-repl executable used by the Codex Chrome native host config. If unset, bootstrap tries `node_repl` on the container `PATH`; the base workstation image does not claim Codex Chrome readiness unless this path or a PATH-provided node-repl is actually present.                                                                                          |

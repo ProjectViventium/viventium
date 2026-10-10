@@ -827,76 +827,42 @@ def _is_file_attachment_payload(value: Any) -> bool:
 
 
 # === VIVENTIUM START ===
-# Feature: Durable saved-memory receipt for Telegram.
+# Feature: Log-only saved-memory receipts for Telegram.
 # Purpose: Main's prose never proves a save. The detached memory writer persists a structured
-# receipt on the response message, the follow-up poll projects it as `memoryReceipt`, and this
-# renders exactly that truth once per turn: saved keys, a typed failure, or a partial apply.
+# receipt on the response message. Observe its outcome without adding chat text or TTS input.
 # === VIVENTIUM END ===
-_MEMORY_RECEIPT_FAILURE_TEXT = {
-    **dict.fromkeys(
-        ("usage_limit_reached", "insufficient_quota", "billing_hard_limit_reached", "provider_quota_exhausted"),
-        "{provider} usage limit reached. Check usage or wait for the limit to reset.",
-    ),
-    **dict.fromkeys(
-        ("provider_auth", "provider_auth_missing", "provider_unauthorized", "authentication_error"),
-        "{provider} needs sign-in. Reconnect it in Connected Accounts.",
-    ),
-    **dict.fromkeys(
-        ("provider_rate_limited", "rate_limit_exceeded", "rate_limit_error",
-         "provider_temporarily_unavailable", "server_is_overloaded"),
-        "{provider} is temporarily unavailable. Try again shortly.",
-    ),
-    "provider_access_denied": "{provider} denied access. Check the account's access.",
-    "provider_unavailable": "{provider} could not save memory. Try again later.",
-    "writer_unavailable": "No memory writer was available.",
-    "writer_exception": "The memory writer failed.",
-    "writer_interrupted": "The save did not finish.",
-    "writer_recovery_not_safe": "The source, settings, access, or memory changed before the save could resume.",
-    "memory_error": "The memory update could not be saved.",
-}
+_MEMORY_RECEIPT_ERROR_TYPES = frozenset({
+    "usage_limit_reached", "insufficient_quota", "billing_hard_limit_reached",
+    "provider_quota_exhausted", "provider_auth", "provider_auth_missing",
+    "provider_unauthorized", "authentication_error", "provider_rate_limited",
+    "rate_limit_exceeded", "rate_limit_error", "provider_temporarily_unavailable",
+    "server_is_overloaded", "provider_access_denied", "provider_unavailable",
+    "writer_unavailable", "writer_exception", "writer_interrupted",
+    "writer_recovery_not_safe", "memory_error",
+})
 
 
-def format_memory_receipt_text(receipt: Any) -> str:
-    """Render public fields from LibreChat's receipt projection, never raw error payloads."""
-
+def log_memory_receipt(receipt: Any, *, stream_id: str) -> bool:
+    """Observe a terminal receipt using bounded metadata, never memory text or provider errors."""
     if not isinstance(receipt, dict):
-        return ""
-    status = str(receipt.get("status") or "").strip().lower()
-    raw_keys = receipt.get("keys")
-    keys = [
-        str(key).strip()
-        for key in (raw_keys if isinstance(raw_keys, list) else [])
-        if str(key).strip()
-    ]
-    if status == "saved":
-        return "🧠 Saved to memory: " + ", ".join(keys[:12]) if keys else ""
-    if status not in {"failed", "partial", "uncertain"}:
-        return ""
-
+        return False
+    status = receipt.get("status")
+    if not isinstance(status, str) or status not in {"saved", "unchanged", "failed", "partial", "uncertain"}:
+        return False
     raw_failures = receipt.get("failures")
-    failures = [item for item in raw_failures if isinstance(item, dict)] if isinstance(raw_failures, list) else []
-    if not failures:
-        failures = [{"errorType": receipt.get("errorType")}]
-    reasons = []
+    failures = [item for item in raw_failures[:12] if isinstance(item, dict)] if isinstance(raw_failures, list) else []
+    if not failures and receipt.get("errorType"):
+        failures = [{"errorType": receipt["errorType"]}]
+    error_types = []
     for failure in failures:
-        error_type = str(failure.get("errorType") or "").strip().lower()
-        if status == "uncertain" and error_type == "writer_interrupted":
-            continue
-        template = _MEMORY_RECEIPT_FAILURE_TEXT.get(error_type) or "Memory could not be saved. Try again."
-        # The host derives this label from its provider registry; it never forwards a raw error label.
-        provider = failure.get("providerLabel")
-        provider = provider if isinstance(provider, str) and failure.get("provider") else "Provider"
-        reasons.append(template.format(provider=provider))
-
-    heading = "⚠️ Not saved to memory."
-    if status == "partial":
-        saved = f" (saved: {', '.join(keys[:12])})" if keys else ""
-        heading = f"⚠️ Memory only partially saved{saved}."
-    elif status == "uncertain":
-        heading = "⚠️ Memory saving could not be confirmed."
-    if status in {"partial", "uncertain"}:
-        reasons.append("Some changes may already be saved. Check Memories before retrying.")
-    return "\n".join([heading, *reasons])
+        error_type = failure.get("errorType")
+        error_types.append(error_type if isinstance(error_type, str) and error_type in _MEMORY_RECEIPT_ERROR_TYPES else "unknown")
+    raw_keys = receipt.get("keys")
+    key_count = len(raw_keys) if isinstance(raw_keys, list) else 0
+    level = logger.info if status in {"saved", "unchanged"} else logger.warning
+    level("[TG_MEMORY_RECEIPT] stream_id=%s status=%s key_count=%s error_types=%s",
+          stream_id, status, key_count, ",".join(error_types) or "none")
+    return True
 
 
 def extract_attachments(payload: dict[str, Any]) -> list[dict[str, Any]]:
@@ -5020,9 +4986,8 @@ class LibreChatBridge:
                                     return
                                 # === VIVENTIUM END ===
 
-                                # A saved-memory write scheduled for this turn finishes after the
-                                # stream closed; the typed anchor arms the same bounded poll so its
-                                # durable receipt can surface (never Main's prose).
+                                # Retain the existing detached-writer observer; its receipt is
+                                # diagnostic metadata and never assistant text or audio.
                                 memory_writer_scheduled = payload.get("memoryWriterScheduled") is True
                                 if memory_writer_scheduled:
                                     self._memory_receipt_pending.add(stream_id)
@@ -5108,10 +5073,7 @@ class LibreChatBridge:
                                     yield disposition_event
                                 # === VIVENTIUM START ===
                                 # Feature: Emit any final attachments after the main text.
-                                final_memory_notice = format_memory_receipt_text(payload.get("memoryReceipt"))
-                                if final_memory_notice and stream_id not in self._memory_receipt_sent:
-                                    yield "\n\n" + final_memory_notice
-                                    self._memory_receipt_sent.add(stream_id)
+                                self._observe_memory_receipt(stream_id, payload.get("memoryReceipt"))
                                 for attachment in final_attachments:
                                     emitted_attachments = True
                                     yield {"type": "attachment", "attachment": attachment}
@@ -5277,7 +5239,7 @@ class LibreChatBridge:
         if not identity.get("telegram_user_id") or not identity.get("telegram_chat_id"):
             return
         lifecycle = self._memory_poll_lifecycle.setdefault(stream_id, {"created_at": time.time()})
-        self._cortex_ack_store.save_memory_poll(self._memory_poll_scope(), stream_id, {
+        cursor = {
             **lifecycle,
             "chat_id": self._memory_poll_chat.get(stream_id, identity["telegram_chat_id"]),
             "message_id": self._response_message_ids.get(stream_id, ""),
@@ -5292,10 +5254,38 @@ class LibreChatBridge:
             "stream_text_hash": self._stream_text_hash_by_stream.get(stream_id, ""),
             "brief_main_reply": self._brief_main_reply_by_stream.get(stream_id, False),
             "glasshive_seen": self._has_glasshive_seen(stream_id),
-        })
+        }
+        try:
+            self._cortex_ack_store.save_memory_poll(self._memory_poll_scope(), stream_id, cursor)
+        except (sqlite3.Error, OSError) as exc:
+            # Receipt persistence is internal: keep in-process state and the existing
+            # retry path without interrupting Main text, attachments or worker replies.
+            logger.warning(
+                "[TG_MEMORY_RECEIPT] stream_id=%s cursor=retry error_type=%s",
+                stream_id, type(exc).__name__,
+            )
+
+    def _observe_memory_receipt(self, stream_id: str, receipt: Any) -> None:
+        if stream_id in self._memory_receipt_sent or not log_memory_receipt(receipt, stream_id=stream_id):
+            return
+        # The legacy memory_sent field now means observed. Keep the shared cursor until
+        # its existing follow-up owner finishes, so restart still resumes worker results.
+        self._memory_receipt_pending.discard(stream_id)
+        self._memory_receipt_sent.add(stream_id)
+        if stream_id in self._memory_poll_cursors:
+            self._save_memory_poll(stream_id)
 
     def _finish_memory_poll(self, stream_id: str, *, mark_receipt_sent: bool = True) -> None:
-        self._cortex_ack_store.finish_memory_poll(self._memory_poll_scope(), stream_id)
+        try:
+            self._cortex_ack_store.finish_memory_poll(self._memory_poll_scope(), stream_id)
+        except (sqlite3.Error, OSError) as exc:
+            # Keep the durable cursor and in-process observer for their existing retry path.
+            # Internal receipt cleanup must never interrupt Main text or file delivery.
+            logger.warning(
+                "[TG_MEMORY_RECEIPT] stream_id=%s cleanup=retry error_type=%s",
+                stream_id, type(exc).__name__,
+            )
+            return
         self._memory_poll_cursors.discard(stream_id)
         self._memory_receipt_pending.discard(stream_id)
         self._memory_poll_chat.pop(stream_id, None)
@@ -5430,41 +5420,7 @@ class LibreChatBridge:
             self._memory_poll_cursors.add(stream_id)
             self._save_memory_poll(stream_id, chat_id)
             return
-        if status == "unchanged":
-            self._memory_receipt_sent.add(stream_id)
-            self._memory_receipt_pending.discard(stream_id)
-            self._memory_delivery_state[stream_id] = "sent"
-            self._save_memory_poll(stream_id, chat_id)
-            return
-        text = format_memory_receipt_text(receipt)
-        if not text or self._memory_delivery_state.get(stream_id) == "delivery_unknown":
-            return
-        self._memory_receipt_pending.add(stream_id)
-        self._memory_poll_cursors.add(stream_id)
-        self._memory_delivery_state[stream_id] = "sending"
-        if missing_receipt_expired:
-            lifecycle["missing_receipt_terminal"] = True
-        self._save_memory_poll(stream_id, chat_id)
-        try:
-            result = await self._send_followup_text(chat_id, text, stream_id=stream_id, return_receipt=True)
-            sent = (isinstance(result, dict) and result.get("sent") is True
-                    and bool(result.get("message_ids")))
-            refused = result is False or (isinstance(result, dict) and result.get("sent") is False and not result.get("message_ids"))
-        except Exception:
-            sent, refused = False, False
-        if sent:
-            self._memory_receipt_sent.add(stream_id)
-            self._memory_receipt_pending.discard(stream_id)
-            self._memory_delivery_state[stream_id] = "sent"
-        elif refused:
-            self._memory_delivery_state[stream_id] = "pending"
-        else:
-            self._memory_delivery_state[stream_id] = "delivery_unknown"
-            self._memory_receipt_pending.discard(stream_id)
-            logger.warning("Saved-memory receipt delivery acknowledgement is unknown: stream_id=%s", stream_id)
-        self._save_memory_poll(stream_id, chat_id)
-        if missing_receipt_expired:
-            self._finish_memory_poll(stream_id)
+        self._observe_memory_receipt(stream_id, receipt)
 
     async def _poll_for_followup(self, *, stream_id: str, chat_id: str) -> None:
         message_id = self._response_message_ids.get(stream_id, "")

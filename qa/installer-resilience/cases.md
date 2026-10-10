@@ -894,6 +894,8 @@ rows before claiming a pass when the feature behavior changes.
 - `tests/release/test_wizard.py`
 - `tests/release/test_cli_meilisearch_container_adoption.py`
 - `tests/release/test_launcher_glasshive_watchdog.py`
+- `tests/release/test_launcher_grok_binary.py`
+- `tests/release/test_librechat_compiled_serving.py`
 - `tests/release/test_launcher_trusted_root_paths.py`
 - `tests/release/test_life_setup.py`
 - `tests/release/test_macos_helper_config_ownership.py`

@@ -542,6 +542,9 @@ def test_dev_env_stop_removes_only_its_exact_parallel_work_containers(
     source = STACK_LAUNCHER.read_text(encoding="utf-8")
     assert "parallel_work_runtime_instance() {" in source
     assert "stop_parallel_work_runtime_containers() {" in source
+    assert source.index("configure_parallel_work_proxy_substrate() {") < source.index(
+        'if [[ "$STOP_ONLY" == "true" ]]; then'
+    )
 
     instance_start = source.index("parallel_work_runtime_instance() {")
     stop_helper_start = source.index("stop_parallel_work_runtime_containers() {")
@@ -584,6 +587,8 @@ def test_dev_env_stop_removes_only_its_exact_parallel_work_containers(
         redis_id: str = "redis-id",
     ) -> subprocess.CompletedProcess[str]:
         harness = f"""set -euo pipefail
+ROOT_DIR='{tmp_path}'
+log_warn() {{ :; }}
 docker_daemon_ready() {{ return 0; }}
 docker() {{
   printf '%s\\n' "$*" >>"$CAPTURE_FILE"
@@ -3587,3 +3592,30 @@ def test_helper_keeps_workflow_and_maintenance_actions_under_advanced_menu() -> 
     ]:
         assert advanced_only in advanced_menu
         assert advanced_only not in top_level_before_advanced
+
+
+@pytest.mark.parametrize(
+    "runtime_port,configured,expected",
+    [
+        ("8766", None, "http://127.0.0.1:8766"),
+        ("9766", None, "http://127.0.0.1:9766"),
+        ("9766", "http+unix://%2Ftmp%2Fsynthetic-runtime.sock", "http+unix://%2Ftmp%2Fsynthetic-runtime.sock"),
+    ],
+)
+def test_local_worker_context_route_uses_owned_port_or_explicit_route(runtime_port, configured, expected):
+    source = STACK_LAUNCHER.read_text(encoding="utf-8")
+    block = source[source.index("start_glasshive() {") : source.index("start_ms365_mcp() {")]
+    assignment = next(
+        line.strip() for line in block.splitlines()
+        if line.strip().startswith("export GLASSHIVE_PEER_RUNTIME_BASE_URL=")
+    )
+    assert block.index("Externally managed split-identity GlassHive is ready") < block.index(assignment)
+    assert block.index(assignment) < block.index("uv run uvicorn workers_projects_runtime.api:create_app")
+    environment = {"GLASSHIVE_RUNTIME_PORT": runtime_port}
+    if configured is not None:
+        environment["GLASSHIVE_PEER_RUNTIME_BASE_URL"] = configured
+    result = subprocess.run(
+        ["/bin/bash", "-c", assignment + '\nprintf "%s" "$GLASSHIVE_PEER_RUNTIME_BASE_URL"'],
+        env=environment, capture_output=True, text=True, check=True,
+    )
+    assert result.stdout == expected

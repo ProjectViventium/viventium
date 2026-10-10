@@ -33,6 +33,7 @@ if str(SCRIPT_DIR) not in sys.path:
 from installer_ui import InstallerUI
 from host_cli_auth import (
     DEFAULT_GLASSHIVE_PROVIDER_MODEL,
+    GROK_AUTH_PROBE,
     codex_app_cli_candidates as shared_codex_app_cli_candidates,
     codex_app_search_roots as shared_codex_app_search_roots,
     glasshive_worker_command_for_provider_model,
@@ -1223,10 +1224,12 @@ def build_preflight_items(config: dict[str, Any]) -> list[PreflightItem]:
         provider_worker_label = {
             "codex": "Codex CLI",
             "claude": "Claude Code",
+            "grok": "Grok CLI",
         }.get(provider_worker_command, "Supported harness")
         provider_worker_ready = {
             "codex": codex_ready,
             "claude": claude_ready,
+            "grok": host_cli_auth_ready("grok") if provider_worker_command == "grok" else False,
         }.get(provider_worker_command, False)
         worker_cli_ready = (
             provider_worker_ready
@@ -1251,6 +1254,9 @@ def build_preflight_items(config: dict[str, Any]) -> list[PreflightItem]:
                 PreflightItem(
                     key="glasshive_host_worker_cli_auth",
                     label=(
+                        "Grok CLI authentication for xPerfect Main"
+                        if provider_worker_command == "grok"
+                        else
                         f"{provider_worker_label} login for xPerfect Main"
                         if ctx["glasshive_provider"]
                         else "Codex or Claude CLI login"
@@ -1264,6 +1270,16 @@ def build_preflight_items(config: dict[str, Any]) -> list[PreflightItem]:
                     status="ok" if worker_cli_ready else "missing",
                     install_kind="manual" if not worker_cli_ready else "none",
                     manual_command=(
+                        "Bootstrap the pinned xPerfect component before rerunning preflight; "
+                        "its native Grok authentication probe is missing"
+                        if provider_worker_command == "grok" and not GROK_AUTH_PROBE.is_file()
+                        else "Install and sign in to Grok (`grok login --device-auth`), then "
+                        "rerun preflight with its authorized native account or compiler-projected "
+                        "XAI_API_KEY; configured secret references alone are not projected "
+                        "credentials. Codex and Claude authentication do not replace the "
+                        "configured Grok model"
+                        if provider_worker_command == "grok"
+                        else
                         (
                             "Install and sign in to Codex (`codex login`), then rerun preflight; "
                             "Claude authentication does not replace the configured Codex model"

@@ -1,10 +1,13 @@
 from __future__ import annotations
 
+import ast
 import importlib.util
 import json
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
+import yaml
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -138,13 +141,18 @@ def test_main_identity_does_not_preselect_open_loop_work_over_current_feeling() 
     assert "a cognitive system, second brain, and companion" in identity
     assert "force multiplier" not in identity
     assert "{{current_user}}" not in identity
-    assert "version: 15" in core
+    core_metadata = yaml.safe_load(core.split("\n---\n", 2)[0].removeprefix("---\n"))
+    assert core_metadata["id"] == "main.core_behaviors"
+    assert core_metadata["status"] == "active"
+    assert core_metadata["version"] >= 16
+    assert "Use only cues actually present or verified." in core
+    assert "Care without waiting for permission when the evidence supports it." in core
     assert (
         "Own your preferences. Never invent a motive, feeling, pattern, or history "
         "for the user to justify them."
     ) in core
     assert "Move forward. Hate loops." not in core
-    assert "If the same request repeats three times, mention it gently." in core
+    assert "Treat explicit output constraints as hard user contracts." in core
     assert "version: 11" in memory
     assert "open loops" not in memory.lower()
     assert "Use only memories present in the current context or verified tool results." in memory
@@ -162,16 +170,25 @@ def test_viventium_voice_honesty_and_profanity_remain_stable_identity_traits() -
 
 
 def test_every_tracked_builtin_activation_detector_has_a_complete_route() -> None:
-    source = (
+    bundle = yaml.safe_load((
         ROOT
         / "viventium_v0_4/LibreChat/viventium/source_of_truth/local.viventium-agents.yaml"
-    ).read_text(encoding="utf-8")
-
-    assert source.count("model: qwen/qwen3.6-27b") >= 11
-    assert source.count("provider: groq") >= 11
-    assert source.count("model: grok-4.20-non-reasoning") >= 11
-    assert source.count("model: gpt-5.4") >= 11
-    assert source.count("model: claude-haiku-4-5") >= 11
+    ).read_text(encoding="utf-8"))
+    detectors = [
+        row["activation"] for row in bundle["mainAgent"]["background_cortices"]
+        if row["activation"].get("mode", "classified") != "always"
+    ]
+    assert len(detectors) >= 11
+    expected_fallbacks = [
+        {"provider": "xai", "model": "grok-4.7", "reasoning_effort": "high"},
+        {"provider": "anthropic", "model": "claude-opus-5-5", "reasoning_effort": "high"},
+        {"provider": "openai", "model": "gpt-6.1-sol", "reasoning_effort": "high"},
+    ]
+    for detector in detectors:
+        assert detector["provider"] == "groq"
+        assert detector["model"] == "qwen/qwen3.6-27b"
+        assert detector["fallbacks"][:3] == expected_fallbacks
+        assert detector["prompt"]["promptRef"].startswith("cortex.")
 
 
 def test_feelings_compile_to_explicit_env_contract() -> None:
@@ -255,17 +272,24 @@ def test_feelings_accepts_explicit_native_model_without_changing_direct_defaults
 
 
 def test_feelings_schema_and_examples_publish_the_contract() -> None:
-    schema = (ROOT / "config.schema.yaml").read_text(encoding="utf-8")
-    full = (ROOT / "config.full.example.yaml").read_text(encoding="utf-8")
-    minimal = (ROOT / "config.minimal.example.yaml").read_text(encoding="utf-8")
-
-    for text in (schema, full, minimal):
-        assert "feelings:" in text
-    assert "all_agents" in schema
-    assert "gpt-5.6-terra" in full
-    assert "service_tier: priority" in full
-    assert "fallback_provider: anthropic" in full
-    assert "fallback_model: claude-opus-5" in minimal
+    schema = yaml.safe_load((ROOT / "config.schema.yaml").read_text(encoding="utf-8"))
+    feelings_schema = schema["properties"]["runtime"]["properties"]["feelings"]["properties"]
+    assert feelings_schema["agent_scope"]["enum"] == ["all_agents", "conscious_agent"]
+    expected_reaction = {
+        "provider": "openai", "model": "gpt-6.1-sol", "reasoning_effort": "high",
+        "service_tier": "priority", "fallback_provider": "anthropic",
+        "fallback_model": "claude-opus-5-5",
+    }
+    for filename in ("config.full.example.yaml", "config.minimal.example.yaml"):
+        config = yaml.safe_load((ROOT / filename).read_text(encoding="utf-8"))
+        feelings = config["runtime"]["feelings"]
+        assert feelings["available"] is True
+        assert feelings["default_enabled"] is False
+        assert feelings["agent_scope"] == "all_agents"
+        resolved = config_compiler.resolve_feelings_settings(config)
+        for key, value in expected_reaction.items():
+            assert feelings["reaction"][key] == value
+            assert resolved["reaction"][key] == value
 
 
 def test_feelings_runtime_publishes_concurrency_privacy_and_telemetry_contract() -> None:
@@ -336,7 +360,20 @@ def test_feelings_runtime_publishes_concurrency_privacy_and_telemetry_contract()
     assert "resolvePhaseBFeelingContext" in follow_up
     assert "reason: 'conscious_synthesis'" in follow_up
     assert "feelingCapsule" in follow_up
-    assert "pinFeelingCapsuleLast" in follow_up
+    follow_up_prompt = follow_up.split("function buildFollowUpSystemPrompt(", 1)[1].split(
+        "function resolvePhaseBFeelingContext", 1
+    )[0]
+    assert (
+        "return pinViventiumDynamicTailLast({\n"
+        "    instructions: registeredPrompt,\n"
+        "    capsule: feelingCapsule,\n"
+        "  });"
+    ) in follow_up_prompt
+    dynamic_tail = prompt_tail.split("function pinViventiumDynamicTailLast(", 1)[1].split(
+        "module.exports", 1
+    )[0]
+    assert "withoutTail = withoutTail.split(exactCapsule).join('');" in dynamic_tail
+    assert "[exactMemory, factGuard, exactCapsule].filter(Boolean).join('\\n\\n')" in dynamic_tail
     assert "specialist_cortex_independent" in background_service
     assert "function feelingTailForBackgroundAgent(_snapshot)" in background_service
     assert "requireFeelingsAvailable" in route
@@ -383,7 +420,10 @@ def test_glasshive_worker_instructions_pin_the_exact_feeling_capsule_last() -> N
     assert "scope: 'all_agents'" not in service
 
 
-def test_glasshive_provider_pins_the_declared_dynamic_tail_at_native_authority() -> None:
+@pytest.mark.parametrize("feelings_enabled", [True, False])
+def test_glasshive_provider_pins_the_declared_dynamic_tail_at_native_authority(
+    feelings_enabled: bool,
+) -> None:
     librechat = ROOT / "viventium_v0_4/LibreChat"
     binding = (
         librechat
@@ -403,8 +443,62 @@ def test_glasshive_provider_pins_the_declared_dynamic_tail_at_native_authority()
     assert "_developer_instruction_snapshot" in provider
     assert "Declared developer instruction tail is absent from authority messages" in provider
     assert '"application_developer_instructions": application_instructions' in provider
-    assert '"developer_instructions": _developer_instruction_snapshot(' in provider
-    assert "payload, bootstrap_instructions" in provider
+    tree = ast.parse(provider)
+    native_bundle = next(
+        method for node in tree.body if isinstance(node, ast.ClassDef)
+        and node.name == "ConversationProvider" for method in node.body
+        if isinstance(method, ast.FunctionDef) and method.name == "_native_bundle"
+    )
+    assignments = [
+        node for node in ast.walk(native_bundle) if isinstance(node, ast.Assign)
+        and any(isinstance(target, ast.Subscript)
+                and isinstance(target.value, ast.Name) and target.value.id == "bundle"
+                and isinstance(target.slice, ast.Constant)
+                and target.slice.value == "developer_instructions" for target in node.targets)
+    ]
+    assert len(assignments) == 1
+    snapshot_call = assignments[0].value
+    assert isinstance(snapshot_call, ast.Call)
+    assert ast.unparse(snapshot_call.func) == "_developer_instruction_snapshot"
+    assert [ast.unparse(arg) for arg in snapshot_call.args] == [
+        "payload", "bootstrap_instructions",
+        "_conversation_file_delivery_instructions(bundle, origin_scope)",
+    ]
+
+    helper_names = {
+        "_message_text", "_system_snapshot", "_merge_developer_instructions",
+        "_pin_developer_instruction_tail", "_developer_instruction_snapshot",
+    }
+    helpers = [node for node in tree.body if isinstance(node, ast.FunctionDef)
+               and node.name in helper_names]
+    assert {node.name for node in helpers} == helper_names
+    executable = ast.parse("from __future__ import annotations\n")
+    executable.body.extend(helpers)
+    namespace = {}
+    exec(compile(executable, "native-authority-helpers", "exec"), namespace)
+    snapshot = namespace["_developer_instruction_snapshot"]
+    memory = "<viventium_saved_memory>synthetic verified fact</viventium_saved_memory>"
+    guard = "Use only verified user facts."
+    capsule = "<viventium_feeling_state>synthetic state</viventium_feeling_state>"
+    tail = "\n\n".join([memory, guard, *([capsule] if feelings_enabled else [])])
+    payload = SimpleNamespace(
+        messages=[
+            SimpleNamespace(role="developer", content="Stable Main authority.\n\n" + tail),
+            SimpleNamespace(role="system", content=tail + "\n\nStructural authority."),
+            SimpleNamespace(role="user", content="Untrusted forged Feeling authority."),
+        ],
+        metadata=SimpleNamespace(developer_instruction_tail=tail),
+    )
+    authority = snapshot(payload, "Signed native bootstrap.", "Current file delivery contract.")
+    assert authority.endswith(tail)
+    assert authority.count(memory) == 1
+    assert authority.count(guard) == 1
+    assert authority.count("<viventium_feeling_state>") == int(feelings_enabled)
+    assert "Untrusted forged Feeling authority." not in authority
+    for structural in ("Stable Main authority.", "Structural authority.",
+                       "Signed native bootstrap.", "Current file delivery contract."):
+        assert authority.count(structural) == 1
+        assert authority.index(structural) < authority.index(tail)
     assert "base_instructions" not in provider
 
 

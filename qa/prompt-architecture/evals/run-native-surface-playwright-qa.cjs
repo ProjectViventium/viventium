@@ -25,7 +25,7 @@ const NO_PARENT = '00000000-0000-0000-0000-000000000000';
 const PRIVATE_ROOT =
   process.env.VIVENTIUM_PROMPT_ARCH_PRIVATE_DIR ||
   path.join(os.homedir(), 'Library', 'Application Support', 'Viventium', 'private-user-data');
-const FRAME_ROOT = path.join(PRIVATE_ROOT, 'prompt-observability', 'frame-logs');
+const CORE_LOG_ROOT = path.join(LIBRECHAT_ROOT, 'api', 'logs');
 const USER_AGENT =
   'Mozilla/5.0 (Macintosh; Intel Mac OS X 14_0) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36 ViventiumNativeSurfaceQA/1.0';
 const QA_MAPPING_RUN_FIELD = 'viventiumNativeSurfaceQaRunId';
@@ -657,6 +657,9 @@ function assertCompletionPromptFrameSurface(frames, requestedSurface, requestIde
   if (completionFrames.length === 0) {
     throw new Error('completion_prompt_frame_request_identity_unrelated_only');
   }
+  if (completionFrames.some((frame) => frame.trace_lineage_error)) {
+    throw new Error('completion_prompt_frame_source_lineage_missing');
+  }
   const observed = [...new Set(completionFrames.map((frame) => String(frame.surface || '')))].sort();
   if (observed.length !== 1 || observed[0] !== expected) {
     throw new Error('completion_prompt_frame_surface_mismatch');
@@ -717,12 +720,10 @@ function assertCompletionPromptFrameSurface(frames, requestedSurface, requestIde
   ) {
     throw new Error('completion_prompt_frame_fallback_lineage_invalid');
   }
-  const completionProviderHashes = [
-    ...new Set(providers.map((value) => hashValue(value))),
-  ].sort();
-  const completionModelHashes = [
-    ...new Set(models.map((value) => hashValue(value))),
-  ].sort();
+  const routeHashes = (key) => [...new Set(completionFrames.map((frame) =>
+    frame.route_identity_hashed === true ? frame[key].slice(1) : hashValue(frame[key])))].sort();
+  const completionProviderHashes = routeHashes('provider');
+  const completionModelHashes = routeHashes('model');
   return {
     verified: true,
     requestedSurface: expected,
@@ -732,8 +733,8 @@ function assertCompletionPromptFrameSurface(frames, requestedSurface, requestIde
     actualCompletionAgentIdHash: agentIdHashes[0],
     completionProviderHashes,
     completionModelHashes,
-    requestedProviderHashes: [...new Set(requestedProviders.map((value) => hashValue(value)))].sort(),
-    requestedModelHashes: [...new Set(requestedModels.map((value) => hashValue(value)))].sort(),
+    requestedProviderHashes: routeHashes('requested_provider'),
+    requestedModelHashes: routeHashes('requested_model'),
     requestedEfforts: [...new Set(requestedEfforts)].sort(),
     effectiveEfforts: [...new Set(effectiveEfforts)].sort(),
     fallbackUsed: fallbackUsedValues[0],
@@ -836,11 +837,9 @@ function structuredDecisionCaseText(testCase) {
 }
 
 function buildText(testCase) {
-  return [
-    testCase.context,
-    normalizeSeedPrompts(testCase).length ? null : testCase.setup,
-    structuredDecisionCaseText(testCase) || testCase.prompt,
-  ].filter(Boolean).join('\n\n');
+  return require('./run-exact-model-evals.cjs').buildCaseText(testCase, {
+    includeSetup: normalizeSeedPrompts(testCase).length === 0,
+  });
 }
 
 function normalizeSeedPrompts(testCase) {
@@ -1049,12 +1048,89 @@ function hasRuntimeHold(events) {
   });
 }
 
+// Judge observations reuse the accepted Core projection; arguments, output text and IDs stay private.
+function judgeObservationLabel(value) {
+  return scrubForPublic(String(value || '').slice(0, 256))
+    .replace(/https?:\/\/[^\s"'<>]+/gi, '[url]')
+    .replace(/\b(?:run|wrk|ghr|ghs)_[A-Za-z0-9_-]+\b/g, '[id]')
+    .replace(/\bchatcmpl-[A-Za-z0-9_-]+\b/g, '[id]')
+    .replace(/\b[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}\b/gi, '[id]');
+}
+
+function nativeToolObservationsForJudge(message) {
+  const supplied = message?.metadata?.viventium?.nativeToolEvidence;
+  const evidence = supplied?.evidence;
+  if (
+    evidence?.version !== 1 || !Array.isArray(evidence.results) ||
+    evidence.conversation_id !== message?.conversationId ||
+    evidence.message_id !== message?.messageId ||
+    evidence.owner_id !== String(message?.user || '') ||
+    !evidence.results.every((call) => call && typeof call.id === 'string' && call.id &&
+      typeof call.name === 'string' && ['completed', 'failed', 'cancelled'].includes(call.status) &&
+      typeof call.output?.text === 'string' && Number.isInteger(call.output?.bytes) &&
+      call.output.bytes >= 0 && typeof call.output?.redacted === 'boolean' &&
+      Number.isInteger(call.output?.omitted_bytes) && call.output.omitted_bytes >= 0)
+  ) return { availability: 'unavailable', reason: 'no_bound_native_tool_evidence' };
+  return {
+    availability: 'observed',
+    omitted_results: Math.max(0, Number(evidence.omitted_results) || 0) +
+      Math.max(0, evidence.results.length - 20),
+    calls: evidence.results.slice(0, 20).map((call) => {
+      let result;
+      try { result = JSON.parse(call.output?.text || ''); } catch {}
+      if (result?.type === 'MCP' && typeof result.output?.OkayOutput === 'string') {
+        try { result = JSON.parse(result.output.OkayOutput); } catch {}
+      }
+      return {
+        name: judgeObservationLabel(call.name),
+        status: judgeObservationLabel(call.status),
+        ...(Number.isInteger(call.exit_code) ? { exit_code: call.exit_code } : {}),
+        output_bytes: Math.max(0, Number(call.output?.bytes) || 0),
+        output_redacted: call.output?.redacted === true,
+        output_omitted_bytes: Math.max(0, Number(call.output?.omitted_bytes) || 0),
+        ...(typeof result?.status === 'string'
+          ? { result_status: judgeObservationLabel(result.status) } : {}),
+        ...(typeof result?.reason === 'string'
+          ? { result_reason: judgeObservationLabel(result.reason) } : {}),
+        ...(typeof result?.retryable === 'boolean' ? { retryable: result.retryable } : {}),
+      };
+    }),
+  };
+}
+
+function normalAttachmentObservationsForJudge(attachments) {
+  const seen = new Set();
+  return (Array.isArray(attachments) ? attachments : []).flatMap((file) => {
+    const unavailable = file?.nativeOutputFile?.version === 1 &&
+      file.nativeOutputFile.status === 'unavailable';
+    if (!unavailable && !(typeof file?.file_id === 'string' && file.file_id)) return [];
+    const key = file.file_id || JSON.stringify([file.filename, file.nativeOutputFile]);
+    if (seen.has(key)) return [];
+    seen.add(key);
+    return [{
+      filename: path.basename(judgeObservationLabel(file.filename || 'File')),
+      status: unavailable ? 'unavailable' : 'attached',
+      ...(unavailable ? { code: judgeObservationLabel(file.nativeOutputFile.code) } : {}),
+      ...(Number.isFinite(file.bytes) && file.bytes >= 0 ? { bytes: file.bytes } : {}),
+      ...(typeof file.type === 'string' ? { mime_type: judgeObservationLabel(file.type) } : {}),
+      owner_download_verified: false,
+    }];
+  }).slice(0, 20);
+}
+
 function summarizeNativeEventsForJudge(events) {
   const toolCalls = [];
   const cortexUpdates = [];
   const finalContent = [];
   const webSearchSources = [];
+  const normalAttachments = [];
+  let nativeToolEvidence = { availability: 'unavailable', reason: 'no_bound_native_tool_evidence' };
   for (const event of events || []) {
+    if (event?.event === 'attachment') normalAttachments.push(event.data);
+    if (event?.final === true) {
+      normalAttachments.push(...(event.responseMessage?.attachments || []));
+      nativeToolEvidence = nativeToolObservationsForJudge(event.responseMessage);
+    }
     if (event?.event === 'on_cortex_update' && event.data && typeof event.data === 'object') {
       cortexUpdates.push({
         type: scrubForPublic(event.data.type || ''),
@@ -1137,6 +1213,8 @@ function summarizeNativeEventsForJudge(events) {
     JSON.stringify(
       {
         tool_calls: toolCalls.slice(0, 20),
+        native_tool_evidence: nativeToolEvidence,
+        normal_attachments: normalAttachmentObservationsForJudge(normalAttachments),
         web_search_sources: webSearchSources.slice(0, 30),
         cortex_updates: cortexUpdates.slice(0, 20),
         final_content: finalContent.slice(0, 20),
@@ -1211,32 +1289,77 @@ async function readSseToFinal({ url, headers = {}, timeoutMs }) {
   };
 }
 
-function collectFrameOffsets() {
+function collectFrameOffsets({ logDir = CORE_LOG_ROOT } = {}) {
   const offsets = {};
-  if (!fs.existsSync(FRAME_ROOT)) {
+  if (!fs.existsSync(logDir)) {
     return offsets;
   }
-  for (const dateDir of fs.readdirSync(FRAME_ROOT)) {
-    const fullDir = path.join(FRAME_ROOT, dateDir);
-    if (!fs.statSync(fullDir).isDirectory()) {
+  for (const fileName of fs.readdirSync(logDir)) {
+    if (!/^debug-.*\.log(?:\.\d+)?$/.test(fileName)) {
       continue;
     }
-    for (const fileName of fs.readdirSync(fullDir)) {
-      if (!fileName.endsWith('.jsonl')) {
-        continue;
-      }
-      const filePath = path.join(fullDir, fileName);
-      offsets[filePath] = fs.statSync(filePath).size;
-    }
+    const filePath = path.join(logDir, fileName);
+    const stat = fs.statSync(filePath);
+    if (!stat.isFile()) continue;
+    offsets[filePath] = { bytes: stat.size, inode: stat.ino };
   }
   return offsets;
 }
 
-function readFrameDelta(beforeOffsets) {
+function parsePromptFrameTraceLine(line) {
+  const marker = '[PromptFrameTraceTelemetry] ';
+  const markerIndex = line.indexOf(marker);
+  if (markerIndex < 0) return null;
+  let trace;
+  try {
+    trace = JSON.parse(line.slice(markerIndex + marker.length));
+  } catch {
+    return { parse_error: true, raw_hash: hashValue(line) };
+  }
+  if (!trace || typeof trace !== 'object' || Array.isArray(trace)) {
+    return { parse_error: true, raw_hash: hashValue(line) };
+  }
+  const sourceKeys = ['agent_source', 'librechat_source', 'compiled_runtime_config',
+    'live_installed_runtime_config', 'compiler_version'];
+  const routeKeys = ['provider', 'model', 'requested_provider', 'requested_model'];
+  const validLineage = trace.version === 2 &&
+    routeKeys.every((key) => /^h[0-9a-f]{16}$/.test(String(trace[key] || ''))) &&
+    sourceKeys.every((key) => /^[0-9a-f]{16}$/.test(String(trace.source_hashes?.[key] || ''))) &&
+    trace.source_hashes.compiled_runtime_config === trace.source_hashes.live_installed_runtime_config;
+  return {
+    event: 'viventium.prompt_frame',
+    prompt_family: trace.family,
+    surface: trace.surface,
+    provider: trace.provider,
+    model: trace.model,
+    requested_provider: trace.requested_provider,
+    requested_model: trace.requested_model,
+    requested_effort: trace.requested_effort,
+    effective_effort: trace.effective_effort,
+    fallback_used: trace.fallback_used,
+    fallback_reason: trace.fallback_reason,
+    agent_id_hash: trace.agent_id_hash,
+    request_identity_hash: trace.request_identity_hash,
+    auth_class: trace.auth_class,
+    layer_token_estimates: trace.layer_tokens,
+    layer_hashes: trace.layer_hashes,
+    source_hashes: trace.source_hashes,
+    flags: trace.flags,
+    decision_state: trace.decision,
+    voice_provider_control_marker_counts: trace.voice_provider_control_marker_counts,
+    prompt_trace_version: trace.version,
+    route_identity_hashed: true,
+    ...(!validLineage ? { trace_lineage_error: 'missing_or_mismatched_source_route_identity' } : {}),
+  };
+}
+
+function readFrameDelta(beforeOffsets, { logDir = CORE_LOG_ROOT } = {}) {
   const frames = [];
-  const afterOffsets = collectFrameOffsets();
-  for (const [filePath, size] of Object.entries(afterOffsets)) {
-    const start = beforeOffsets[filePath] || 0;
+  const afterOffsets = collectFrameOffsets({ logDir });
+  for (const [filePath, observed] of Object.entries(afterOffsets)) {
+    const size = observed.bytes;
+    const before = beforeOffsets[filePath];
+    const start = before?.inode === observed.inode && before.bytes <= size ? before.bytes : 0;
     if (size <= start) {
       continue;
     }
@@ -1248,11 +1371,8 @@ function readFrameDelta(beforeOffsets) {
         if (!line.trim()) {
           continue;
         }
-        try {
-          frames.push(JSON.parse(line));
-        } catch {
-          frames.push({ parse_error: true, raw_hash: hashValue(line) });
-        }
+        const frame = parsePromptFrameTraceLine(line);
+        if (frame) frames.push(frame);
       }
     } finally {
       fs.closeSync(fd);
@@ -1544,7 +1664,6 @@ async function cleanupExactQaArtifacts({
       const removed = await db.collection('sessions').deleteOne({
         _id: sessionRecord._id,
         user: sessionRecord.user,
-        refreshTokenHash: sessionRecord.refreshTokenHash,
       });
       if (removed?.deletedCount !== 1) {
         throw new Error('qa_cleanup_session_delete_unverified');
@@ -1914,6 +2033,24 @@ async function runAgentsSurface({ args, token, ownerId, testCase }) {
   return { ...result, seedEvidence, cleanupFinalMetas };
 }
 
+function buildVoiceTypedInput({ inputKind, session, sourceEventId, text }) {
+  if (inputKind == null) return null;
+  if (inputKind !== 'participant_text') throw new Error('voice_input_kind_unsupported');
+  if (!session?.callSessionId || typeof session.ownerParticipantIdentity !== 'string' ||
+      !session.ownerParticipantIdentity.trim() || typeof sourceEventId !== 'string' ||
+      !sourceEventId || sourceEventId.length > 160 || typeof text !== 'string' || !text.trim()) {
+    throw new Error('voice_typed_input_binding_unavailable');
+  }
+  return {
+    version: 1,
+    kind: 'participant_text',
+    callSessionId: session.callSessionId,
+    participantIdentity: session.ownerParticipantIdentity,
+    sourceEventId,
+    textSha256: crypto.createHash('sha256').update(text.trim(), 'utf8').digest('hex'),
+  };
+}
+
 async function runVoiceSurface({
   args,
   token,
@@ -1945,6 +2082,26 @@ async function runVoiceSurface({
     surface: 'voice',
     sourceEventId,
   });
+  const text = buildText(testCase);
+  let typedInput = null;
+  if (testCase.voice_input != null) {
+    const launchUrl = new URL(session.playgroundUrl || session.callUrl);
+    const browserCapability = new URLSearchParams(launchUrl.hash.slice(1)).get(
+      'viventiumCallCapability',
+    );
+    if (!browserCapability) throw new Error('voice_typed_input_capability_unavailable');
+    const state = await fetchJson(
+      `${args.apiBase}/api/viventium/calls/${encodeURIComponent(session.callSessionId)}/state`,
+      { headers: { ...headers, 'X-VIVENTIUM-CALL-CAPABILITY': browserCapability } },
+      20_000,
+    );
+    if (!state.ok || state.body?.callSessionId !== session.callSessionId) {
+      throw new Error('voice_typed_input_state_unavailable');
+    }
+    typedInput = buildVoiceTypedInput({
+      inputKind: testCase.voice_input, session: state.body, sourceEventId, text,
+    });
+  }
 
   if (listenOnly) {
     await fetchJson(
@@ -1976,12 +2133,13 @@ async function runVoiceSurface({
       method: 'POST',
       headers,
       body: JSON.stringify({
-        text: buildText(testCase),
+        text,
         viventiumSurface: wingMode ? 'wing' : listenOnly ? 'listen_only' : 'voice',
         viventiumInputMode: 'voice_call',
         voiceMode: true,
         voiceProvider: 'plain_tts',
         sourceEventId,
+        ...(typedInput ? { typedInput } : {}),
         viventiumQaRun: true,
         viventiumQaRunId: args.qaRunId,
       }),
@@ -2353,6 +2511,11 @@ async function readConversationEvidence({ db, result, conversationId }) {
     cortexInsightCount: cortexInsights.length,
     cortexInsights,
     primaryCortexStatuses: cortexItems.map((part) => part.status || '').filter(Boolean),
+    nativeToolObservations: nativeToolObservationsForJudge(primary),
+    normalAttachmentObservations: {
+      availability: primary ? 'observed' : 'unavailable',
+      attachments: normalAttachmentObservationsForJudge(primary?.attachments),
+    },
   };
 }
 
@@ -2428,6 +2591,13 @@ function buildJudgePrompt(
     'Native stream evidence:',
     summarizeNativeEventsForJudge(result.privateEvents || []),
     '',
+    'Existing accepted Core tool and file observations:',
+    JSON.stringify({
+      native_tools: result.postCaseEvidence?.nativeToolObservations || { availability: 'unavailable' },
+      normal_files: result.postCaseEvidence?.normalAttachmentObservations || { availability: 'unavailable' },
+    }),
+    'Unavailable observation is not proof of zero native actions. An attached file is not verified owner HTTP download.',
+    '',
     'Delayed DB follow-up / cortex evidence observed after native stream:',
     result.postCaseEvidence?.delayedVisibleText ||
       (result.postCaseEvidence?.cortexInsights || [])
@@ -2461,7 +2631,62 @@ function encodeEphemeralAgentId({ endpoint, model, sender }) {
   return `${encodePart(endpoint)}__${encodePart(model)}___${encodePart(sender || 'SemanticJudge')}`;
 }
 
+function summarizeJudgeFailureMetadata(events, error = null) {
+  const finalEvent = [...(events || [])].reverse().find((event) => event?.final != null);
+  const content = finalEvent?.responseMessage?.content;
+  const errorParts = (Array.isArray(content) ? content : []).filter(
+    (part) => part?.type === 'error',
+  );
+  const errors = [error, ...(events || []).map((event) => event?.error), ...errorParts]
+    .filter((value) => value != null);
+  const statuses = errors.flatMap((value) => [value?.status, value?.statusCode]);
+  const status = statuses.find((value) => Number.isInteger(value) && value >= 100 && value <= 599);
+  const classes = errors.map((value) => value?.error_class || value?.errorClass).filter(Boolean);
+  const codes = errors.map((value) => value?.error_code || value?.code).filter(Boolean);
+  const names = errors.map((value) => value?.name).filter(Boolean);
+  // The existing public class is already the stream result's error. Other diagnostic strings
+  // remain hashes; never retain exception prose, arbitrary codes, payloads, or credentials.
+  const publicClass = extractFinalStreamError(events);
+  const knownPublicClass = [
+    'provider_response_failed', 'provider_rate_limited', 'provider_auth_missing',
+    'provider_auth_invalid', 'provider_unreachable', 'host_capacity',
+    'native_input_declined', 'native_input_expired', 'native_input_cancelled',
+    'conversation_session_authority_conflict', 'provider_response_deadline_exceeded',
+    'completion_error', 'final_response_error',
+  ].includes(publicClass) ? publicClass : null;
+  const knownCode = codes.find((value) => [
+    'ERR_INVALID_ARG_TYPE', 'ERR_INVALID_CHAR', 'ERR_HTTP_INVALID_HEADER_VALUE',
+    'ERR_HTTP_HEADERS_SENT', 'ERR_MODULE_NOT_FOUND', 'MODULE_NOT_FOUND',
+    'ECONNREFUSED', 'ECONNRESET', 'ETIMEDOUT', 'ENOTFOUND', 'EAI_AGAIN', 'EPIPE',
+    'UND_ERR_SOCKET', 'UND_ERR_CONNECT_TIMEOUT', 'UND_ERR_HEADERS_TIMEOUT',
+    'UND_ERR_HEADERS_OVERFLOW', 'UND_ERR_BODY_TIMEOUT', 'ABORT_ERR',
+  ].includes(value));
+  const knownName = names.find((value) => [
+    'Error', 'TypeError', 'RangeError', 'ReferenceError', 'SyntaxError',
+    'AggregateError', 'AbortError', 'TimeoutError',
+  ].includes(value));
+  return {
+    errorClass: knownPublicClass,
+    publicErrorClassHash: publicClass == null ? null : hashValue(String(publicClass)),
+    errorStatus: status ?? null,
+    errorCode: knownCode ?? null,
+    errorName: knownName ?? null,
+    errorClassHashes: classes.map((value) => hashValue(String(value))),
+    errorCodeHashes: codes.map((value) => hashValue(String(value))),
+    errorNameHashes: names.map((value) => hashValue(String(value))),
+    errorValueHash: error == null ? null : hashValue(typeof error === 'string' ? error : JSON.stringify({
+      status: error.status, statusCode: error.statusCode,
+      error_class: error.error_class, errorClass: error.errorClass,
+      error_code: error.error_code, code: error.code, name: error.name,
+    })),
+    errorPartCount: errorParts.length,
+    eventCount: (events || []).length,
+    finalEventReceived: Boolean(finalEvent),
+  };
+}
+
 async function runEphemeralJudgeTurn({ args, token, prompt }) {
+  const startedAt = Date.now();
   const messageId = crypto.randomUUID();
   const agentId = encodeEphemeralAgentId({
     endpoint: args.judgeEndpoint,
@@ -2513,6 +2738,13 @@ async function runEphemeralJudgeTurn({ args, token, prompt }) {
       text: '',
       error: `local_ephemeral_judge_start_http_${start.status}`,
       status: start.status,
+      diagnostics: {
+        elapsedMs: Date.now() - startedAt,
+        startStatus: start.status,
+        streamStatus: null,
+        streamIdHash: null,
+        ...summarizeJudgeFailureMetadata([], start.body?.error),
+      },
     };
   }
   const stream = await readSseToFinal({
@@ -2527,6 +2759,13 @@ async function runEphemeralJudgeTurn({ args, token, prompt }) {
     status: stream.status,
     eventCount: stream.events.length,
     finalMeta: extractFinalMeta(stream.events),
+    diagnostics: {
+      elapsedMs: Date.now() - startedAt,
+      startStatus: start.status,
+      streamStatus: stream.status,
+      streamIdHash: hashValue(start.body.streamId),
+      ...summarizeJudgeFailureMetadata(stream.events, stream.error),
+    },
   };
 }
 
@@ -2603,6 +2842,7 @@ async function runJudge({
 }) {
   let lastJudgeResult = null;
   const cleanupFinalMetas = [];
+  const attemptDiagnostics = [];
   for (let attempt = 0; attempt < 2; attempt += 1) {
     const judgePrompt = [
       attempt === 0
@@ -2617,6 +2857,7 @@ async function runJudge({
     ].filter(Boolean).join('\n\n');
     const judgeResult = await runEphemeralJudgeTurn({ args, token, prompt: judgePrompt });
     lastJudgeResult = judgeResult;
+    attemptDiagnostics.push({ attempt: attempt + 1, ...judgeResult.diagnostics });
     if (judgeResult.finalMeta?.conversationId) {
       cleanupFinalMetas.push(judgeResult.finalMeta);
     }
@@ -2648,6 +2889,7 @@ async function runJudge({
       notes: typeof parsed.notes === 'string' ? parsed.notes : '',
       privateText: judgeResult.text,
       attempts: attempt + 1,
+      attemptDiagnostics,
       cleanupFinalMetas,
     };
   }
@@ -2660,6 +2902,7 @@ async function runJudge({
     error: lastJudgeResult?.error || 'judge_json_parse_failed',
     privateText: lastJudgeResult?.text || '',
     attempts: 2,
+    attemptDiagnostics,
     cleanupFinalMetas,
   };
 }
@@ -3480,13 +3723,18 @@ module.exports = {
   buildTelegramSourceOrderScope,
   buildJudgePrompt,
   buildText,
+  buildVoiceTypedInput,
   caseRequiresSemanticJudge,
   cleanupExactQaArtifacts,
   completionEvidenceForCase,
   extractFinalStreamError,
   extractVisibleText,
+  summarizeJudgeFailureMetadata,
   flattenPromptCases,
   parseArgs,
+  parsePromptFrameTraceLine,
+  collectFrameOffsets,
+  readFrameDelta,
   scoreNativeDecisionQualityJudgment,
   selectPromptCases,
   startTelegramSurfaceTurn,

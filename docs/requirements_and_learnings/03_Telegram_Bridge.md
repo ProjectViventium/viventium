@@ -127,6 +127,11 @@ not select the main Viventium Telegram bridge's model.
   through its verified retained original anchor without rewriting stored history; foreign, deleted,
   missing or untrusted anchors remain refused.
 - Telegram must deliver LibreChat message attachments back to the Telegram user.
+  The durable callback attachment carrier retains the existing native-file union: an
+  available file keeps its verified message ID and download URL; an unavailable file
+  keeps its failure code. Strict schema validation retains both states without granting
+  new file or dispatch authority. Accepted callback recovery reuses the saved file and
+  Main-authored message; it does not rerun the worker.
   Native Main's intentionally published files follow the same contract: xPerfect records selected
   output descriptors on its canonical durable response, and Core verifies the current owner,
   conversation, message, stream, agent, turn, invocation, signed origin, MIME, length and SHA-256
@@ -165,6 +170,11 @@ not select the main Viventium Telegram bridge's model.
   history. Known inline native media uses the existing hydrated media carrier, preserving bytes and
   distinct items while avoiding exact duplicate hydration. Unknown content stays available for
   validation; owner, ancestry and authored-text checks remain enforced.
+- An attachment-only user row has no authored words to send through the text formatter. Its original
+  source, files and ownership remain in the trusted attachment lane; the text continuity manifest
+  omits only that empty text carrier. This applies to retained history and rapid current input, so
+  an earlier file-only upload cannot break subsequent conversation or fallback. Captions and
+  visible media still require their exact protected carriers.
 - Native conversation requests must carry the verified current upload ledger in their signed
   bootstrap, including an attachment-only turn. GlassHive resolves the original bytes under the
   authenticated owner's storage root and includes the workspace attachment paths in the current
@@ -541,9 +551,18 @@ Prompt-layer ownership and the runtime-vs-prompt boundary are also recorded in
   durable-effect path. A presentation of the parent itself (a promoted empty answer, for which the
   adapter records no Main receipt) is Main's first presentation, so its receipt also becomes Main's
   and keeps Main's persistence and acceptance.
-- An idle chat (no message for `RESET_TIME`, default 3600 s) starts a new backend conversation on its
-  next message. Stored conversations are unchanged, and Main continuity and saved memory are
-  owner/agent-scoped, so this changes the visible thread, not what Main may know.
+- Core-backed Telegram keeps the same owner-scoped conversation across idle periods and bridge
+  restarts, including its files and worker history. `/reset` explicitly starts a new conversation;
+  stored history is retained. Core's `VIVENTIUM_TELEGRAM_CONVERSATION_IDLE_MAX_M` defaults to
+  `0` (no idle expiry); an explicitly configured positive value still applies. The ephemeral
+  LiveKit backend retains its `RESET_TIME` idle reset (default 3600 s).
+- Both `committed` and `committed_effect` presentation receipts can settle an already completed
+  owned Main response. The exact owner, conversation, assistant message, logical turn and revision
+  must match; a failed receipt cannot alter a completed response. Durable effect acceptance is
+  recorded first, then its receipt is projected into the message before the adapter accepts delivery.
+  Input recovery treats both states as terminal for that input's owned stream. It must not reclaim
+  the completed stream and resend its saved-memory receipt on each recovery lease. A pending,
+  missing or foreign-owner acknowledgement does not prove completion.
 - The same-turn GlassHive poller and the durable dispatcher must share the same delivery ledger.
   Authenticated Telegram/voice callback polling may expose an opaque callback id to the bridge so
   the fast path can claim and mark the exact delivery row before sending. It must not legacy-send a
@@ -809,17 +828,18 @@ contract; it does not own a Telegram-only coordinator.
   completion follow-up, never as stale prose.
 - The successful final send/edit is Telegram's presentation commit. Streaming previews are not.
 - A pending saved-memory receipt keeps both the original source message ID and Core's current
-  presentation sequence in its durable cursor. Receiver restart must preserve both, so an older
-  retained input can deliver under its authorized current presentation without changing source
-  identity. An uncertain Telegram send remains uncertain and is never replayed automatically.
+  presentation sequence in its durable cursor. Receiver restart must preserve both without
+  changing source identity. Terminal observation logs redacted metadata and marks memory observed;
+  it never sends a status bubble or invokes TTS. Legacy uncertain Telegram sends remain uncertain
+  and are never replayed automatically.
   `test_memory_receipt_restart_retains_identity_and_worker_completion` checks this restart contract;
   the real Telegram delivery journey remains a separate acceptance gate.
 - The saved-memory follow-up window starts at Main's committed presentation receipt. A confirmed
   pending or running writer retains its cursor until a terminal result, including after receiver
   restart. If Core explicitly reports no writer throughout that window and no writer was admitted,
-  Telegram reports once that saving could not be confirmed and asks the user to check Memories
-  before retrying. Transport errors are not evidence that no writer exists. Failed or removed Main
-  presentations do not send a memory follow-up; an uncertain follow-up is never replayed.
+  Telegram logs an uncertain terminal observation once and ends memory waiting. Transport errors
+  are not evidence that no writer exists. Failed or removed Main presentations end the memory
+  cursor silently; they never produce a memory-status follow-up.
 
 ## Parallel Work control surface
 
@@ -838,3 +858,22 @@ Parallel Work contract. Telegram is a fast control surface, not a Telegram-only 
 - disabling new Parallel Work launches never hides or cancels work already in flight;
 - provisional recoverable errors are held through the durable follow-up window and replaced by the
   recovered revision instead of committing a stale generic connection error.
+
+
+## Quiet system bookkeeping and conversational speech
+
+Automatic `memoryReceipt` is internal status, never assistant prose. The bridge observes FINAL
+and follow-up receipts in their existing typed lane, logs terminal status, key count and safe
+ordered error codes, and marks memory observed without a bubble, attachment, callback or TTS.
+Pending writer polling and restart identity are retained; worker completion does not displace a
+pending writer. Terminal memory observation retains the shared cursor until the existing worker
+follow-up owner finishes, so receiver restart cannot lose an unfinished worker result. Internal
+cursor storage failures log only a safe failure class and preserve in-process state; they cannot
+interrupt Main text, file delivery or worker callbacks. Repeated terminal observations do not resend
+or speak a notice. Logs exclude key names/values, provider labels/raw payloads, credentials and
+account identifiers.
+
+Main answers, proactive worker answers, attachments and real errors keep their existing delivery
+contracts. When a user asks about a notice, model-authored explanatory or quoted text remains
+ordinary conversational content and may be spoken. No keyword/emoji filter suppresses it.
+See `20_Memory_System.md` and Telegram voice acceptance case `TGVOICE-009`.

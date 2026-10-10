@@ -204,12 +204,12 @@ properties:
             type: string
           anthropic_effort:
             type: string
-            enum: [xhigh]
+            enum: [low, medium, high, xhigh, max]
           openai_model:
             type: string
           openai_reasoning_effort:
             type: string
-            enum: [xhigh]
+            enum: [low, medium, high, xhigh, max]
           transcripts:
             type: object
             properties:
@@ -232,8 +232,13 @@ properties:
         maximum: 86400
       background_activation:
         type: object
-        description: Bounded per-provider attempt budgets inside the shared and late activation-detection windows.
+        description: Bounded total background detection and per-provider attempt budgets. An explicitly configured total must cover the primary attempt; omitting the total retains the legacy default window and runtime clamp.
         properties:
+          late_detect_timeout_ms:
+            type: integer
+            minimum: 2001
+            maximum: 30000
+            default: 6000
           primary_attempt_timeout_ms:
             type: integer
             minimum: 100
@@ -280,6 +285,9 @@ properties:
             type: string
           public_livekit_url:
             type: string
+          livekit_api_host:
+            type: string
+            description: Explicit HTTP(S) LiveKit API endpoint; empty uses the managed local server.
           public_glasshive_origin:
             type: string
           livekit_node_ip:

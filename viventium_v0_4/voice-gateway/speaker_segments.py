@@ -108,6 +108,7 @@ class SpeakerSegmentTracker:
     Provider speaker IDs are useful only inside one call. A single diarized voice on a signed
     participant track may use the participant label. As soon as a second voice is observed on that
     track, every segment from the track is downgraded to an unverified, call-scoped speaker label.
+    Explicit participant-track authority proves signed device ownership, not one physical voice.
     """
 
     def __init__(
@@ -169,6 +170,24 @@ class SpeakerSegmentTracker:
     def track_sid(self) -> str:
         return self._track_sid
 
+    def update_participant_track(
+        self, *, participant_identity: str = "", participant_name: str = "",
+        track_sid: str = "", owner_signed: bool = False,
+    ) -> None:
+        """Refresh only this participant's publication; retain call-scoped shared-mic state."""
+        if participant_identity.strip() != self._participant_identity:
+            self._track_sid = ""
+            self._owner_signed = False
+            return
+        self._track_sid = track_sid.strip()
+        self._owner_signed = bool(owner_signed and self._participant_identity and self._track_sid)
+        supplied_name = participant_name.strip()
+        self._participant_name = (
+            ("You" if self._owner_signed else "Participant")
+            if supplied_name == self._participant_identity and self._participant_identity
+            else supplied_name
+        )
+
     @property
     def last_observed_at_ms(self) -> Optional[float]:
         return self._last_observed_at_ms
@@ -186,6 +205,7 @@ class SpeakerSegmentTracker:
         created_at: float,
         start_time: Optional[float] = None,
         end_time: Optional[float] = None,
+        allow_owner_participant_track: bool = False,
     ) -> list[dict[str, Any]]:
         text = (transcript or "").strip()
         if not text:
@@ -283,10 +303,18 @@ class SpeakerSegmentTracker:
             if has_timing:
                 active["startTimeMs"] = round(float(start_time) * 1000)
                 active["endTimeMs"] = round(float(end_time) * 1000)
+            previous_speaker = active.get("speaker", {})
+            same_track = previous_speaker.get("trackSid", "") == self._track_sid
             active["speaker"] = self._speaker_payload(
                 provider_id,
-                stable_attribution=stable_attribution,
+                stable_attribution=stable_attribution and same_track,
+                allow_owner_participant_track=(allow_owner_participant_track is True
+                                               and is_final and same_track),
             )
+            if not same_track:
+                active["speaker"].pop("trackSid", None)
+                if previous_speaker.get("trackSid"):
+                    active["speaker"]["trackSid"] = previous_speaker["trackSid"]
             active["uncertain"] = active["speaker"]["attribution"] == "unknown"
             changes.append(deepcopy(active))
             if is_final:
@@ -299,6 +327,7 @@ class SpeakerSegmentTracker:
         speaker = self._speaker_payload(
             provider_id,
             stable_attribution=stable_attribution,
+            allow_owner_participant_track=allow_owner_participant_track is True and is_final,
         )
         segment: dict[str, Any] = {
             "version": 1,
@@ -379,16 +408,21 @@ class SpeakerSegmentTracker:
         revisions: list[dict[str, Any]] = []
         for segment in self._segments_by_id.values():
             provider_id = segment.get("speaker", {}).get("providerSpeakerId", "")
-            if not provider_id:
+            if not provider_id and segment.get("speaker", {}).get("source") != "participant_track":
                 continue
             updated_speaker = self._speaker_payload(
                 provider_id,
                 stable_attribution=self._segment_has_stable_attribution(segment),
             )
+            original_speaker = segment.get("speaker", {})
+            for key in ("participantIdentity", "participantName", "trackSid"):
+                updated_speaker.pop(key, None)
+                if key in original_speaker:
+                    updated_speaker[key] = original_speaker[key]
             if segment.get("speaker") == updated_speaker:
                 continue
             segment["speaker"] = updated_speaker
-            segment["uncertain"] = False
+            segment["uncertain"] = updated_speaker["attribution"] == "unknown"
             segment["revision"] += 1
             revision = deepcopy(segment)
             self._pending_revisions.append(revision)
@@ -436,6 +470,7 @@ class SpeakerSegmentTracker:
         provider_id: str,
         *,
         stable_attribution: bool,
+        allow_owner_participant_track: bool = False,
     ) -> dict[str, Any]:
         participant_fields: dict[str, Any] = {}
         if self._participant_identity:
@@ -444,6 +479,22 @@ class SpeakerSegmentTracker:
             participant_fields["participantName"] = self._participant_name
         if self._track_sid:
             participant_fields["trackSid"] = self._track_sid
+
+        if (
+            not provider_id
+            and allow_owner_participant_track is True
+            and self._owner_signed
+            and self._track_sid
+            and not self.shared_microphone_detected
+        ):
+            return {
+                "key": f"participant:{self._participant_identity}",
+                "label": self._participant_name or "Participant",
+                "source": "participant_track",
+                "attribution": "verified",
+                "actorTrust": "owner_participant",
+                **participant_fields,
+            }
 
         if not provider_id or not stable_attribution:
             return {

@@ -3,378 +3,74 @@ import os
 import sys
 import unittest
 
-
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
-
 from voice_progress import (
-    AsyncVoiceProgressController,
-    VoiceProgressStateMachine,
     parse_authoritative_call_state_packet,
     run_authoritative_mode_reconciliation,
     sync_authoritative_call_mode_once,
 )
 
 
-def _event(
-    state="running",
-    phase="tool",
-    detail="Searching trusted sources",
-    sequence=1,
-    task_id="task_1",
-):
-    return {
-        "version": 1,
-        "taskId": task_id,
-        "sequence": sequence,
-        "state": state,
-        "phase": phase,
-        "detail": detail,
-    }
-
-
-class _ProgressController:
+class _ModeState:
     def __init__(self):
-        self.mode = "call"
+        self._mode = "call"
+        self.authoritative = True
         self.suspensions = 0
 
-    def set_mode(self, mode):
-        self.mode = mode
+    @property
+    def mode(self):
+        return self._mode if self.authoritative else None
 
-    def suspend_until_authoritative(self):
+    def apply(self, mode):
+        self._mode = mode
+        self.authoritative = True
+
+    def suspend(self):
+        self.authoritative = False
         self.suspensions += 1
 
 
-class TestVoiceProgressStateMachine(unittest.TestCase):
-    def test_neutral_ack_waits_for_authoritative_task_and_1_2_seconds(self) -> None:
-        machine = VoiceProgressStateMachine(enabled=True)
-        machine.on_task_event(_event(), now=0.0)
-
-        self.assertEqual(machine.poll(now=1.19), [])
-        self.assertEqual(machine.poll(now=1.2), [("task_1", "I'm on it.")])
-
-    def test_early_model_output_suppresses_neutral_ack(self) -> None:
-        machine = VoiceProgressStateMachine(enabled=True)
-        machine.on_task_event(_event(), now=0.0)
-        machine.on_model_output("task_1", now=0.5)
-
-        self.assertEqual(machine.poll(now=1.3), [])
-
-    def test_long_silence_speaks_unchanged_progress_once(self) -> None:
-        machine = VoiceProgressStateMachine(enabled=True)
-        machine.on_task_event(_event(), now=0.0)
-        machine.on_model_output("task_1", now=0.5)
-
-        self.assertEqual(
-            machine.poll(now=5.5),
-            [("task_1", "I'm still working — Searching trusted sources.")],
-        )
-        self.assertEqual(machine.poll(now=6.0), [])
-        self.assertEqual(machine.on_task_event(_event(sequence=2), now=6.1), [])
-        for now in range(10, 181, 5):
-            self.assertEqual(machine.poll(now=float(now)), [])
-
-    def test_same_phase_changed_detail_speaks_once(self) -> None:
-        machine = VoiceProgressStateMachine(enabled=True)
-        machine.on_task_event(_event(), now=0.0)
-        machine.on_model_output("task_1", now=0.5)
-        machine.poll(now=5.0)
-
-        self.assertEqual(
-            machine.on_task_event(_event(detail="Reading source files", sequence=2), now=9.0),
-            [("task_1", "I'm still working — Reading source files.")],
-        )
-        self.assertEqual(machine.poll(now=20.0), [])
-
-    def test_changed_active_state_is_not_hidden_by_unchanged_phase_or_detail(self) -> None:
-        for state in ("needs_input", "recovering"):
-            with self.subTest(state=state):
-                machine = VoiceProgressStateMachine(enabled=True)
-                machine.on_task_event(_event(), now=0.0)
-                machine.on_model_output("task_1", now=0.5)
-                machine.poll(now=5.0)
-
-                self.assertEqual(
-                    machine.on_task_event(_event(state=state, sequence=2), now=9.0),
-                    [("task_1", "I'm still working — Searching trusted sources.")],
-                )
-                self.assertEqual(machine.poll(now=20.0), [])
-
-    def test_rate_limited_progress_collapses_to_latest_authoritative_detail(self) -> None:
-        machine = VoiceProgressStateMachine(enabled=True)
-        machine.on_task_event(_event(), now=0.0)
-        machine.on_model_output("task_1", now=0.5)
-        machine.poll(now=5.0)
-
-        self.assertEqual(
-            machine.on_task_event(_event(detail="Reading source files", sequence=2), now=6.0),
-            [],
-        )
-        self.assertEqual(
-            machine.on_task_event(_event(detail="Checking the result", sequence=3), now=7.0),
-            [],
-        )
-        self.assertEqual(machine.poll(now=8.99), [])
-        self.assertEqual(
-            machine.poll(now=9.0), [("task_1", "I'm still working — Checking the result.")]
-        )
-        self.assertEqual(machine.poll(now=20.0), [])
-
-    def test_failed_progress_schedule_keeps_status_pending_with_existing_throttle(self) -> None:
-        now = [0.0]
-        attempts = []
-
-        def speak(task_id, text):
-            attempts.append((task_id, text))
-            return len(attempts) not in {1, 3}
-
-        controller = AsyncVoiceProgressController(
-            machine=VoiceProgressStateMachine(enabled=True),
-            speak=speak,
-            clock=lambda: now[0],
-        )
-        controller.on_task_event(_event())
-        controller.on_model_output("task_1")
-        now[0] = 5.0
-        controller.poll()
-        for current in (5.1, 9.999):
-            now[0] = current
-            controller.poll()
-        self.assertEqual(len(attempts), 1)
-
-        now[0] = 10.0
-        controller.poll()
-        self.assertEqual(len(attempts), 2)
-        now[0] = 14.0
-        controller.on_task_event(_event(detail="Checking the result", sequence=2))
-        self.assertEqual(len(attempts), 3)
-        now[0] = 18.999
-        controller.poll()
-        self.assertEqual(len(attempts), 3)
-        now[0] = 19.0
-        controller.poll()
-        self.assertEqual(len(attempts), 4)
-        self.assertEqual(attempts[-1], ("task_1", "I'm still working — Checking the result."))
-        now[0] = 30.0
-        controller.poll()
-        self.assertEqual(len(attempts), 4)
-
-    def test_long_silence_budget_starts_from_actual_audible_ack(self) -> None:
-        machine = VoiceProgressStateMachine(enabled=True)
-        machine.on_task_event(_event(), now=0.0)
-        machine.on_model_output("task_1", now=0.5)
-        machine.on_audible_ack("task_1", now=1.0)
-
-        self.assertEqual(machine.poll(now=5.99), [])
-        self.assertEqual(
-            machine.poll(now=6.0),
-            [("task_1", "I'm still working — Searching trusted sources.")],
-        )
-
-    def test_global_speech_limiter_prevents_two_tasks_talking_over_each_other(self) -> None:
-        machine = VoiceProgressStateMachine(enabled=True, global_rate_limit_s=1.0)
-        machine.on_task_event(_event(task_id="task_1"), now=0.0)
-        machine.on_task_event(_event(task_id="task_2"), now=0.0)
-
-        self.assertEqual(machine.poll(now=1.2), [("task_1", "I'm on it.")])
-        self.assertEqual(machine.poll(now=1.7), [])
-        self.assertEqual(machine.poll(now=2.2), [("task_2", "I'm on it.")])
-        self.assertEqual(
-            machine.poll(now=6.2),
-            [("task_1", "I'm still working — Searching trusted sources.")],
-        )
-        self.assertEqual(machine.poll(now=6.7), [])
-        self.assertEqual(
-            machine.poll(now=7.2),
-            [("task_2", "I'm still working — Searching trusted sources.")],
-        )
-        self.assertEqual(machine.poll(now=20.0), [])
-
-    def test_cancellation_race_removes_pending_speech(self) -> None:
-        machine = VoiceProgressStateMachine(enabled=True)
-        machine.on_task_event(_event(), now=0.0)
-        machine.on_task_event(_event(state="cancelling"), now=1.19)
-
-        self.assertEqual(machine.poll(now=10.0), [])
-
-    # === VIVENTIUM START ===
-    # A neutral progress utterance can already be queued in LiveKit when the
-    # authoritative task completes. Terminal truth must silence that stale
-    # handle so it cannot play after the real answer.
-    def test_terminal_task_event_stops_queued_progress_speech(self) -> None:
-        now = [0.0]
-        spoken = []
-        stopped = []
-        controller = AsyncVoiceProgressController(
-            machine=VoiceProgressStateMachine(enabled=True),
-            speak=lambda task_id, text: spoken.append((task_id, text)),
-            clock=lambda: now[0],
-            stop_active_speech=lambda: stopped.append(True),
-            initial_mode="call",
-        )
-        controller.on_task_event(_event())
-        now[0] = 1.2
-        controller.poll()
-
-        controller.on_task_event(_event(state="completed", phase="completed", sequence=2))
-
-        self.assertEqual(spoken, [("task_1", "I'm on it.")])
-        self.assertEqual(stopped, [True])
-
-    # === VIVENTIUM END ===
-
-    def test_cancel_barrier_recovering_stays_active_and_never_speaks_completion(self) -> None:
-        machine = VoiceProgressStateMachine(enabled=True)
-        recovering = _event(
-            state="recovering",
-            phase="cancel_barrier_recovering",
-            detail="Cancellation protection is recovering",
-            sequence=7,
-        )
-        recovering["error"] = {
-            "code": "cancel_barrier_unavailable",
-            "message": "Cancellation could not be made durable. Output remains locally suppressed.",
-            "retryable": True,
-        }
-
-        self.assertEqual(machine.on_task_event(recovering, now=0.0), [])
-        spoken = machine.poll(now=1.2)
-
-        self.assertEqual(spoken, [("task_1", "I'm on it.")])
-        self.assertFalse(any("completed" in text.lower() for _task_id, text in spoken))
-
-    def test_terminal_tombstone_rejects_stale_replay_before_it_can_speak(self) -> None:
-        machine = VoiceProgressStateMachine(enabled=True)
-        machine.on_task_event(_event(sequence=5), now=0.0)
-        machine.on_task_event(_event(state="cancelling", sequence=6), now=0.1)
-
-        self.assertEqual(
-            machine.on_task_event(
-                _event(phase="retrieval", detail="Stale replay", sequence=5),
-                now=1.0,
-            ),
-            [],
-        )
-        self.assertEqual(machine.poll(now=10.0), [])
-
-    def test_listen_only_disables_all_progress_speech(self) -> None:
-        machine = VoiceProgressStateMachine(enabled=False)
-        machine.on_task_event(_event(), now=0.0)
-
-        self.assertEqual(machine.poll(now=10.0), [])
-
-    def test_dynamic_listen_only_clears_pending_work_stops_audio_and_can_resume(self) -> None:
-        now = [0.0]
-        spoken = []
-        stopped = []
-        controller = AsyncVoiceProgressController(
-            machine=VoiceProgressStateMachine(enabled=True),
-            speak=lambda task_id, text: spoken.append((task_id, text)),
-            clock=lambda: now[0],
-            stop_active_speech=lambda: stopped.append(True),
-            initial_mode="call",
-        )
-        controller.on_task_event(_event())
-
-        now[0] = 1.0
-        controller.set_mode("listen_only")
-        now[0] = 10.0
-        controller.poll()
-        controller.on_task_event(_event(phase="retrieval", detail="Reading sources"))
-
-        self.assertEqual(spoken, [])
-        self.assertEqual(stopped, [True])
-        self.assertEqual(controller.mode, "listen_only")
-
-        controller.set_mode("call")
-        now[0] = 11.0
-        controller.on_task_event(_event(phase="retrieval", detail="Reading sources"))
-        now[0] = 12.21
-        controller.poll()
-
-        self.assertEqual(spoken, [("task_1", "I'm on it.")])
-        self.assertEqual(controller.mode, "call")
-
-    def test_fake_mode_server_switches_progress_and_ambient_without_reconnect(self) -> None:
+class TestAuthoritativeCallModeState(unittest.TestCase):
+    def test_mode_reconciliation_returns_snapshot_before_audio_restore_grant(self):
         async def run():
-            now = [0.0]
-            spoken = []
-            stopped = []
+            state = _ModeState()
             ambient_modes = []
             transitions = []
-            server_modes = iter(("listen_only", "call", None))
+            for mode in ("listen_only", "call"):
+                state.suspend()
+                result = await sync_authoritative_call_mode_once(
+                    fetch_mode=lambda: _return_async(mode),
+                    mode_state=state,
+                    set_ambient_mode=ambient_modes.append,
+                    on_mode_transition=lambda previous, current: transitions.append((previous, current)),
+                )
+                self.assertIsNone(state.mode)
+                state.apply(result)  # Existing caller grant, after successful audio restore.
+            return state.mode, ambient_modes, transitions
 
-            async def fetch_mode():
-                return next(server_modes)
-
-            controller = AsyncVoiceProgressController(
-                machine=VoiceProgressStateMachine(enabled=True),
-                speak=lambda task_id, text: spoken.append((task_id, text)),
-                clock=lambda: now[0],
-                stop_active_speech=lambda: stopped.append(True),
-                initial_mode="call",
-            )
-            controller.on_task_event(_event())
-            await sync_authoritative_call_mode_once(
-                fetch_mode=fetch_mode,
-                progress_controller=controller,
-                set_ambient_mode=ambient_modes.append,
-                on_mode_transition=lambda previous, current: transitions.append(
-                    (previous, current)
-                ),
-            )
-            now[0] = 10.0
-            controller.poll()
-            await sync_authoritative_call_mode_once(
-                fetch_mode=fetch_mode,
-                progress_controller=controller,
-                set_ambient_mode=ambient_modes.append,
-                on_mode_transition=lambda previous, current: transitions.append(
-                    (previous, current)
-                ),
-            )
-            controller.on_task_event(_event())
-            now[0] = 11.21
-            controller.poll()
-            await sync_authoritative_call_mode_once(
-                fetch_mode=fetch_mode,
-                progress_controller=controller,
-                set_ambient_mode=ambient_modes.append,
-                on_mode_transition=lambda previous, current: transitions.append(
-                    (previous, current)
-                ),
-            )
-            return spoken, stopped, ambient_modes, transitions, controller.mode
-
-        spoken, stopped, ambient_modes, transitions, mode = asyncio.run(run())
-        self.assertEqual(spoken, [("task_1", "I'm on it.")])
-        self.assertEqual(stopped, [True, True])
-        self.assertEqual(ambient_modes, ["listen_only", "call"])
-        self.assertEqual(transitions, [("call", "listen_only"), ("listen_only", "call")])
+        mode, ambient_modes, transitions = asyncio.run(run())
         self.assertEqual(mode, "call")
+        self.assertEqual(ambient_modes, ["listen_only", "call"])
+        self.assertEqual(transitions, [(None, "listen_only"), (None, "call")])
 
-    def test_uncertain_mode_interrupts_every_speech_plane_immediately(self) -> None:
+    def test_uncertain_mode_suspends_dispatch_and_interrupts_existing_planes(self):
         async def run():
-            stopped = []
+            state = _ModeState()
             uncertain = []
-            controller = AsyncVoiceProgressController(
-                machine=VoiceProgressStateMachine(enabled=True),
-                speak=lambda _task_id, _text: None,
-                clock=lambda: 0.0,
-                stop_active_speech=lambda: stopped.append("progress"),
-                initial_mode="call",
-            )
             result = await sync_authoritative_call_mode_once(
                 fetch_mode=lambda: _return_async(None),
-                progress_controller=controller,
+                mode_state=state,
                 set_ambient_mode=lambda _mode: None,
                 on_state_uncertain=lambda: uncertain.append("main_and_followup"),
             )
-            return result, stopped, uncertain
+            return result, state, uncertain
 
-        result, stopped, uncertain = asyncio.run(run())
+        result, state, uncertain = asyncio.run(run())
         self.assertIsNone(result)
-        self.assertEqual(stopped, ["progress"])
+        self.assertIsNone(state.mode)
+        self.assertEqual(state.suspensions, 1)
         self.assertEqual(uncertain, ["main_and_followup"])
+
 
     def test_signed_owner_call_state_push_is_strict_and_monotonic(self) -> None:
         payload = {
@@ -449,7 +145,7 @@ class TestVoiceProgressStateMachine(unittest.TestCase):
     def test_normal_200ms_reconciliation_tail_does_not_suspend_speech(self) -> None:
         async def run():
             now = [0.0]
-            progress = _ProgressController()
+            progress = _ModeState()
             uncertain = []
 
             async def fetch_mode():
@@ -464,7 +160,7 @@ class TestVoiceProgressStateMachine(unittest.TestCase):
 
             result = await sync_authoritative_call_mode_once(
                 fetch_mode=fetch_mode,
-                progress_controller=progress,
+                mode_state=progress,
                 set_ambient_mode=lambda _mode: None,
                 on_state_uncertain=lambda: uncertain.append(True),
             )
@@ -477,7 +173,7 @@ class TestVoiceProgressStateMachine(unittest.TestCase):
 
     def test_terminal_authoritative_state_stops_speech_without_cancelling_work(self) -> None:
         async def run():
-            progress = _ProgressController()
+            progress = _ModeState()
             terminal = []
             backend_work = {"state": "running"}
             result = await sync_authoritative_call_mode_once(
@@ -490,7 +186,7 @@ class TestVoiceProgressStateMachine(unittest.TestCase):
                         "revision": 9,
                     }
                 ),
-                progress_controller=progress,
+                mode_state=progress,
                 set_ambient_mode=lambda _mode: None,
                 on_terminal_state=lambda status: terminal.append(status),
             )
@@ -505,7 +201,3 @@ class TestVoiceProgressStateMachine(unittest.TestCase):
 
 async def _return_async(value):
     return value
-
-
-if __name__ == "__main__":
-    unittest.main()

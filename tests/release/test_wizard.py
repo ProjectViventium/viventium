@@ -345,7 +345,7 @@ def test_configure_source_easy_install_selects_glasshive_main_and_defers_optiona
     glasshive = config["integrations"]["glasshive"]
     assert glasshive["enabled"] is True
     assert glasshive["provider"]["enabled"] is True
-    assert glasshive["provider"]["default_model"] == "codex-cli:gpt-5.6-sol"
+    assert glasshive["provider"]["default_model"] == "codex-cli:gpt-6.1-sol"
     assert glasshive["host_worker"]["enabled"] is True
     assert glasshive["host_worker"]["default_worker_profile"] == "codex-cli"
     assert config["runtime"]["prompt_workbench"]["enabled"] is False
@@ -428,29 +428,30 @@ def test_source_easy_install_compiles_canonical_main_to_glasshive_codex(
 
     assert assignments["conscious"] == (
         "glasshive-harness",
-        "codex-cli:gpt-5.6-sol",
+        "codex-cli:gpt-6.1-sol",
     )
     assert compiled_agents["mainAgent"]["provider"] == "glasshive-harness"
-    assert compiled_agents["mainAgent"]["model"] == "codex-cli:gpt-5.6-sol"
+    assert compiled_agents["mainAgent"]["model"] == "codex-cli:gpt-6.1-sol"
+    assert compiled_agents["mainAgent"]["model_parameters"]["reasoning_effort"] == "high"
     assert compiled_agents["mainAgent"]["glasshive_options"] == {
         "workspace": {"mode": "default"},
         "access": "full",
-        "fallback_model": "claude-code:opus",
+        "fallback_model": "claude-code:claude-opus-5-5",
         "fallback_reasoning_effort": "high",
         "orchestration": {
             "default_mode": "parallel",
             "parallel_available": True,
             "worker_profile": "codex-cli",
-            "worker_model": "codex-cli:gpt-6-astra",
-            "worker_reasoning_effort": "medium",
+            "worker_model": "codex-cli:gpt-6.1-sol",
+            "worker_reasoning_effort": "high",
             "fallback_worker_profile": "claude-code",
-            "fallback_worker_model": "claude-code:opus",
-            "fallback_worker_reasoning_effort": "medium",
+            "fallback_worker_model": "claude-code:claude-opus-5-5",
+            "fallback_worker_reasoning_effort": "high",
         },
     }
     assert runtime_env["START_GLASSHIVE"] == "true"
     assert runtime_env["VIVENTIUM_FC_CONSCIOUS_LLM_PROVIDER"] == "glasshive-harness"
-    assert runtime_env["VIVENTIUM_FC_CONSCIOUS_LLM_MODEL"] == "codex-cli:gpt-5.6-sol"
+    assert runtime_env["VIVENTIUM_FC_CONSCIOUS_LLM_MODEL"] == "codex-cli:gpt-6.1-sol"
     assert runtime_env["GLASSHIVE_DEFAULT_WORKER_PROFILE"] == "codex-cli"
     assert runtime_env["GLASSHIVE_PROVIDER_BASE_URL"] == "http://127.0.0.1:8766/v1"
 

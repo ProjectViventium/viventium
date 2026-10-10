@@ -327,6 +327,10 @@ release_tests:
     qa_owner: qa/stable-dev-runtime/cases.md
   tests/release/test_launcher_glasshive_watchdog.py:
     qa_owner: qa/installer-resilience/cases.md
+  tests/release/test_launcher_grok_binary.py:
+    qa_owner: qa/installer-resilience/cases.md
+  tests/release/test_librechat_compiled_serving.py:
+    qa_owner: qa/installer-resilience/cases.md
   tests/release/test_launcher_telegram_launchd_scope.py:
     qa_owner: qa/stable-dev-runtime/cases.md
   tests/release/test_launcher_trusted_root_paths.py:

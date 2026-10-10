@@ -41,7 +41,7 @@ journeys:
     requirements: [PW-098]
     userAction: Run two overlapping artifact missions, ask a quick question, revise one late input, Steer only A, and open both outputs.
     surfaces: [installed Telegram, headed Web, Active Work]
-    expectedResult: Main remains responsive, B is unchanged, and two distinct valid files are delivered exactly once.
+    expectedResult: Main remains responsive, B is unchanged, and two distinct valid files are delivered exactly once. A Web callback's imported file link opens the owner-authenticated host copy with its original filename and bytes; canonical text and content remain intact through a subsequent protected Main turn; native grants and remote-channel attachment delivery remain intact.
     degradedAndRecovery: A stale or late result cannot replace the current answer or affect the other mission.
     persistenceAndCleanup: Reload and restart preserve both work records and artifacts before exact cleanup.
     evidence: [visible transcript, action receipt, attempt and lease state, artifact hashes, callback and delivery rows]

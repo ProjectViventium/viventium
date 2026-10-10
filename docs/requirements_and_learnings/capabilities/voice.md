@@ -14,8 +14,35 @@ transcript evidence without acting as an assistant.
   mission, or external effect.
 - **PW-051:** Spoken interruption revises unfinished speech once. Hangup or network loss does not
   cancel accepted durable work.
+- The authenticated Call owner may Stop an exact read-only reply generation. Native Stop is confirmed
+  only after that request family has released capacity. This does not grant an unverified speaker
+  tools, work controls or native input, and does not cancel an accepted mission or external effect.
 - A state-changing voice command reserves its durable owner-and-turn identity before provider
   execution, persists the terminal outcome, and reconciles retries against that same record.
+
+Speech cancellation preserves the original input admission and its authentic Core receipt in the
+existing call continuation lifecycle. Consecutive inputs keep their original text and source
+identity; admission ordering remains separate from speech presentation. Waiting for the predecessor
+receipt does not consume the successor's own transport deadline. An authentic ready receipt binds
+before a separate removal acknowledgement can fail. That acknowledgement uses the existing bounded
+call-owned task; it does not block later inputs after a genuine receipt. End drains the owned
+admission, HTTP and acknowledgement tasks. Missing or failed receipts never create a removal
+acknowledgement or new action authority. Retention before Core admission is limited to the live call
+process; a transport timeout does not prove admission.
+
+The same source recovery accepts an unfinished Web predecessor for a Voice successor.
+The successor's declared additive scope owns input continuity. Recovery still requires
+exact source and owner identity, actual removal evidence, released execution and fresh
+accepted-work facts within the existing deadline. Partial removal does not prove provider
+completion or grant new authority; unanswered inputs retain their content and order.
+
+### Terminal media loss
+
+A native terminal room disconnect reports failure through the exact current gateway owner.
+After that report is accepted, job shutdown stops local authenticated couriers before releasing
+only that worker's lease. The existing Retry path can then reclaim the call without waiting for
+lease expiry. Transient reconnects and intentional local disconnects do not release ownership.
+Durable conversation work continues and generated speech alone never proves playback.
 
 ### Barge-in
 
@@ -65,9 +92,13 @@ spoken recall, early streamed speech and once-only worker completion through cap
 durable sent settlement. The linked prior report retains unchanged verified-owner tools,
 approvals, recovery, Feelings, cortices, memory and interruption evidence. Full-flow latency joins
 actual input PCM end to browser audio and distinguishes provider activity from model tokens.
-Physical response under two seconds is not met. Default Unknown microphone action authority,
-the rejected hosted Listening route, original linked-owner Web sign-in and genuinely off-network
-public-file acceptance remain open. Short non-lexical sounds can produce false local-ASR text;
+Physical response under two seconds is not met. Normal Call has the account-bound microphone-track
+authority described in [Voice Calls](../06_Voice_Calls.md); it does not identify the human speaker.
+Wing and Listen-Only retain their separate verified-speaker requirements. Full hardware microphone
+acceptance, the rejected hosted Listening route and genuinely off-network
+public-file acceptance remain open. Original linked-owner Web sign-in was recovered through the
+normal login path; that recovery does not establish microphone action authority or resolve the
+hosted Listening rejection. Short non-lexical sounds can produce false local-ASR text;
 unqualified filenames retain the native bare-link behavior. These bounded results do not establish
 universal recognition accuracy, glitch-free audio, full microphone parity or release readiness.
 
@@ -75,6 +106,21 @@ universal recognition accuracy, glitch-free audio, full microphone parity or rel
 
 - **PW-050:** In a normal Voice Call, Main remains available and may perform explicit authorized
   launch, list, queue, message, Steer, Pause, Resume, Stop, Retry, or Dismiss actions on exact work.
+
+Reconnect keeps the audio choice for each validated public model envelope on the existing text
+part. Main can speak an update and keep a later result silent, or do the reverse, including when a
+native tool joins those envelopes at one graph content index. Adjacent identical choices share one
+range. Resume deduplication counts silent text as received text. Core's visible aggregate owns local
+resume; Redis reconstructs only emitted public chunks when that aggregate is unavailable. Hidden
+specialist evidence does not become public speech on reconnect. Absent range metadata keeps the
+existing audio default; present malformed range metadata stays silent. The unannotated terminal
+`audio=skip` fallback remains silent. These controls
+change presentation only; they grant no tool or effect authority.
+
+- The selected cloud speech-to-text route may receive a bounded typed list of display names from
+  owner-visible artifacts in the current conversation, including native artifact filenames retained
+  in owner-bound message metadata. It excludes file bodies, paths, digests, secrets, and other-owner
+  data, and it must not change the selected provider or route.
 
 ### Result presentation
 
@@ -90,6 +136,27 @@ follow-up cleanup and length cap. Voice controls stay hidden from display. Owner
 speech-permit and playback checks remain in force, and link visibility does not change file access
 or Call participant grants.
 
+The Call offers **Open in chat** during and after the call, including an ended-page reload, using its current or canonical result
+conversation and the existing verified opener origin. It opens the normal authenticated chat,
+where persisted file cards remain usable. Main's authored link targets stay unchanged.
+With current call access, a completed public reply can show filenames from its owned saved File
+rows. The file card has **Open in chat** and **Dismiss** and survives the transient activity hide,
+within the existing task-history limit. The task read exposes only filenames as file metadata.
+Completed generation, native-worker and callback-delivery tasks use their private task-owner
+identity for this read, including tasks without a generation logical turn. This read does not
+grant speaker or effect authority.
+Missing, deleted, unavailable or out-of-scope results create no file card. Ended calls and reloads
+use the existing authenticated chat handoff without extending the call capability.
+When playback acknowledgement commits a previously unfinished reply, the existing task feed sends
+a new snapshot. The file card reads once per task revision. Duplicate acknowledgements keep one
+completion and one spoken result. A file-card refresh failure does not block Main turn acceptance.
+Denied browser session storage follows the existing call recovery path without blanking the page
+or adding an authorization fallback. The launch fragment is removed before storage is attempted;
+call teardown still runs when browser storage cannot be cleared. Call activity
+maps the declared internal task phases to the existing task-state label and omits phase text that exactly
+repeats the heading or state badge;
+meaningful progress text, counts, sources, errors and task controls remain visible.
+
 ### Speaker authority
 
 - **PW-053:** Only an explicitly engaged trusted Wing may use its authorized speaker role. Passive,
@@ -98,6 +165,22 @@ or Call participant grants.
 The signed browser engagement proxy keeps its 8.5-second upstream deadline and browser cancellation
 active through the complete response-body read and response construction. Receiving headers does
 not end either guard; a stalled body retains the existing timeout or unavailable classification.
+
+## Call entry from Telegram
+
+- Telegram `/call` mints one browser-facing link through the same call-session service as the web
+  call button. The link uses the configured public playground origin and carries a single-use
+  launch bearer only in its fragment; a replayed or expired link is denied honestly.
+- The link bootstraps only where the public HTTPS edge is reachable. A device on the serving Wi-Fi
+  reaches the public hostname only when the router provides NAT loopback or an equivalent split-DNS
+  or mesh route; that precondition is owned by
+  [remote access](../47_Remote_Access_and_Tunneling.md), not by call code, and a same-network
+  timeout with off-network success is never an application regression.
+- Remote-access status may claim only what this Mac observed: reachable from this network, local
+  hairpin unavailable, or not probed. Off-network reachability is proven by a real off-network
+  client, never inferred.
+- Durable journey: `qa/voice/cases.yaml` `telegram-call-public-edge`. Telegram QA links to it and
+  does not duplicate it.
 
 ## Listen-Only
 
@@ -119,8 +202,56 @@ not end either guard; a stalled body retains the existing timeout or unavailable
   speech when the global speaking state stays unchanged. A queued worker cannot borrow another
   speaker's event. Interrupted, unheard or uncertain output retains `delivery_unknown` under the same claim
   and dispatch permit; it never settles a coalesced worker presentation or enables blind replay.
+- If a canonical response has a typed unavailable file attachment, the current speech stream adds
+  “The file could not be attached.” once. Main's authored reply, result identity and cortex context
+  stay intact, including when linked background work still runs. Generation errors take precedence.
+  Text-only delivery, declared silence, Listen-Only, Stop and supersession keep their speech fences.
 - Raw audio retention stays zero unless a separate explicit product policy says otherwise.
 - Transcript and task data remain owner- and call-scoped and follow normal retention and deletion.
+
+Concurrent Phase B authors can share an occupied native conversation session. For a declared
+durable session with activity and idempotency support, the existing native admission adapter
+retries only the typed `conversation_session_authority_conflict` response using the identical
+signed request. It keeps the transport cancellation signal and the existing 30-second admission
+budget. Other authority conflicts remain failures. Budget expiry returns the original typed
+failure. The producer settles every exact admitted row with the enum-backed
+`native_session_occupied` failure event in the existing durable insight ledger. Recovery reads
+that owner-scoped append-only evidence, independently of later parent decision metadata.
+Recovery uses the owned parent, original
+Call/task/stream/source revision and pinned Feeling snapshot; explicit Stop still suppresses it.
+It re-authors the stored insight under current conversation context with the same parent/agent
+idempotency key and a fresh signed read-only Native capability. It does not retain or replay the
+old serialized request or reconstruct microphone action permission.
+
+A live recovered follow-up saves one canonical message and wakes the existing task feed. Saving
+text never confirms speech: the authenticated Voice receiver still prepares and confirms its
+exact presentation. A saved live child retries the existing exact task wake and parent backoff;
+it is not re-authored or reclaimed by the recovery scan. The existing child event identity
+deduplicates wakes, and the durable task tail retains missed publication for receiver replay.
+An unended Call with a temporary gateway lease gap stays pending through the existing backoff;
+only that original Call may reclaim speech. An already saved result stays saved during the gap.
+Model-declared silence remains valid. If the original Call ends or expires, recovery preserves
+useful linked-chat text and truthfully closes the unavailable Voice obligation after persistence;
+it never switches to another Call, changes required surfaces, or reports text as spoken. Missing
+or conflicting retained task/source authority fails closed; permanent scope conflicts use the
+existing claimed-attempt limit and terminal outcome. Transient store failures retain backoff.
+The existing one-complete-batch-per-parent guards remain unchanged. Inconsistent legacy row
+causes remain pending without slicing the batch, authoring unrelated insights, or dropping a
+retained typed contribution; multiple declared parent cohorts remain rejected at admission.
+Older rows without the typed event are not reclassified from mutable parent metadata.
+
+A pending Main-authored worker completion publishes its exact hashed callback reference through
+the existing durable call-task feed after the result transaction commits. Reconciliation and
+task replay recover a missed wake. This publication is discovery only: the gateway still claims
+the matching owner and current-call delivery, checks its accepted result and speech permit, and
+speaks Main's validated text through the existing renderer. A later foreground turn does not
+erase that independent delivery. Listen-Only, Stop, ended calls and completed presentations keep
+their existing speech fences. Neutral worker callbacks do not acquire speech authority.
+When an older worker observer reaches an already-sent result, the existing claim response
+can return its exact owner/current-Call settled receipt after checking the accepted callback
+operation. The observer stops once its known terminal callbacks are settled. Empty claims,
+pending or unconfirmed delivery, foreign scope and superseded results keep the existing retry
+and deadline behavior; the settled receipt cannot authorize or repeat speech.
 
 ## Orchestration observability
 
@@ -129,6 +260,15 @@ independent cortex execution and Phase B presentation. Traces join these stages 
 and logical turn with domain-separated hashes. Activation detection uses a fresh invocation identity
 and records each cortex once within that invocation. Model receipts distinguish the requested model
 from the actual native catalog selection, and retain the configured effort.
+
+Phase B uses the same declared Native output contract as Main. An owned active Call or an
+authenticated audio adapter supplies audio eligibility; a caller's surface or Call label alone
+cannot. Native validates the typed `assistant_response` and exposes only its authored content.
+Text and file JSON outside that declared contract remain literal data. Phase B retains the model's
+versioned audio disposition on both new and promoted saved replies. `voice=skip` suppresses only
+Voice presentation, including its legacy insight fallback, while linked text and files remain
+available. An exact accepted suppressed worker delivery settles its observer without authoring,
+speech, dispatch or replay; pending siblings keep their existing retry behavior.
 
 Native Grok receives the existing typed conversation output schema through ACP
 `session/prompt._meta.outputSchema`, including resumed turns. The private schema file is checked
@@ -146,6 +286,15 @@ native session and seeds its visible history through the existing provider mecha
 Native Grok observations include receive time in UTC, monotonic elapsed milliseconds and runner,
 process, session-open and prompt-start markers. These distinguish observed setup and prompt time;
 they do not infer hidden reasoning, provider queue time, cache behavior or unavailable token usage.
+Enabled latency logging also separates request-local bundle copying from restart-authority
+reconciliation. Each Native interval records a fixed completed or failed status. Core records the
+awaited initial message persistence sequence, the cumulative message-build prefix through
+continuity, and the local formatting, token-accounting and RAG interval before memory recall.
+The continuity prefix includes earlier preparation; the formatting interval is not pure
+tokenization. Nested and cumulative intervals overlap and must not be added together. Core build
+markers report only reached boundaries; they do not claim that memory is available or that a failed
+build completed. Disabled logging leaves the existing execution unchanged. These records contain
+fixed stage names, numeric times and hashed request identities, without source text or memory keys.
 STT segment times retain their relative call-audio clock. The worker maps their end offset to UTC
 through the call's paired monotonic/UTC origin before joining dispatch and provider stages. The
 trace identifies this as the STT call-audio timeline; final-transcript observation remains a separate
@@ -155,9 +304,22 @@ With latency logging enabled, the pinned provider wrappers separately record rec
 AssemblyAI's end-of-turn event, observation of its final transcript, and SDK turn-commit entry
 and exit. Word-end offsets remain provider-relative. The configured xAI instance records first
 accepted text, websocket connect, first text write and first audio receipt. Socket reuse is
-observed by object identity; it is not assumed for a later turn. Unsupported SDK versions keep
+observed at every actual lease; it is not assumed for a later turn. The pinned xAI adapter returns
+only completed clean sockets to the SDK pool, evicts interrupted or failed leases, and warms the
+selected primary during Main inference. Settings changes retire old idle sockets while active
+speech can finish. Call close owns pool cleanup. Unsupported SDK versions keep
 their original behavior and report that the measurement is unavailable. These records contain
 hashes and typed timing fields, not transcripts, credentials, provider URLs or audio contents.
+The first decoded PCM record observes nonempty raw PCM passed to the SDK emitter after
+base64 decoding. Websocket audio receipt occurs before that boundary. Neither record proves
+remote receipt or audible playback. Main and the independent cortex presenter own authored
+speech. Runtime task events remain typed status for task cards and the durable relay; they do
+not create canned verbal acknowledgements or progress narration. A completed speech handle
+alone is not evidence of audio delivery. Real Voice acceptance still requires received PCM or
+captured audible output.
+If a reused socket accepts text but returns no first PCM, the existing request timeout starts
+at that text write. Model inference is excluded. Native retry can recover before audio;
+after first PCM, the original renderer owns the complete tail without replay.
 For an actual native streaming Speaking renderer, the gateway releases complete safe word
 prefixes when the next lexical token begins. It retains the last word for delayed punctuation,
 numbers and unfinished markup. The renderer keeps one continuous text segment until input ends;
@@ -224,7 +386,8 @@ endurance or installed-release acceptance.
 Managed LiveKit media preserves the configured public IPv4 route and retains native local and
 loopback ICE candidates through the published media ports. Local callers do not require router
 hairpin NAT. The pinned server uses native external-IP discovery at startup to keep both candidate
-types; discovered public mappings must equal the configured node IP before startup is accepted.
+types; discovered public IPv4 mappings must equal the configured node IP before startup is accepted.
+Additional IPv6 candidates do not invalidate that explicit IPv4 assertion.
 Private or mesh node addresses, IPv6 and deliberately configured external LiveKit endpoints keep
 their existing routing. Discovery is a startup operation and adds no per-turn delay. A managed
 public-IP container with an older candidate configuration is not reused as a matching artifact.
@@ -245,5 +408,31 @@ Live-call responses remain audio eligible for ordinary answers, drafts, lists an
 Only an explicit user request for text-only or silent delivery suppresses audio. The existing
 no-response and listen-only contracts still apply. A long written artifact may have a short spoken
 summary or pointer instead of being read in full. This policy belongs to the shared versioned
-`surface.voice.call` prompt and is inherited by each selected voice provider. Native delivery
+`surface.voice.call` prompt and is inherited by each selected voice provider. Spoken audio uses
+short sentences without Markdown, lists or code blocks. Written artifacts retain their format and
+file-link contract. The speech constraint does not prohibit artifact delivery. Native delivery
 metadata remains model-owned and is validated before speech.
+
+The native conversation output schema owns the typed public delivery contract. A visible Main
+consult may include a useful, truthful update in `tool_call.content`, or leave it empty. Its
+model-selected `voice` control applies to that content before the graph transfer. Completed
+specialist return content is evidence for the receiving agent and uses `voice=skip`; existing
+visibility and current-turn authority checks still apply. Speech uses the active reply stream.
+There is no required acknowledgement or extra speech queue. Prompt Workbench evaluation retains
+the schema owner, rendered schema, and actual ACP schema hash beside the registered prompt-frame
+lineage; a schema change does not change the registered prompt bodies.
+
+A later Main invocation in the same accepted native turn may stream public speech from its
+current Core reservation and completed accepted family. The owner, session, message, stream,
+logical turn, revision and context must match. The latest native admission is checked again after
+public text is projected. This path grants no invocation preview, new action or inherited request
+body hash. Existing current-turn and Stop checks still govern delivery. If the model stream ends
+after public words but before completion, the existing error path keeps the saved response
+unfinished and reports the interruption. Visible words alone do not prove a completed response
+or permit a second author to replace it. A resolved stream remains complete if later cleanup fails.
+
+Native speech releases authored words before a local file link, while the link and its remaining
+suffix wait for the canonical terminal artifact projection. Pending Markdown links also wait until
+their target is known. Complete public URLs, code and literal text keep their existing behavior.
+The accepted-prefix fence remains strict. Only the terminal file carrier can publish artifact
+identity or access; missing or rejected files receive no invented carrier.

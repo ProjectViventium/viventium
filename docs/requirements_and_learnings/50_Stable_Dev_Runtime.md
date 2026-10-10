@@ -45,6 +45,9 @@ confusing upstream component boundaries.
   environment never reads or clears those cookies. A missing or invalid dev identity fails closed.
   This prevents accidental sign-in/logout interference; it does not make same-host services a
   security boundary. Cookie security flags and account authorization remain unchanged.
+- The launcher treats `localhost` and `127.0.0.1` at the exact configured LiveKit HTTP port as
+  the same managed local endpoint. Compiler-generated loopback URLs must not be mistaken for an
+  unavailable external service and prevent the managed Docker runtime from starting.
 - A listener on the configured Mongo port is not sufficient persistence readiness. Before reusing an
   existing Mongo process, the native launcher must query the running server's parsed command-line
   options and verify that `storage.dbPath` resolves to the configured Viventium data directory. A
@@ -52,8 +55,10 @@ confusing upstream component boundaries.
   of silently switching the user's conversation and memory history.
 - Launcher-managed modern-playground runtimes should prewarm the voice startup API routes before
   starting the voice worker so local users and developers do not pay the first-hit Next.js dev
-  compile cost on the call page. These prewarm requests are bounded and warn-only so a stuck dev
-  compile does not delay the rest of runtime startup for minutes.
+  compile cost on the call page and its task actions. An unsupported GET also compiles the
+  task-action module; Next returns 405 without invoking its POST handler or issuing a grant.
+  These prewarm requests are bounded and warn-only so a stuck dev compile does not delay the rest
+  of runtime startup for minutes.
 - The macOS helper must not keep the installed local-prod runtime healthy by repeatedly rendering
   expensive user-facing pages. Steady-state helper checks use one shared health snapshot per refresh
   cycle, probe the modern playground through a lightweight `/api/health` endpoint, and back off while
@@ -84,6 +89,10 @@ The existing lockfile/source freshness and pinned-Node checks remain active; cop
 not make older dependencies or outputs trusted. A candidate that needs builds must be inactive and
 must own its dependency/output trees. Startup rechecks readiness after publication; no timestamp
 adjustment or bypass receipt substitutes for preparation.
+When startup selects generated LibreChat configuration, the shared preparation and direct server
+path preserve compiler ownership. The local template-refresh wrapper must not replace that selection.
+The renderer uses the selected compiled YAML and prompt bundle directly. If either is missing,
+startup stops before it can select a local template or an incomplete generated file.
 
 ## Mental Model For Contributors
 
@@ -228,6 +237,10 @@ active runtime reports the sidecar as ready.
 - Dev stop is strict and runtime-scoped: stop its own Prompt Workbench sidecar, PID-owned services,
   unique listeners, and local Compose project, but never use same-checkout or workspace-wide process
   sweeps that could terminate local prod or shared singletons.
+- Parallel proxy shutdown uses native Compose `down` for the same selected instance and project,
+  removing its declared proxy networks without volume removal. Worker mission networks stay under
+  their native owner. Missing Compose source or failed teardown warns and falls back to the same
+  project's container cleanup; native warnings about networks still in use remain visible.
 - Recall/RAG remains shared by default. When a dev environment explicitly owns local RAG, the
   compiler offsets the vector-database host port and gives the dev stack a distinct Compose project
   name so start/stop cannot claim the product RAG containers.

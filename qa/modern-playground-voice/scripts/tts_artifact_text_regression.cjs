@@ -16,6 +16,8 @@ const {
   semanticModelIsHealthy,
 } = require('./tts_artifact_browser_qa.cjs');
 
+assert.strictEqual(DEFAULT_TTS_FORBIDDEN_ARTIFACT_KEYS.includes('adjacentDuplicateWord'), false);
+
 const protectedExamples = [
   'The assistant quoted: "no no no no no no" and then explained why.',
   'The assistant quoted: “go go go go go go” and then explained why.',
@@ -26,9 +28,9 @@ const protectedExamples = [
 
 for (const text of protectedExamples) {
   assert.strictEqual(
-    artifactCounts(text).adjacentDuplicateWord,
-    0,
-    `protected repetition should not count as adjacent duplicate: ${stripProtectedTextRanges(text)}`,
+    Object.hasOwn(artifactCounts(text), 'adjacentDuplicateWord'),
+    false,
+    `repetition has no lexical corruption classification: ${stripProtectedTextRanges(text)}`,
   );
 }
 
@@ -41,16 +43,20 @@ for (const { key, text } of SYNTHETIC_FORBIDDEN_ARTIFACT_CASES) {
 }
 
 assert.strictEqual(
-  artifactCounts('hahaha!').adjacentDuplicateWord,
+  sumForbiddenArtifacts(artifactCounts('hahaha!')),
   0,
   'legitimate repeated incremental output should not count as duplicate corruption',
 );
 
-for (const text of ['I had had enough.', 'The data is is consistent.', 'That that exists is odd.']) {
+for (const text of [
+  'I had had enough.', 'The data is is consistent.', 'That that exists is odd.',
+  'No, no, no. Please please please. Never never again.',
+  'Nine. Almost ten. Ten. Nineteen. Nearly twenty. Twenty. Twenty-five. Five to go.',
+]) {
   assert.strictEqual(
-    artifactCounts(text).adjacentDuplicateWord,
+    sumForbiddenArtifacts(artifactCounts(text)),
     0,
-    `legitimate adjacent duplicate should not count as corruption: ${text}`,
+    `authored repetition must not be classified as transport corruption: ${text}`,
   );
 }
 
@@ -73,8 +79,7 @@ assert.strictEqual(
 );
 
 assert.strictEqual(
-  artifactCountsForMessages(['I started the worker.', 'Worker completed successfully.'])
-    .adjacentDuplicateWord,
+  sumForbiddenArtifacts(artifactCountsForMessages(['I started the worker.', 'Worker completed successfully.'])),
   0,
   'separate assistant messages must not create a cross-message duplicate-word artifact',
 );

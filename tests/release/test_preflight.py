@@ -75,6 +75,228 @@ def load_config_compiler_module():
     return module
 
 
+@pytest.mark.parametrize(
+    ("model", "expected_command"),
+    [
+        ("codex-cli:gpt-6.1-sol", "codex"),
+        ("claude-code:claude-opus-5-5", "claude"),
+        ("grok-build:grok-4.7", "grok"),
+        ("grok-build:grok-4.7-build-fast", "grok"),
+        ("codex-cli:gpt-6-astra", "codex"),
+        ("claude-code:claude-opus-5", "claude"),
+        ("codex-cli:gpt-5.6-sol", "codex"),
+        ("claude-code:opus", "claude"),
+        ("codex-cli:gpt-5.6-luna", "codex"),
+        ("codex-cli:gpt-5.6-terra", "codex"),
+        ("codex-cli:gpt-6-sol", "codex"),
+        ("", ""),
+        ("codex-cli:undeclared-model", ""),
+        ("claude-code:undeclared-model", ""),
+        ("grok-build:undeclared-model", ""),
+        ("unknown-profile:unknown-model", ""),
+    ],
+)
+def test_provider_model_login_command_uses_declared_harness_profile(
+    model: str, expected_command: str,
+) -> None:
+    module = load_preflight_module()
+
+    assert module.glasshive_worker_command_for_provider_model(model) == expected_command
+
+
+def test_provider_model_login_command_rejects_an_unavailable_declared_profile(monkeypatch) -> None:
+    module = load_preflight_module()
+    import config_compiler
+
+    monkeypatch.setattr(
+        config_compiler,
+        "GLASSHIVE_PROVIDER_MODELS",
+        [{"id": "codex-cli:synthetic-unavailable", "harnessProfile": "unavailable-profile"}],
+    )
+
+    assert module.glasshive_worker_command_for_provider_model("codex-cli:synthetic-unavailable") == ""
+
+
+@pytest.mark.parametrize(
+    ("selection", "expected"),
+    [
+        ("vendor", "vendor"),
+        ("path", "path"),
+        ("explicit-absolute", "explicit"),
+        ("explicit-relative", "explicit"),
+        ("explicit-missing", ""),
+        ("nonexecutable-vendor", ""),
+        ("missing", ""),
+    ],
+)
+def test_grok_host_binary_preserves_native_selection(monkeypatch, tmp_path, selection, expected):
+    load_preflight_module()
+    import host_cli_auth
+
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.delenv("WPR_GROK_BIN", raising=False)
+    vendor = tmp_path / ".grok/bin/grok"
+    path_binary = tmp_path / "path-bin/grok"
+    explicit = tmp_path / "selected-bin/selected-grok"
+    for binary in (vendor, path_binary, explicit):
+        binary.parent.mkdir(parents=True, exist_ok=True)
+        binary.write_text("#!/bin/sh\nexit 0\n")
+        binary.chmod(0o700)
+    monkeypatch.setenv("PATH", str(path_binary.parent) if selection == "path" else "")
+    if selection.startswith("explicit-"):
+        selected = str(explicit)
+        if selection == "explicit-relative":
+            selected = explicit.name
+            monkeypatch.setenv("PATH", str(explicit.parent))
+        elif selection == "explicit-missing":
+            selected = str(tmp_path / "missing-grok")
+        monkeypatch.setenv("WPR_GROK_BIN", selected)
+    elif selection == "nonexecutable-vendor":
+        vendor.chmod(0o600)
+    elif selection == "missing":
+        vendor.unlink()
+
+    assert host_cli_auth.host_cli_command("grok") == {
+        "vendor": str(vendor), "path": str(path_binary), "explicit": str(explicit), "": "",
+    }[expected]
+
+
+@pytest.mark.parametrize("outcome", ["authenticated", "rejected", "timeout", "unavailable", "missing-probe"])
+def test_grok_host_auth_uses_bounded_native_probe(monkeypatch, tmp_path, outcome):
+    load_preflight_module()
+    import host_cli_auth
+
+    probe = tmp_path / "grok_auth.py"
+    if outcome != "missing-probe":
+        probe.write_text("# Synthetic pinned component probe\n")
+    monkeypatch.setattr(host_cli_auth, "GROK_AUTH_PROBE", probe)
+    monkeypatch.setattr(host_cli_auth, "host_cli_command", lambda _command: "/synthetic/bin/grok")
+    monkeypatch.setenv("XAI_API_KEY", "synthetic-credential")
+    monkeypatch.setenv("GROK_AUTH_PATH", str(tmp_path / "native-account/auth.json"))
+    monkeypatch.setenv("GROK_DISABLE_AUTOUPDATER", "0")
+    calls = []
+
+    def native_probe(args, **kwargs):
+        calls.append((args, kwargs))
+        if outcome == "timeout":
+            raise subprocess.TimeoutExpired(args, kwargs["timeout"])
+        if outcome == "unavailable":
+            raise OSError("Synthetic probe launch failure")
+        return subprocess.CompletedProcess(args, 0 if outcome == "authenticated" else 1)
+
+    monkeypatch.setattr(host_cli_auth.subprocess, "run", native_probe)
+
+    assert host_cli_auth.host_cli_auth_ready("grok") is (outcome == "authenticated")
+    if outcome == "missing-probe":
+        assert calls == []
+    else:
+        assert len(calls) == 1
+        args, kwargs = calls[0]
+        assert args == [sys.executable, str(probe), "--binary", "/synthetic/bin/grok"]
+        assert kwargs["timeout"] == 30
+        assert kwargs["stdout"] == kwargs["stderr"] == subprocess.DEVNULL
+        assert kwargs["env"]["XAI_API_KEY"] == "synthetic-credential"
+        assert kwargs["env"]["GROK_AUTH_PATH"] == str(tmp_path / "native-account/auth.json")
+        assert kwargs["env"]["GROK_DISABLE_AUTOUPDATER"] == "1"
+
+
+def test_grok_host_auth_does_not_probe_an_unavailable_binary(monkeypatch):
+    load_preflight_module()
+    import host_cli_auth
+
+    monkeypatch.setattr(host_cli_auth, "host_cli_command", lambda _command: "")
+
+    def unexpected_probe(*_args, **_kwargs):
+        pytest.fail("An unavailable native binary cannot authenticate")
+
+    monkeypatch.setattr(host_cli_auth.subprocess, "run", unexpected_probe)
+
+    assert host_cli_auth.host_cli_auth_ready("grok") is False
+
+
+@pytest.mark.parametrize("main_model", ["grok-build:grok-4.7", "grok-build:grok-4.7-build-fast"])
+@pytest.mark.parametrize("authenticated_cli", ["grok", "codex", "claude", ""])
+def test_declared_grok_main_preflight_requires_its_native_auth(
+    monkeypatch, tmp_path, main_model, authenticated_cli,
+):
+    module = load_preflight_module()
+    for helper in (
+        "pnpm_runtime_ready", "uv_runtime_ready", "ollama_cli_runtime_ready",
+        "mongod_runtime_ready", "meilisearch_runtime_ready", "livekit_runtime_ready",
+        "cloudflared_runtime_ready", "tailscale_cli_runtime_ready", "caddy_runtime_ready",
+        "upnpc_runtime_ready", "node_runtime_supported", "xcode_cli_tools_installed",
+    ):
+        monkeypatch.setattr(module, helper, lambda: True)
+    monkeypatch.setattr(module, "command_exists", lambda command: command in {"git", "security"})
+    monkeypatch.setattr(module, "host_cli_exists", lambda _command: False)
+    monkeypatch.setattr(module, "host_cli_auth_ready", lambda command: command == authenticated_cli)
+    probe = tmp_path / "grok_auth.py"
+    probe.write_text("# Synthetic pinned component probe\n")
+    monkeypatch.setattr(module, "GROK_AUTH_PROBE", probe)
+
+    items = module.build_preflight_items({
+        "install": {"mode": "native", "experience": "express"},
+        "runtime": {"call_session_secret": {"secret_value": "local-dev-secret"}},
+        "integrations": {"glasshive": {
+            "enabled": True,
+            "provider": {"enabled": True, "default_model": main_model},
+            "host_worker": {"enabled": True, "workspace_root": str(tmp_path / "workers")},
+        }},
+    })
+    auth_item = next(item for item in items if item.key == "glasshive_host_worker_cli_auth")
+
+    assert auth_item.label == "Grok CLI authentication for xPerfect Main"
+    assert auth_item.status == ("ok" if authenticated_cli == "grok" else "missing")
+    assert "grok login --device-auth" in auth_item.manual_command
+    assert "compiler-projected XAI_API_KEY" in auth_item.manual_command
+    assert "Codex and Claude authentication do not replace" in auth_item.manual_command
+    assert (auth_item in module.manual_missing_items(items)) is (authenticated_cli != "grok")
+
+
+@pytest.mark.parametrize("missing", ["component-probe", "undeclared-model", "config-only-credentials"])
+def test_grok_main_preflight_names_the_actual_missing_prerequisite(monkeypatch, tmp_path, missing):
+    module = load_preflight_module()
+    for helper in (
+        "pnpm_runtime_ready", "uv_runtime_ready", "ollama_cli_runtime_ready",
+        "mongod_runtime_ready", "meilisearch_runtime_ready", "livekit_runtime_ready",
+        "cloudflared_runtime_ready", "tailscale_cli_runtime_ready", "caddy_runtime_ready",
+        "upnpc_runtime_ready", "node_runtime_supported", "xcode_cli_tools_installed",
+    ):
+        monkeypatch.setattr(module, helper, lambda: True)
+    monkeypatch.setattr(module, "command_exists", lambda command: command in {"git", "security"})
+    monkeypatch.setattr(module, "host_cli_exists", lambda _command: False)
+    monkeypatch.setattr(module, "host_cli_auth_ready", lambda command: command in {"codex", "claude"})
+    probe = tmp_path / "component/grok_auth.py"
+    if missing == "config-only-credentials":
+        probe.parent.mkdir()
+        probe.write_text("# Synthetic pinned component probe\n")
+    monkeypatch.setattr(module, "GROK_AUTH_PROBE", probe)
+    items = module.build_preflight_items({
+        "install": {"mode": "native", "experience": "express"},
+        "runtime": {"call_session_secret": {"secret_value": "local-dev-secret"}},
+        "llm": {"extra_provider_keys": {"xai": "keychain://synthetic/grok"}},
+        "integrations": {"glasshive": {
+            "enabled": True,
+            "provider": {"enabled": True, "default_model": (
+                "grok-build:undeclared-model" if missing == "undeclared-model" else "grok-build:grok-4.7"
+            )},
+            "host_worker": {"enabled": True, "workspace_root": str(tmp_path / "workers")},
+        }},
+    })
+    auth_item = next(item for item in items if item.key == "glasshive_host_worker_cli_auth")
+
+    assert auth_item.status == "missing"
+    assert "claude auth login" not in auth_item.manual_command
+    if missing == "component-probe":
+        assert "Bootstrap the pinned xPerfect component" in auth_item.manual_command
+        assert "native Grok authentication probe is missing" in auth_item.manual_command
+    elif missing == "undeclared-model":
+        assert "Set integrations.glasshive.provider.default_model to a declared" in auth_item.manual_command
+    else:
+        assert "compiler-projected XAI_API_KEY" in auth_item.manual_command
+        assert "configured secret references alone are not projected credentials" in auth_item.manual_command
+
+
 def test_public_edge_cgnat_details_flags_router_public_ip_mismatch(monkeypatch) -> None:
     module = load_preflight_module()
     monkeypatch.setattr(module, "upnpc_router_external_ipv4", lambda: "100.64.0.5")
@@ -631,6 +853,7 @@ def test_custom_preflight_accepts_claude_only_worker_login(monkeypatch, tmp_path
     assert by_key["glasshive_host_worker_cli_auth"] not in module.missing_items(items)
 
 
+@pytest.mark.parametrize("main_model", ["codex-cli:gpt-6.1-sol", "codex-cli:gpt-5.6-sol"])
 @pytest.mark.parametrize(
     ("authenticated_cli", "expected_status"),
     [("codex", "ok"), ("claude", "missing")],
@@ -638,6 +861,7 @@ def test_custom_preflight_accepts_claude_only_worker_login(monkeypatch, tmp_path
 def test_source_easy_preflight_requires_codex_login_for_codex_main(
     monkeypatch,
     tmp_path: Path,
+    main_model: str,
     authenticated_cli: str,
     expected_status: str,
 ) -> None:
@@ -677,7 +901,7 @@ def test_source_easy_preflight_requires_codex_login_for_codex_main(
                     "enabled": True,
                     "provider": {
                         "enabled": True,
-                        "default_model": "codex-cli:gpt-5.6-sol",
+                        "default_model": main_model,
                     },
                     "host_worker": {
                         "enabled": True,
@@ -709,7 +933,7 @@ def test_source_easy_preflight_requires_codex_login_for_codex_main(
 @pytest.mark.parametrize(
     ("explicit_model", "expected_model", "expected_auth_status", "expected_label"),
     [
-        (None, "claude-code:opus", "ok", "Claude Code login for xPerfect Main"),
+        (None, "claude-code:claude-opus-5-5", "ok", "Claude Code login for xPerfect Main"),
         (
             "codex-cli:gpt-5.6-sol",
             "codex-cli:gpt-5.6-sol",

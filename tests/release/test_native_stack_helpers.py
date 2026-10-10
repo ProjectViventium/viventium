@@ -41,6 +41,72 @@ def test_easy_install_missing_mongodb_hint_uses_supported_preflight_flag() -> No
     assert "bin/viventium preflight --fix" not in function_def
 
 
+@pytest.mark.parametrize("host", ["127.0.0.1", "0.0.0.0"])
+@pytest.mark.parametrize("already_listening", [False, True])
+def test_normal_native_mongo_disables_diagnostics_without_changing_persistence(
+    tmp_path: Path, host: str, already_listening: bool
+) -> None:
+    launcher = REPO_ROOT / "viventium_v0_4" / "viventium-librechat-start.sh"
+    function_def = extract_shell_function(
+        launcher.read_text(encoding="utf-8"), "start_local_mongodb_native"
+    )
+    data_dir = tmp_path / "selected runtime" / "mongo-data"
+    data_dir.mkdir(parents=True)
+    capture = tmp_path / "argv"
+    log = tmp_path / "mongo.log"
+    pid = tmp_path / "mongo.pid"
+    log.write_text("existing diagnostic evidence\n", encoding="utf-8")
+    pid.write_text("4242\n", encoding="utf-8")
+    setup = "\n".join(
+        f"{name}={shlex.quote(str(value))}"
+        for name, value in {
+            "MONGO_HOST": host,
+            "MONGO_PORT": "32117",
+            "MONGO_REPLICA_SET": "synthetic-rs",
+            "VIVENTIUM_LOCAL_MONGO_DATA_PATH": data_dir,
+            "VIVENTIUM_STATE_ROOT": tmp_path,
+            "MONGO_NATIVE_LOG_FILE": log,
+            "MONGO_NATIVE_PID_FILE": pid,
+            "CAPTURE": capture,
+        }.items()
+    )
+    subprocess.run(
+        [
+            "bash", "-c",
+            "set -euo pipefail\n" + setup + "\n"
+            "mongod() { :; }\n"
+            f"port_in_use() {{ return {0 if already_listening else 1}; }}\n"
+            "log_error() { :; }\nlog_warn() { :; }\nlog_success() { :; }\n"
+            "nohup() { printf '%s\\n' \"$@\" > \"$CAPTURE\"; }\n"
+            "kill() { return 0; }\n"
+            + function_def + "start_local_mongodb_native\nwait\n",
+        ],
+        check=True, text=True, capture_output=True,
+    )
+    if already_listening:
+        assert not capture.exists()
+        assert log.read_text(encoding="utf-8") == "existing diagnostic evidence\n"
+        assert pid.read_text(encoding="utf-8") == "4242\n"
+        return
+    args = capture.read_text(encoding="utf-8").splitlines()
+    assert args.count("--setParameter") == 1
+    assert args[args.index("--setParameter") + 1] == "diagnosticDataCollectionEnabled=false"
+    for option, value in {
+        "--dbpath": str(data_dir),
+        "--logpath": str(log),
+        "--port": "32117",
+        "--replSet": "synthetic-rs",
+    }.items():
+        assert args[args.index(option) + 1] == value
+    assert "--logappend" in args
+    assert log.read_text(encoding="utf-8") == "existing diagnostic evidence\n"
+    if host == "0.0.0.0":
+        assert "--bind_ip_all" in args and "--bind_ip" not in args
+    else:
+        assert args[args.index("--bind_ip") + 1] == host
+    assert pid.read_text(encoding="utf-8").strip().isdigit()
+
+
 def test_configure_easy_install_applies_missing_prerequisites_before_success() -> None:
     cli_text = CLI_PATH.read_text(encoding="utf-8")
     function_def = extract_shell_function(cli_text, "ensure_configured_prerequisites")

@@ -143,6 +143,22 @@ atomic_traceability:
     976 retained eligible messages (972 original corpus records plus four exact supplemental
     records). Neither proves purged follow-ups or every task ever created under the project.
 
+current_owner_declarations:
+  as_of: 2026-10-10
+  rows: 289
+  sha256: 529e84e0c36f5073a96c5b7ac22c06dfd8f38598446a77b1a3d0710721a7252a
+  canonicalization: >-
+    sha256 of lexicographically sorted unique tab-separated requirement ID, repository-relative
+    owning product-document path, and exact declaration behavior; rows are LF-joined with one
+    trailing LF
+  added_since_audit: [VOICE-001]
+  rule: >-
+    The atomic_traceability and crosswalk_join_inventory counts and digests retain the
+    2026-08-30 audit snapshot. This current inventory binds every current canonical declaration,
+    including revised behavior and the later VOICE-001 Listen-Only declaration. It is not a new
+    retained-source audit or product acceptance and does not add private source attribution or
+    acceptance joins to the historical receipt.
+
 private_inventory_summary:
   exact_root_sessions: 1845
   descendant_directory_sessions: 237

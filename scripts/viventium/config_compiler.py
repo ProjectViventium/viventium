@@ -2021,10 +2021,11 @@ MODEL_OVERRIDE_ROLES = AGENT_ASSIGNMENT_ROLES | {
 
 MEMORY_HARDENING_LAUNCH_READY_MODELS = {
     "anthropic": {"claude-opus-5-5", "claude-opus-5", "claude-opus-4-8"},
-    "openai": {"gpt-6.1-sol", "gpt-5.5", "gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna"},
+    "openai": {"gpt-6.1-sol", "gpt-6-sol", "gpt-5.5", "gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna"},
 }
 MEMORY_HARDENING_OPENAI_EFFORTS_BY_MODEL = {
     "gpt-6.1-sol": {"low", "medium", "high", "xhigh", "max"},
+    "gpt-6-sol": {"high"},
     "gpt-5.5": {"xhigh"},
     "gpt-5.6-sol": {"xhigh"},
     "gpt-5.6-terra": {"high"},
@@ -2063,7 +2064,7 @@ DEFAULT_MEMORY_HARDENING = {
     },
 }
 
-SCHEDULED_AGENT_LAUNCH_READY_MODELS = {"gpt-6.1-sol", "gpt-5.6-sol"}
+SCHEDULED_AGENT_LAUNCH_READY_MODELS = {"gpt-6.1-sol", "gpt-6-sol", "gpt-5.6-sol"}
 DEFAULT_SCHEDULED_AGENT = {
     "provider": "openai",
     "model": "gpt-6.1-sol",
@@ -2327,6 +2328,14 @@ GLASSHIVE_PROVIDER_MODELS = [
         "effortChoices": ["low", "medium", "high", "xhigh", "max", "ultra"],
         "recommendedEffort": "medium",
         "contextLimit": 272000,
+    },
+    {
+        "id": "codex-cli:gpt-6-sol",
+        "label": "Codex / GPT-6 Sol",
+        "harnessProfile": "codex-cli",
+        "effortChoices": ["low", "medium", "high", "xhigh", "max"],
+        "recommendedEffort": "medium",
+        "contextLimit": 1050000,
     },
 ]
 GLASSHIVE_PROVIDER_DROP_PARAMS = [
@@ -5089,6 +5098,36 @@ def render_runtime_env(
     if playground_variant not in {"modern", "classic"}:
         playground_variant = "modern"
     livekit_http_port = str(profile["livekit_http_port"])
+    livekit_api_host = str(network.get("livekit_api_host") or "").strip()
+    if livekit_api_host:
+        try:
+            livekit_endpoint = urlparse(livekit_api_host)
+            livekit_endpoint.port
+            valid_livekit_endpoint = (
+                livekit_endpoint.scheme in {"http", "https"}
+                and bool(livekit_endpoint.hostname)
+                and not livekit_endpoint.username
+                and not livekit_endpoint.password
+                and not livekit_endpoint.query
+                and not livekit_endpoint.fragment
+                and livekit_endpoint.path in {"", "/"}
+            )
+        except ValueError:
+            valid_livekit_endpoint = False
+        if not valid_livekit_endpoint:
+            raise SystemExit("runtime.network.livekit_api_host must be an HTTP(S) URL without credentials, query, or fragment")
+        hostname = livekit_endpoint.hostname
+        try:
+            loopback = ipaddress.ip_address(hostname).is_loopback
+        except ValueError:
+            loopback = hostname == "localhost"
+        if livekit_endpoint.scheme == "http" and not loopback:
+            raise SystemExit("runtime.network.livekit_api_host requires HTTPS for a remote host")
+        livekit_api_host = livekit_api_host.rstrip("/")
+    livekit_url = (
+        f"{'wss' if livekit_endpoint.scheme == 'https' else 'ws'}://{livekit_endpoint.netloc}"
+        if livekit_api_host else f"ws://localhost:{livekit_http_port}"
+    )
     default_main_agent_id = str(
         agents.get("default_main_agent_id") or DEFAULT_MAIN_AGENT_ID
     ).strip() or DEFAULT_MAIN_AGENT_ID
@@ -5280,9 +5319,9 @@ def render_runtime_env(
         "LIVEKIT_UDP_PORT": str(profile["livekit_udp_port"]),
         "LIVEKIT_API_KEY": "viventium-local",
         "LIVEKIT_API_SECRET": call_session_secret,
-        "LIVEKIT_URL": f"ws://localhost:{livekit_http_port}",
-        "LIVEKIT_API_HOST": f"http://localhost:{livekit_http_port}",
-        "NEXT_PUBLIC_LIVEKIT_URL": f"ws://localhost:{livekit_http_port}",
+        "LIVEKIT_URL": livekit_url,
+        "LIVEKIT_API_HOST": livekit_api_host or f"http://localhost:{livekit_http_port}",
+        "NEXT_PUBLIC_LIVEKIT_URL": livekit_url,
         "SAFE_MODE": "1",
         "VIVENTIUM_ENABLE_SUBCONSCIOUS": "1",
         "VIVENTIUM_SUBCONSCIOUS_ENABLE": "all",
@@ -5826,7 +5865,10 @@ def render_runtime_env(
             if explicit_artifact_base_url:
                 env["GLASSHIVE_ARTIFACT_BASE_URL"] = explicit_artifact_base_url
         env["WPR_LIBRECHAT_UPLOADS_ROOT"] = str(canonical_uploads_root)
-        env["WPR_BOOTSTRAP_SOURCE_ROOTS"] = str(canonical_uploads_root)
+        bootstrap_source_roots = [str(canonical_uploads_root)]
+        if not glasshive_enterprise["enabled"]:
+            bootstrap_source_roots.append(str(Path(env["WPR_DB_PATH"]).parent / "managed-files"))
+        env["WPR_BOOTSTRAP_SOURCE_ROOTS"] = os.pathsep.join(bootstrap_source_roots)
         env["VIVENTIUM_GLASSHIVE_CALLBACK_URL"] = f"http://localhost:{profile['lc_api_port']}/api/viventium/glasshive/callback"
         env["VIVENTIUM_GLASSHIVE_CALLBACK_SECRET"] = scoped_secret(call_session_secret, "glasshive-callback")
         env["GLASSHIVE_BOOTSTRAP_SOURCE_SECRET"] = scoped_secret(
@@ -6439,6 +6481,13 @@ def render_runtime_env(
     background_activation = runtime.get("background_activation") or {}
     if not isinstance(background_activation, dict):
         raise SystemExit("runtime.background_activation must be an object")
+    late_detect_timeout_ms = bounded_int_or_default(
+        background_activation.get("late_detect_timeout_ms"),
+        int(DEFAULT_CORTEX_LATE_DETECT_TIMEOUT_MS),
+        "runtime.background_activation.late_detect_timeout_ms",
+        minimum=2001,
+        maximum=30000,
+    )
     env["VIVENTIUM_ACTIVATION_PRIMARY_ATTEMPT_TIMEOUT_MS"] = str(
         bounded_int_or_default(
             background_activation.get("primary_attempt_timeout_ms"),
@@ -6457,11 +6506,18 @@ def render_runtime_env(
             maximum=30000,
         )
     )
-    # When the fast window times out with zero activations, reuse the existing non-blocking late
-    # detector so a provider tail-latency spike does not silently erase an otherwise valid cortex.
-    # This is a total background budget across the configured fallback chain and never extends the
-    # main-answer wait. Six seconds covers the evaluated Qwen tail plus bounded fallbacks.
-    env["VIVENTIUM_CORTEX_LATE_DETECT_TIMEOUT_MS"] = DEFAULT_CORTEX_LATE_DETECT_TIMEOUT_MS
+    if (
+        "late_detect_timeout_ms" in background_activation
+        and int(env["VIVENTIUM_ACTIVATION_PRIMARY_ATTEMPT_TIMEOUT_MS"]) > late_detect_timeout_ms
+    ):
+        raise SystemExit(
+            "runtime.background_activation.primary_attempt_timeout_ms must not exceed "
+            "runtime.background_activation.late_detect_timeout_ms"
+        )
+    # One-pass async detection uses this existing total background window without waiting in Main.
+    # Keep the evaluated default; configured High-effort routes can use a measured bounded window.
+    # Blocking and legacy paths retain their foreground budgets and late recovery contract.
+    env["VIVENTIUM_CORTEX_LATE_DETECT_TIMEOUT_MS"] = str(late_detect_timeout_ms)
     # Harness-backed cortices may queue behind another authenticated CLI worker and an xhigh run
     # can legitimately approach three minutes. Keep the execution window longer than the supported
     # ten-minute worker path so normal capacity queueing does not discard a completed insight.

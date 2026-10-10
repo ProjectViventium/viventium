@@ -72,7 +72,7 @@ def test_auto_worker_profile_uses_logged_in_claude_when_codex_is_not_ready(monke
 
     assert changed is True
     assert updated["integrations"]["glasshive"]["host_worker"]["default_worker_profile"] == "claude-code"
-    assert updated["integrations"]["glasshive"]["provider"]["default_model"] == "claude-code:opus"
+    assert updated["integrations"]["glasshive"]["provider"]["default_model"] == "claude-code:claude-opus-5-5"
     assert "provider" not in updated["runtime"].get("memory_hardening", {})
 
 
@@ -96,7 +96,7 @@ def test_auto_worker_profile_uses_logged_in_codex_as_provider_default(monkeypatc
 
     assert changed is True
     assert updated["integrations"]["glasshive"]["host_worker"]["default_worker_profile"] == "codex-cli"
-    assert updated["integrations"]["glasshive"]["provider"]["default_model"] == "codex-cli:gpt-5.6-sol"
+    assert updated["integrations"]["glasshive"]["provider"]["default_model"] == "codex-cli:gpt-6.1-sol"
 
 
 def test_auto_worker_profile_preserves_explicit_user_worker_choice(monkeypatch) -> None:

@@ -398,6 +398,14 @@ delta on the disposable MacBook Air. Until those gates pass, release wording rem
 
 ## Config Compiler Boundary
 
+- `runtime.network.livekit_api_host` declares an existing HTTP(S) LiveKit API endpoint.
+  Compilation preserves it for normal CLI startup; an empty value keeps the managed local
+  default. Signaling URLs derive from the same endpoint. Remote hosts require HTTPS; plaintext HTTP
+  is limited to loopback. Credentials, non-root paths, query strings, fragments, and invalid ports are rejected. An unavailable
+  declared endpoint still fails explicitly through the launcher's existing health check.
+- Before restart teardown, the launcher verifies the required managed LiveKit Docker control or
+  declared endpoint. A failed prerequisite keeps the current services running and names the repair.
+
 - The config compiler still owns generated runtime artifacts such as:
   - `runtime.env`
   - `runtime.local.env`
@@ -551,9 +559,21 @@ delta on the disposable MacBook Air. Until those gates pass, release wording rem
     otherwise Claude when `claude auth status` succeeds
   - the reconciler must not overwrite an explicit configured worker profile on later `start`,
     `compile-config`, `configure`, or `upgrade`; user choice beats auto-detection
-  - when GlassHive host-worker activation is explicitly enabled, preflight requires at least one
-    signed-in Codex or Claude CLI and gives one clear sign-in action if neither is usable; a disabled
-    or setup-pending worker must not block native-core readiness
+  - when GlassHive host-worker activation is explicitly enabled without a configured provider Main,
+    preflight requires at least one signed-in Codex or Claude CLI. A configured xPerfect Main instead
+    uses the exact declared model's native harness; another provider's login cannot substitute for it.
+    Supported explicit alternatives use the compiler's declared harness metadata. A disabled or
+    setup-pending worker must not block native-core readiness
+  - Grok Main preflight reuses xPerfect's quiet native ACP authentication probe, with a 30-second
+    outer deadline and no model inference. It preserves an explicit `WPR_GROK_BIN`, then PATH, then
+    an executable in the standard per-user Grok install location. Binary presence, a configured
+    secret reference, or a Codex/Claude login is not Grok authentication proof. Missing binaries,
+    the pinned component probe, rejected authentication, or probe failure remain missing prerequisites
+  - this Grok check verifies the authorized native account or credentials already projected into its
+    environment. It does not resolve or reorder compiler secrets. The source install currently runs
+    preflight before component bootstrap and credential compilation: a fresh checkout may need the
+    pinned xPerfect component first, and config-only credentials need the existing compiler projection
+    before this probe can verify them. These are source-install gaps, not verified fresh-install support
   - OpenClaw may be reported as optional, but missing OpenClaw must not block the default nightly
     workflow when Codex or Claude is ready
   - worker CLI auth is not the same as model-provider API or connected-account auth for memory
@@ -1029,7 +1049,11 @@ delta on the disposable MacBook Air. Until those gates pass, release wording rem
     - `VIVENTIUM_VOICE_PHASE_A_AWAIT_MS=690` (voice detection budget)
     - `VIVENTIUM_TEXT_PHASE_A_AWAIT_MS=1300` (text detection budget)
     - `VIVENTIUM_CORTEX_DETECT_TIMEOUT_MS=2000` (shared fallback budget)
-    - `VIVENTIUM_CORTEX_LATE_DETECT_TIMEOUT_MS=6000` (non-blocking recovery budget after a zero-activation fast-pass timeout; reuses canonical classifier/fallback/Phase B paths and does not delay the main answer)
+    - `VIVENTIUM_CORTEX_LATE_DETECT_TIMEOUT_MS=6000` by default; the canonical
+      `runtime.background_activation.late_detect_timeout_ms` field accepts 2001–30000 ms.
+      One-pass async detection uses this total window once without delaying Main; blocking and
+      legacy paths retain late recovery. An explicitly configured total must cover the primary
+      attempt; omitting it preserves existing attempt choices and the default-total runtime clamp.
     - `VIVENTIUM_ACTIVATION_PRIMARY_ATTEMPT_TIMEOUT_MS=1600`
     - `VIVENTIUM_ACTIVATION_FALLBACK_ATTEMPT_TIMEOUT_MS=2500`
     - `VIVENTIUM_VOICE_PHASE_A_ASYNC_ALLOW_TOOL_HOLD=true` (voice stays async even when a

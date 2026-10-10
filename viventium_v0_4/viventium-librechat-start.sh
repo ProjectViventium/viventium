@@ -282,20 +282,26 @@ livekit_public_mapping_matches_configured() {
   # The pinned native transport discovers WAN mappings when local candidates
   # are retained. Keep the declared public node IP as an assertion, never an
   # implicit replacement. This check runs at startup, not on Voice turns.
-  docker logs "$container_id" 2>&1 | "${PYTHON_BIN:-python3}" -c 'import ipaddress,json,sys
+  docker logs "$container_id" 2>&1 | "${PYTHON_BIN:-python3}" -c 'import ipaddress,json,os,sys
 expected = sys.argv[1]
-for line in sys.stdin:
+raw = sys.stdin.read()
+fd = os.open(sys.argv[2], os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_NOFOLLOW, 0o600)
+with os.fdopen(fd, "w") as snapshot:
+    os.fchmod(snapshot.fileno(), 0o600)
+    snapshot.write(raw)
+for line in raw.splitlines():
     if "using external IPs" not in line:
         continue
     try:
         data = json.loads(line[line.index(chr(123)):])
         mappings = data.get("ips", [])
-        public = {str(ipaddress.ip_address(value.split("/")[0])) for value in mappings if ipaddress.ip_address(value.split("/")[0]).is_global}
+        addresses = (ipaddress.ip_address(value.split("/")[0]) for value in mappings)
+        public = {str(address) for address in addresses if address.version == 4 and address.is_global}
     except (ValueError, TypeError):
         continue
     if public == {expected} and data.get("advertiseInternalIP") is True:
         sys.exit(0)
-sys.exit(1)' "$LIVEKIT_NODE_IP"
+sys.exit(1)' "$LIVEKIT_NODE_IP" "$LOG_DIR/livekit-startup.log"
 }
 
 livekit_managed_container_matches_release() {
@@ -1579,7 +1585,8 @@ fi
 # LiveKit defaults for dev mode
 livekit_api_host_is_managed_local() {
   local api_host="${1:-}"
-  [[ "$api_host" == "http://localhost:${LIVEKIT_HTTP_PORT}" ]]
+  [[ "$api_host" == "http://localhost:${LIVEKIT_HTTP_PORT}" ||
+    "$api_host" == "http://127.0.0.1:${LIVEKIT_HTTP_PORT}" ]]
 }
 
 LIVEKIT_API_HOST_WAS_CONFIGURED=false
@@ -2860,15 +2867,16 @@ pid_matches_recorded_runtime_process_group() {
 
 pid_matches_runtime_stop_identity() {
   local pid="${1:-}"
+  local allow_legacy_scope="${2:-true}"
   local recorded_pgid=""
   recorded_pgid="$(read_detached_launch_process_group)"
   if [[ "$recorded_pgid" =~ ^[0-9]+$ ]]; then
     pid_matches_recorded_runtime_process_group "$pid"
     return
   fi
-  # Canonical installs retain a legacy scope-only recovery path. Alternate App Support roots
-  # are isolation boundaries and must never select same-checkout processes without a runtime PGID.
-  ! runtime_stop_requires_process_group
+  # Legacy recovery is safe only for the caller's exact configured port or PID file. Broad
+  # checkout/pattern sweeps must not become authorized when stop removes the group receipt.
+  [[ "$allow_legacy_scope" == "true" ]] && ! runtime_stop_requires_process_group
 }
 
 record_detached_launch_process_group() {
@@ -3103,9 +3111,9 @@ kill_pids_scoped() {
   local scoped_pids=()
   local pid
   for pid in $pids; do
-    if pid_matches_scope "$pid" "$scope" && pid_matches_runtime_stop_identity "$pid"; then
+    if pid_matches_scope "$pid" "$scope" && pid_matches_runtime_stop_identity "$pid" false; then
       scoped_pids+=("$pid")
-    elif pid_matches_trashed_scope_variant "$pid" "$scope" && pid_matches_runtime_stop_identity "$pid"; then
+    elif pid_matches_trashed_scope_variant "$pid" "$scope" && pid_matches_runtime_stop_identity "$pid" false; then
       log_warn "Stopping stale trashed PID $pid for scope: $scope"
       scoped_pids+=("$pid")
     else
@@ -3578,7 +3586,7 @@ find_scope_runtime_pids() {
     cmd="${cmd#"${cmd%%[![:space:]]*}"}"
     case "$cmd" in
       "$scope"|"$scope"/*|*" $scope"|*" $scope"/*)
-        if pid_matches_runtime_stop_identity "$pid"; then
+        if pid_matches_runtime_stop_identity "$pid" false; then
           collected+=("$pid")
         fi
         ;;
@@ -3601,7 +3609,7 @@ find_scope_pattern_pids() {
   local pid
   while read -r pid; do
     [[ -z "$pid" ]] && continue
-    if pid_matches_runtime_stop_identity "$pid" &&
+    if pid_matches_runtime_stop_identity "$pid" false &&
       { pid_matches_scope "$pid" "$scope" || pid_matches_trashed_scope_variant "$pid" "$scope"; }
     then
       collected+=("$pid")
@@ -3704,7 +3712,7 @@ find_voice_gateway_runtime_pids() {
 }
 
 find_current_runtime_voice_gateway_pids() {
-  if runtime_allows_workspace_wide_process_sweep; then
+  if runtime_allows_workspace_wide_process_sweep && runtime_process_group_receipt_valid; then
     find_voice_gateway_runtime_pids "$VOICE_GATEWAY_DIR"
     return 0
   fi
@@ -3982,6 +3990,22 @@ parallel_work_runtime_instance() {
   printf '%s\n' "$instance"
 }
 
+# Provision the only two egress principals available to automatic Parallel
+# workers. Each worker later receives its own internal mission network; the
+# proxies are attached to that network by GlassHive after their immutable
+# substrate has been attested.
+configure_parallel_work_proxy_substrate() {
+  local instance
+  instance="$(parallel_work_runtime_instance)"
+
+  export WPR_PARALLEL_CLEAN_ROOM_NETWORK="${WPR_PARALLEL_CLEAN_ROOM_NETWORK:-viventium-parallel-${instance}}"
+  export WPR_PARALLEL_CLEAN_ROOM_PROVIDER_EGRESS_NETWORK="${WPR_PARALLEL_CLEAN_ROOM_PROVIDER_EGRESS_NETWORK:-viventium-parallel-egress-${instance}}"
+  export WPR_PARALLEL_CLEAN_ROOM_PROVIDER_PROXY_CONTAINER="${WPR_PARALLEL_CLEAN_ROOM_PROVIDER_PROXY_CONTAINER:-viventium-parallel-provider-${instance}}"
+  export WPR_PARALLEL_CLEAN_ROOM_BROKER_PROXY_CONTAINER="${WPR_PARALLEL_CLEAN_ROOM_BROKER_PROXY_CONTAINER:-viventium-parallel-broker-${instance}}"
+  export WPR_PARALLEL_CLEAN_ROOM_PROVIDER_PROXY_URL="${WPR_PARALLEL_CLEAN_ROOM_PROVIDER_PROXY_URL:-http://provider-egress:8080}"
+  export VIVENTIUM_PARALLEL_PROXY_IMAGE="${VIVENTIUM_PARALLEL_PROXY_IMAGE:-viventium-parallel-work-proxy:local}"
+}
+
 stop_parallel_work_runtime_containers() {
   if [[ "$SKIP_DOCKER" == "true" ]]; then
     return 0
@@ -3990,9 +4014,19 @@ stop_parallel_work_runtime_containers() {
     return 0
   fi
 
+  configure_parallel_work_proxy_substrate
   local instance
   instance="$(parallel_work_runtime_instance)"
-  remove_compose_project_containers "viventium-parallel-proxy-${instance}"
+  local project_name="viventium-parallel-proxy-${instance}"
+  local proxy_dir="$ROOT_DIR/docker/parallel-work-proxy"
+  local compose_file="$proxy_dir/compose.yml"
+  if [[ ! -f "$compose_file" ]] || ! (
+    cd "$proxy_dir" &&
+      docker compose --project-name "$project_name" -f "$compose_file" down >/dev/null
+  ); then
+    log_warn "Parallel clean-room proxy network cleanup did not complete; removing only this runtime's proxy containers"
+    remove_compose_project_containers "$project_name"
+  fi
 
   local redis_container
   redis_container=$(
@@ -4325,6 +4359,16 @@ render_librechat_config() {
   local target="$LOG_ROOT/librechat.generated.yaml"
   local prompt_bundle_target="${VIVENTIUM_PROMPT_BUNDLE_PATH:-$LOG_ROOT/prompt-bundle.json}"
   local prompt_registry_script="$VIVENTIUM_CORE_DIR/scripts/viventium/prompt_registry.py"
+
+  if truthy_env_value "${VIVENTIUM_USE_GENERATED_LIBRECHAT_YAML:-false}"; then
+    if [[ ! -f "${LIBRECHAT_LOCAL_SOURCE_OF_TRUTH:-}" || ! -f "$prompt_bundle_target" ]]; then
+      log_error "Required compiled LibreChat configuration or prompt bundle is missing"
+      exit 1
+    fi
+    export CONFIG_PATH="$LIBRECHAT_LOCAL_SOURCE_OF_TRUTH"
+    export VIVENTIUM_PROMPT_BUNDLE_PATH="$prompt_bundle_target"
+    return 0
+  fi
 
   if [[ ! -f "$source" ]]; then
     log_warn "LibreChat config not found: $source"
@@ -5937,13 +5981,13 @@ start_local_mongodb_native() {
   fi
 
   log_warn "Docker Mongo runtime unavailable; starting native mongod on ${MONGO_HOST}:${MONGO_PORT}"
-  : > "$MONGO_NATIVE_LOG_FILE"
   nohup mongod \
     --dbpath "${VIVENTIUM_LOCAL_MONGO_DATA_PATH:-$VIVENTIUM_STATE_ROOT/mongo-data}" \
     --logpath "$MONGO_NATIVE_LOG_FILE" \
     --logappend \
     --port "$MONGO_PORT" \
     --replSet "$MONGO_REPLICA_SET" \
+    --setParameter diagnosticDataCollectionEnabled=false \
     "${bind_args[@]}" >/dev/null 2>&1 < /dev/null &
   local mongo_native_pid=$!
   echo "$mongo_native_pid" > "$MONGO_NATIVE_PID_FILE"
@@ -7918,6 +7962,15 @@ prewarm_modern_playground_routes() {
   log_info "Prewarming ${PLAYGROUND_LABEL} voice startup routes"
 
   local code=""
+  # Call creation checks this exact identity route; compile it before the worker is available.
+  code="$(curl -s -o /dev/null -w "%{http_code}" --max-time "$request_timeout" \
+    "${base_url}/api/health" || true)"
+  if [[ "$code" == "000" ]]; then
+    log_warn "${PLAYGROUND_LABEL} health route did not prewarm before timeout"
+  else
+    log_info "${PLAYGROUND_LABEL} health route prewarmed (HTTP ${code})"
+  fi
+
   code="$(curl -s -o /dev/null -w "%{http_code}" --max-time "$request_timeout" \
     "${base_url}/api/call-session-voice-settings?callSessionId=viventium-prewarm" || true)"
   if [[ "$code" == "000" ]]; then
@@ -7941,6 +7994,15 @@ prewarm_modern_playground_routes() {
     log_warn "${PLAYGROUND_LABEL} connection-details route did not prewarm before timeout"
   else
     log_info "${PLAYGROUND_LABEL} connection-details route prewarmed (HTTP ${code})"
+  fi
+
+  # Unsupported GET compiles the task-action module; Next returns 405 without running POST.
+  code="$(curl -s -o /dev/null -w "%{http_code}" --max-time "$request_timeout" \
+    "${base_url}/api/call-tasks/viventium-prewarm/cancel" || true)"
+  if [[ "$code" == "000" ]]; then
+    log_warn "${PLAYGROUND_LABEL} task-action route did not prewarm before timeout"
+  else
+    log_info "${PLAYGROUND_LABEL} task-action route prewarmed (HTTP ${code})"
   fi
 }
 
@@ -10158,22 +10220,6 @@ glasshive_stack_ready() {
     [[ -n "$ui_health" ]]
 }
 
-# Provision the only two egress principals available to automatic Parallel
-# workers. Each worker later receives its own internal mission network; the
-# proxies are attached to that network by GlassHive after their immutable
-# substrate has been attested.
-configure_parallel_work_proxy_substrate() {
-  local instance
-  instance="$(parallel_work_runtime_instance)"
-
-  export WPR_PARALLEL_CLEAN_ROOM_NETWORK="${WPR_PARALLEL_CLEAN_ROOM_NETWORK:-viventium-parallel-${instance}}"
-  export WPR_PARALLEL_CLEAN_ROOM_PROVIDER_EGRESS_NETWORK="${WPR_PARALLEL_CLEAN_ROOM_PROVIDER_EGRESS_NETWORK:-viventium-parallel-egress-${instance}}"
-  export WPR_PARALLEL_CLEAN_ROOM_PROVIDER_PROXY_CONTAINER="${WPR_PARALLEL_CLEAN_ROOM_PROVIDER_PROXY_CONTAINER:-viventium-parallel-provider-${instance}}"
-  export WPR_PARALLEL_CLEAN_ROOM_BROKER_PROXY_CONTAINER="${WPR_PARALLEL_CLEAN_ROOM_BROKER_PROXY_CONTAINER:-viventium-parallel-broker-${instance}}"
-  export WPR_PARALLEL_CLEAN_ROOM_PROVIDER_PROXY_URL="${WPR_PARALLEL_CLEAN_ROOM_PROVIDER_PROXY_URL:-http://provider-egress:8080}"
-  export VIVENTIUM_PARALLEL_PROXY_IMAGE="${VIVENTIUM_PARALLEL_PROXY_IMAGE:-viventium-parallel-work-proxy:local}"
-}
-
 start_parallel_work_proxy_substrate() {
   configure_parallel_work_proxy_substrate
 
@@ -10251,6 +10297,17 @@ stop_candidate_glasshive_stack() {
 }
 
 
+# Native CLI installs can be outside a GUI launcher's PATH. Keep explicit and
+# PATH-selected executables; use the vendor's per-user install only when absent.
+configure_glasshive_grok_binary() {
+  if [[ -n "${WPR_GROK_BIN:-}" ]] || command -v grok >/dev/null 2>&1; then
+    return 0
+  fi
+  if [[ -f "$HOME/.grok/bin/grok" && -x "$HOME/.grok/bin/grok" ]]; then
+    export WPR_GROK_BIN="$HOME/.grok/bin/grok"
+  fi
+}
+
 start_glasshive() {
   if [[ "$START_GLASSHIVE" != "true" ]]; then
     log_info "Skipping GlassHive startup"
@@ -10312,6 +10369,10 @@ start_glasshive() {
   fi
 
   configure_parallel_work_proxy_substrate
+  configure_glasshive_grok_binary
+
+  # Host workers read context beyond the inline budget through this owned runtime.
+  export GLASSHIVE_PEER_RUNTIME_BASE_URL="${GLASSHIVE_PEER_RUNTIME_BASE_URL:-http://127.0.0.1:${GLASSHIVE_RUNTIME_PORT}}"
 
   log_info "Starting GlassHive runtime stack..."
   local glasshive_state_dir="${GLASSHIVE_STATE_DIR:-$VIVENTIUM_STATE_ROOT/glasshive}"
@@ -12777,6 +12838,24 @@ if ! ensure_required_paths_ready; then
 fi
 ## === VIVENTIUM END ===
 
+# Check the required voice service before a restart removes the working stack.
+ensure_restart_livekit_prerequisite() {
+  [[ "$SKIP_LIVEKIT" != "true" ]] || return 0
+  if [[ "$LIVEKIT_API_HOST_WAS_CONFIGURED" == "true" ]]; then
+    if ! curl -fsS --max-time 2 "$LIVEKIT_API_HOST" >/dev/null 2>&1; then
+      log_error "Restart refused: configured LiveKit endpoint is unavailable. Repair LIVEKIT_API_HOST and retry; current services were kept."
+      return 1
+    fi
+  elif [[ "$SKIP_DOCKER" == "true" ]] || ! docker_daemon_ready; then
+    log_error "Restart refused: managed LiveKit requires Docker. Start Docker Desktop and retry; current services were kept."
+    return 1
+  fi
+}
+
+if [[ "$RESTART_SERVICES" == "true" ]] && ! ensure_restart_livekit_prerequisite; then
+  exit 1
+fi
+
 if [[ "$RESTART_SERVICES" == "true" ]]; then
   stop_running_services
 fi
@@ -13318,6 +13397,9 @@ if [[ "$SKIP_LIBRECHAT" != "true" ]]; then
       direct_librechat_reason="partial stack repair"
     elif should_rebuild_librechat_packages; then
       direct_librechat_reason="LibreChat package rebuild required"
+    elif truthy_env_value "${VIVENTIUM_USE_GENERATED_LIBRECHAT_YAML:-false}"; then
+      # The compiler owns this selected config; the wrapper refreshes its local template.
+      direct_librechat_reason="generated LibreChat config selected"
     fi
 
     if [[ -n "$direct_librechat_reason" ]]; then
@@ -13484,7 +13566,7 @@ if [[ "$SKIP_PLAYGROUND" != "true" ]]; then
           export NEXT_PUBLIC_PLAYGROUND_VARIANT="$PLAYGROUND_VARIANT"
         fi
         if [[ "$PLAYGROUND_VARIANT" == "modern" ]]; then
-          export VIVENTIUM_PLAYGROUND_NEXT_DIST_DIR="${VIVENTIUM_PLAYGROUND_NEXT_DIST_DIR:-.next-viventium-dev}"
+          export VIVENTIUM_PLAYGROUND_NEXT_DIST_DIR="${VIVENTIUM_PLAYGROUND_NEXT_DIST_DIR:-.next-viventium-dev/${VIVENTIUM_RUNTIME_PROFILE}-${PLAYGROUND_PORT}}"
           next_dist_dir="$VIVENTIUM_PLAYGROUND_NEXT_DIST_DIR"
           if [[ -e "$next_dist_dir" ]]; then
             echo -e "${YELLOW}[viventium]${NC} Resetting stale modern-playground build cache..."
@@ -13838,11 +13920,9 @@ PY
             echo -e "${YELLOW}[viventium]${NC} WARNING: VIVENTIUM_LOCAL_WHISPER_PREFLIGHT is disabled; worker prewarm will still fail closed if the selected model is unhealthy."
           fi
         fi
+        # LiveKit reads the exported connection settings without exposing credentials in argv.
         exec "$voice_python" worker.py start \
-          --log-level="$VIVENTIUM_VOICE_GATEWAY_LOG_LEVEL" \
-          --url "$LIVEKIT_URL" \
-          --api-key "$LIVEKIT_API_KEY" \
-          --api-secret "$LIVEKIT_API_SECRET"
+          --log-level="$VIVENTIUM_VOICE_GATEWAY_LOG_LEVEL"
       ) >"$LOG_DIR/voice_gateway.log" 2>&1 &
       VOICE_GATEWAY_PID=$!
       VOICE_GATEWAY_STARTED_BY_SCRIPT=true
@@ -13920,7 +14000,7 @@ if detached_start_requested; then
   echo -e "${YELLOW}========================================${NC}"
 else
   echo -e "${GREEN}========================================${NC}"
-  echo -e "${GREEN}  All Services Running${NC}"
+  echo -e "${GREEN}  Local Startup Finished${NC}"
   echo -e "${GREEN}========================================${NC}"
 fi
 echo ""

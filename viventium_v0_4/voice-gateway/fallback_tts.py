@@ -92,16 +92,14 @@ def _describe_attempt(attempt: ProviderAttempt, exc: BaseException) -> str:
     except Exception:
         voice_id = ""
 
-    parts: list[str] = [label]
+    parts: list[str] = [label, f"error_class={type(exc).__name__}",
+                         f"retryable={bool(getattr(exc, 'retryable', True))}"]
     if voice_id:
         parts.append(f"voice_id={voice_id}")
 
     if isinstance(exc, APIStatusError):
         if getattr(exc, "status_code", -1) != -1:
             parts.append(f"status_code={exc.status_code}")
-        body = getattr(exc, "body", None)
-        if body is not None:
-            parts.append(f"body={_safe_json(body)}")
 
     return " ".join(parts)
 
@@ -510,14 +508,12 @@ class _FallbackChunkedStream(ChunkedStream):
                 logger.warning(
                     "TTS provider attempt failed (%s); trying next fallback if available",
                     _describe_attempt(attempt, exc),
-                    exc_info=exc,
                 )
             except Exception as exc:
                 errors.append((attempt.label, exc))
                 logger.warning(
                     "TTS provider attempt failed (%s); trying next fallback if available",
                     _describe_attempt(attempt, exc),
-                    exc_info=exc,
                 )
 
         summary = "; ".join(f"{label}: {type(exc).__name__}" for label, exc in errors) or "unknown"
@@ -753,6 +749,8 @@ class _FallbackSynthesizeStream(SynthesizeStream):
             )
 
     async def _run(self, output_emitter: AudioEmitter) -> None:
+        # The SDK replays its input buffer on retry; capture only this run's copy.
+        self._pushed_tokens.clear()
         wrapper_tts: TTS = self._tts  # type: ignore[assignment]
         target_rate = int(wrapper_tts.sample_rate)
         target_channels = int(wrapper_tts.num_channels)
@@ -857,14 +855,12 @@ class _FallbackSynthesizeStream(SynthesizeStream):
                     logger.warning(
                         "Streaming TTS provider attempt failed (%s); trying next fallback if available",
                         _describe_attempt(attempt, exc),
-                        exc_info=exc,
                     )
                 except Exception as exc:
                     errors.append((attempt.label, exc))
                     logger.warning(
                         "Streaming TTS provider attempt failed (%s); trying next fallback if available",
                         _describe_attempt(attempt, exc),
-                        exc_info=exc,
                     )
 
                 if output_emitter.pushed_duration() > 0.0:

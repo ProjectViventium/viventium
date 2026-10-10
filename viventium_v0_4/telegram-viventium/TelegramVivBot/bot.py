@@ -3539,13 +3539,11 @@ async def _command_bot_prepared(update, context, title, has_command, ingress_gua
             message_has_nick = True
 
         if message or file_data_list:
-            # REMOVED: pass_history check - Not used by LiveKit Bridge, Viventium handles conversation history
-            # Always schedule cleanup task
-            # Remove existing task (if any)
+            # Core owns a durable conversation until the user explicitly resets it.
             remove_job_if_exists(convo_id, context)
-            # Add new scheduled task
-            context.job_queue.run_once(
-                scheduled_function,
+            if config.VIVENTIUM_TELEGRAM_BACKEND != "librechat":
+                context.job_queue.run_once(
+                    scheduled_function,
                     when=timedelta(seconds=RESET_TIME),
                     chat_id=chatid,
                     name=convo_id
@@ -5754,7 +5752,9 @@ async def _handle_file_prepared(update, context, ingress_guard):
 # REMOVED: change_model function - Model selection is handled by Viventium, not the bot
 
 async def scheduled_function(context: ContextTypes.DEFAULT_TYPE) -> None:
-    """This function will execute once after RESET_TIME seconds, resetting the specific user's conversation"""
+    """Expire an ephemeral backend conversation without resetting Core history."""
+    if config.VIVENTIUM_TELEGRAM_BACKEND == "librechat":
+        return
     job = context.job
     chat_id = job.chat_id
 

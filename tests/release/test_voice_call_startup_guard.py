@@ -268,3 +268,70 @@ def test_call_button_typescript_syntax_transpiles() -> None:
     )
 
     assert result == {"diagnostics": []}
+
+
+def test_call_launch_preserves_owned_existing_chat_through_bootstrap_without_a_turn() -> None:
+    result = _run_node(
+        """
+        const fs = require('fs');
+        const Module = require('module');
+        const ts = require(__TYPESCRIPT__);
+        function loadTs(file) {
+          const result = ts.transpileModule(fs.readFileSync(file, 'utf8'), {
+            compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 },
+            fileName: file,
+          });
+          const loaded = new Module(file, module);
+          loaded.filename = file;
+          loaded.paths = Module._nodeModulePaths(require('path').dirname(file));
+          loaded._compile(result.outputText, file);
+          return loaded.exports;
+        }
+        process.env.VIVENTIUM_PLAYGROUND_URL = 'https://voice.example.test/playground';
+        const { buildCallLaunchResponse } = require(__CALL_LAUNCH__);
+        const { CALL_CAPABILITY_BOOTSTRAP_SCRIPT } = loadTs(__BOOTSTRAP__);
+        const { readCallDeepLink } = loadTs(__CALL_START__);
+        const results = [];
+        for (const conversationId of ['conversation-existing', 'new', '', '../foreign', 'x'.repeat(161)]) {
+          const capability = 'B'.repeat(43);
+          const launch = buildCallLaunchResponse({callSessionId:'call-current', conversationId, browserCapability:capability}, {includeConversationId:true});
+          const target = new URL(launch.playgroundUrl);
+          const stored = new Map();
+          let destination;
+          const window = {
+            location: {search:target.search, hash:target.hash, pathname:target.pathname, replace:(value)=>{destination=value;}},
+            history: {state:null,replaceState:()=>{}},
+            sessionStorage: {setItem:(key,value)=>stored.set(key,value)},
+          };
+          new Function('window','document',CALL_CAPABILITY_BOOTSTRAP_SCRIPT)(window,{referrer:'https://chat.example.test/c/conversation-existing'});
+          const deepLink = readCallDeepLink(new URL(destination,target.origin).search);
+          results.push({
+            concreteChat:deepLink.expectedConversationId,
+            exactCall:deepLink.expectedCallSessionId,
+            autoConnect:deepLink.autoConnect,
+            retainedOpener:stored.get('viventium.call.opener-origin.v1:call-current'),
+            capabilityStored:stored.get('viventium.call.capability.v1:call-current')===capability,
+            capabilityOutsideFragment:target.search.includes(capability)||destination.includes(capability),
+          });
+        }
+        process.stdout.write(JSON.stringify({results}));
+        """,
+        {
+            "__TYPESCRIPT__": str(TYPESCRIPT),
+            "__CALL_LAUNCH__": str(CALL_LAUNCH),
+            "__BOOTSTRAP__": str(AGENT_STARTER_REACT_ROOT / "lib" / "call-capability-bootstrap.ts"),
+            "__CALL_START__": str(AGENT_STARTER_REACT_ROOT / "lib" / "call-start.ts"),
+        },
+    )
+    assert [row["concreteChat"] for row in result["results"]] == [
+        "conversation-existing", None, None, None, None
+    ]
+    for row in result["results"]:
+        assert row == {
+            "concreteChat": row["concreteChat"],
+            "exactCall": "call-current",
+            "autoConnect": True,
+            "retainedOpener": "https://chat.example.test",
+            "capabilityStored": True,
+            "capabilityOutsideFragment": False,
+        }

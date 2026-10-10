@@ -12,6 +12,17 @@
 - Fallback routing does not downgrade a native-streaming provider back to a non-streaming wrapper.
 - Same-turn fallback still strips Cartesia-only control tags for non-expressive providers.
 - Voice-gateway regression tests pass after the change.
+- Same-turn Main continuation speech requires the current native reservation and matching accepted
+  family; it does not receive an invocation preview or an inherited request body hash.
+- A newer admission, changed logical turn, Stop or cancelled request suppresses stale public speech.
+- Stream loss after early public words leaves the saved response unfinished, reports an error and
+  does not start a replacement author. Failure after a resolved stream preserves the complete answer.
+- Accepted durable actions remain once-only when speech stops or fails. Real captured audio must
+  prove early speech and interruption behavior; deterministic replay alone is supporting evidence.
+- Authored words before a selected local file link stream early; the mutable link suffix waits for
+  the canonical terminal content and exact file carrier. Public URLs, code and literal text retain
+  their behavior. Missing or rejected files do not gain a carrier, and stale or cancelled turns do
+  not gain speech or artifact authority.
 
 ## Evidence
 

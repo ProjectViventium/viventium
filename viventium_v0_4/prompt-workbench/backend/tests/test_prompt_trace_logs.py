@@ -114,11 +114,14 @@ def test_reads_only_exact_strict_trace_records_from_rotated_core_log(tmp_path: P
     }
     assert snapshot["frames"] == [
         {
+            "version": 1,
             "time": "2026-08-26T08:00:00.000Z",
             "surface": "web",
             "family": "main_runtime",
             "provider": "h1111111111111111",
             "model": "h2222222222222222",
+            "request_identity_hash": "4444444444444444",
+            "source_hashes": {name: "6666666666666666" for name in frames.PROMPT_TRACE_SOURCE_HASHES},
             "layer_hashes": {name: "5555555555555555" for name in frames.PROMPT_TRACE_LAYERS},
             "layer_tokens": {name: 1 for name in frames.PROMPT_TRACE_LAYERS},
             "decision": {"should_respond": True, "status_hash": "8888888888888888"},
@@ -136,6 +139,11 @@ def test_reader_keeps_legacy_v1_as_local_diagnostic_only(tmp_path: Path) -> None
     assert snapshot["health"]["invalidEventCount"] == 0
     assert snapshot["health"]["releaseEvidence"] is False
     assert len(snapshot["frames"]) == 1
+    frame = snapshot["frames"][0]
+    assert frame["version"] == 1
+    assert frame["source_hashes"] == _trace()["source_hashes"]
+    assert frame["request_identity_hash"] == _trace()["request_identity_hash"]
+    assert not set(frame) & frames._TRACE_V2_ONLY_KEYS
 
 
 def test_reader_accepts_mixed_v1_and_v2_with_newest_first(tmp_path: Path) -> None:
@@ -154,6 +162,78 @@ def test_reader_accepts_mixed_v1_and_v2_with_newest_first(tmp_path: Path) -> Non
         "2026-08-26T09:00:00.000Z",
         "2026-08-26T08:00:00.000Z",
     ]
+
+
+@pytest.mark.parametrize("surface", ("voice", "web", "telegram"))
+def test_frame_projection_keeps_recorded_route_request_and_source_lineage(tmp_path: Path, surface: str) -> None:
+    trace = _trace_v2(surface=surface, source_hashes={
+        name: f"{index + 1:016x}" for index, name in enumerate(frames.PROMPT_TRACE_SOURCE_HASHES)
+    })
+    (tmp_path / "debug-2026-08-26.log").write_text(_line(trace), encoding="utf-8")
+
+    frame = frames.recent_frame_snapshot(logs_root=tmp_path)["frames"][0]
+
+    for key in ("version", "request_identity_hash", "source_hashes", "requested_provider", "requested_model",
+                "requested_effort", "effective_effort", "fallback_used", "fallback_reason"):
+        assert frame.get(key) == trace[key], key
+    assert frame["provider"] == trace["provider"]
+    assert frame["model"] == trace["model"]
+
+
+def _render_frame_panel(frame: dict[str, object]) -> str:
+    script = """
+const fs = require('node:fs');
+const ts = require('typescript');
+require.extensions['.tsx'] = (module, filename) => {
+  const result = ts.transpileModule(fs.readFileSync(filename, 'utf8'), {
+    compilerOptions: { module: ts.ModuleKind.CommonJS, jsx: ts.JsxEmit.ReactJSX, target: ts.ScriptTarget.ES2022 },
+    fileName: filename,
+  });
+  module._compile(result.outputText, filename);
+};
+const React = require('react');
+const { renderToStaticMarkup } = require('react-dom/server');
+const { FramePanel } = require('./src/components/FramePanel.tsx');
+const frame = JSON.parse(fs.readFileSync(0, 'utf8'));
+process.stdout.write(renderToStaticMarkup(React.createElement(FramePanel, {
+  frames: [frame], loading: false, loadFailed: false, onRefresh: () => {},
+  health: { status: 'ok', reason: 'none', releaseEvidence: false },
+})));
+"""
+    return subprocess.run(
+        ["node", "-e", script], input=json.dumps(frame), check=True, capture_output=True,
+        cwd=BACKEND_ROOT.parent, text=True, timeout=10,
+    ).stdout
+
+
+@pytest.mark.parametrize("surface", ("voice", "web", "telegram"))
+def test_frame_panel_exposes_recorded_route_and_hash_lineage(surface: str) -> None:
+    trace = _trace_v2(surface=surface, source_hashes={
+        name: f"{index + 1:016x}" for index, name in enumerate(frames.PROMPT_TRACE_SOURCE_HASHES)
+    })
+    rendered = _render_frame_panel(frames._project_trace(trace))
+
+    for label in ("Requested route", "Effective route", "Fallback", "Request hash", "Agent source",
+                  "LibreChat source", "Compiled config", "Live config", "Compiler version"):
+        assert label in rendered
+    for key in ("requested_provider", "requested_model", "provider", "model", "requested_effort",
+                "effective_effort", "request_identity_hash", "fallback_reason"):
+        assert str(trace[key]) in rendered, key
+    for source_hash in trace["source_hashes"].values():
+        assert source_hash in rendered
+    assert "Local diagnostic" in rendered
+
+
+def test_frame_panel_does_not_invent_requested_route_or_effort_for_legacy_trace() -> None:
+    trace = _trace()
+    rendered = _render_frame_panel(trace)
+
+    assert "Not recorded in legacy trace" in rendered
+    assert "Requested route" in rendered
+    assert "Effective route" in rendered
+    assert "Request hash" in rendered
+    assert trace["request_identity_hash"] in rendered
+    assert "provider_timeout" not in rendered
 
 
 @pytest.mark.parametrize(
@@ -541,3 +621,25 @@ def test_frames_api_preserves_trace_health(monkeypatch: pytest.MonkeyPatch) -> N
     )
 
     assert result == expected
+
+
+@pytest.mark.parametrize("authenticated,status", ((False, 401), (True, 403)))
+def test_frames_api_requires_admin_before_reading_trace_metadata(
+    monkeypatch: pytest.MonkeyPatch, authenticated: bool, status: int,
+) -> None:
+    from fastapi.testclient import TestClient
+    from prompt_workbench import app as workbench_app, auth
+
+    context = auth.AuthContext(authenticated=authenticated, admin=False, reason="not_admin" if authenticated else "missing_or_invalid_admin_auth")
+    monkeypatch.setattr(auth, "get_auth_context", lambda _request: context)
+    monkeypatch.setattr(frames, "recent_frame_snapshot", lambda: pytest.fail("unauthorized trace read"))
+    client = TestClient(workbench_app.app)
+
+    response = client.get("/api/frames")
+
+    assert response.status_code == status
+    assert "admin" in response.json()["detail"]
+    auth_status = client.get("/api/auth/status").json()
+    assert auth_status["authenticated"] is authenticated
+    assert auth_status["admin"] is False
+    assert auth_status["reason"] == context.reason

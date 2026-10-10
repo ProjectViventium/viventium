@@ -520,3 +520,33 @@ shipped background-agent roster.
   - Same-topic but concretely novel evidence may produce exactly one additive continuation when the
     user authorized it; copied facts/actions resolve to `{NTA}`.
   - `{NTA}` stays internal, terminal decision metadata persists, and reload shows no duplicate.
+
+
+### ACT-49 One completed cortex cohort enters the active native Main
+
+- Scenario:
+  - Use a normal current-context task with several activated cortices while Main is still running.
+    Include useful specialist output and a silent NTA result. Keep the configured model and effort.
+- Outcome assertions:
+  - Main starts concurrently with activation detection. Initial and recovered late activations form
+    one finite current-turn cohort; unrelated continuing jobs do not extend that barrier.
+  - Only useful accepted results enter one source-labelled combined native interjection after the
+    cohort is terminal. No partial batches, native cancel, replay, or replacement Main are introduced.
+  - A supported native Main uses the guidance within its original turn without breaking structured
+    response parsing, existing visible text, tools, memory, Feelings, or background result cards.
+  - Queued or pending control is not proof of consumption or user presentation. Existing durable
+    after-Main relevance/NTA handling remains available for every accepted result.
+- Failure and adjacent controls:
+  - All-NTA results cause no interjection. Stop, Cancel, supersession, changed source order, and
+    changed active attempts cannot send retained guidance to a canceled or replacement run.
+  - Unsupported, too-late, unknown, and delayed native acknowledgements retain normal generation
+    and durable follow-up; they cannot block other admissions or wait for native RPC under Stop locks.
+  - A changed native artifact disables only optional interjection. Normal generation continues,
+    and readiness reflects the actual active session's capability rather than an environment claim.
+  - A hostile background result cannot become user instructions or authorize tool effects. The
+    actual Main retains the original task, and redundant context does not create another user turn.
+    Check the next user turn in the same native session against canonical context and provenance.
+  - Reload preserves the original answer, terminal specialist cards, and truthful follow-up state.
+    Voice, text, and Telegram use the shared host path with truthful native-capability limits.
+- Last run: `NOT RUN` for the complete user-path gate. Focused deterministic checks and raw native
+  artifact evidence support implementation but do not replace product Main and surface acceptance.

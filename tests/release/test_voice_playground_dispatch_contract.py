@@ -564,7 +564,11 @@ def test_signed_call_session_deeplink_autoconnects_without_an_app_setup_step() -
     assert "autoConnect: params.get('autoConnect') === '1'," in call_start
     assert "if (deepLink.autoConnect)" in app
     assert "setAutoConnect(true);" in app
-    assert "if (!autoConnect || hasAutoStarted || !canStartCall)" in app
+    expected_guard = (
+        "if (!autoConnect || hasAutoStarted || !canStartCall || hasEnded || "
+        "callSessionState.authoritativeStatus === 'ended')"
+    )
+    assert re.sub(r"\s+", "", expected_guard) in re.sub(r"\s+", "", app)
     assert "startCall().finally(() =>" in app
     assert "Tap Start chat to turn on your mic" not in app
 
@@ -580,20 +584,29 @@ def test_call_session_start_click_is_single_flight_and_disables_duplicate_starts
     assert "startPromiseRef.current = startPromise;" in content
     assert "startPromiseRef.current = null;" in content
     assert "const START_LATCH_WATCHDOG_MS = 1_000;" in content
-    assert "const effectiveCanStartCall = canStartCall && !isStartInProgress && !hasEnded;" in content
+    compact = re.sub(r"\s+", "", content)
+    assert (
+        "consteffectiveCanStartCall=canStartCall&&!isStartInProgress&&!hasEnded"
+        "&&startError?.kind!=='auth_expired'"
+        "&&callSessionState.callStateIssue?.kind!=='auth_expired';"
+    ) in compact
     assert "Starting call..." in content
 
 
 def test_voice_route_preflight_blocks_connection_until_the_exact_saved_route_is_valid() -> None:
     content = APP_FILE.read_text()
 
+    # Settings reads are advisory; canonical server admission still precedes room entry.
     assert "const voiceSettingsStillLoading = Boolean(expectedCallSessionId) && voiceSettings.isLoading;" in content
     assert "!voiceSettings.isSaving &&" in content
-    assert "!voiceSettingsStillLoading" in content
-    assert "!voiceSettings.error" in content
+    assert "!callEnded &&" in content
+    assert "!callAuthExpired;" in content
     assert "hasAuthoritativeRoute" in content
     assert "Preparing your configured voice route..." in content
     assert "Viventium did not switch providers automatically." in content
+    start = content[content.index("const startSession = useCallback(async () => {"):]
+    assert start.index("await fetchCallConnectionDetailsForStart(") < start.index("await session.start(")
+    assert "callSessionIsEndingForTokenSource(expectedCallSessionId)" in start
 
 
 def test_call_session_playground_extends_agent_join_timeout_for_local_cold_starts() -> None:
@@ -609,7 +622,7 @@ def test_explicit_dispatch_call_connects_room_before_enabling_microphone() -> No
 
     assert "const shouldDeferMicrophoneUntilConnected = Boolean(expectedCallSessionId || appConfig.agentName);" in content
     assert "const startSession = useCallback(async () => {" in content
-    assert "await session.start();" in content
+    assert "await session.start({ signal: attempt.signal });" in content
     assert "await session.start({" in content
     assert "microphone: {" in content
     assert "enabled: false," in content
@@ -619,7 +632,8 @@ def test_explicit_dispatch_call_connects_room_before_enabling_microphone() -> No
     assert "await enableCallMicrophone({" in content
     assert "permissionState," in content
     assert "enable: () => session.room.localParticipant.setMicrophoneEnabled(true)," in content
-    assert "disable: () => session.room.localParticipant.setMicrophoneEnabled(false)," in content
+    assert "return session.room.localParticipant.setMicrophoneEnabled(false);" in content
+    assert "current !== attempt && current && !current.signal.aborted" in content
     assert "grantedTimeoutMs: MICROPHONE_START_TIMEOUT_MS," in content
     assert "classifyCallIssue" in content
     assert "const issue = classifyCallIssue(error);" in content
@@ -653,11 +667,86 @@ def test_modern_playground_prewarm_is_bounded_and_warning_only() -> None:
     assert 'VIVENTIUM_PLAYGROUND_PREWARM_REQUEST_TIMEOUT_SECONDS:-20' in content
     assert "request_timeout=20" in content
     assert "Prewarming ${PLAYGROUND_LABEL} voice startup routes" in content
+    assert "/api/health" in content
+    assert "health route did not prewarm before timeout" in content
     assert "call-session-voice-settings?callSessionId=viventium-prewarm" in content
     assert "call-session-state?callSessionId=viventium-prewarm" in content
     assert "GET intentionally exercises the Next.js route module compile without issuing a token." in content
     assert "connection-details route did not prewarm before timeout" in content
+    assert "/api/call-tasks/viventium-prewarm/cancel" in content
+    assert "task-action route did not prewarm before timeout" in content
 
+
+
+def test_modern_task_action_prewarm_runs_once_without_auth_and_stays_warning_only() -> None:
+    function = START_SCRIPT.read_text().split("\nprewarm_modern_playground_routes() {\n", 1)[1].split("\n}\n", 1)[0]
+    shell = """
+    exec 3>&1
+    log_info() { printf 'INFO %s\\n' "$*"; }
+    log_warn() { printf 'WARN %s\\n' "$*"; }
+    get_playground_port() { printf '3300'; }
+    curl() {
+      printf 'CURL' >&3; printf ' %s' "$@" >&3; printf '\\n' >&3
+      case "$*" in *'/api/health'*) printf '%s' "$TEST_HEALTH_CODE"; return "$TEST_CURL_EXIT";; *'/api/call-tasks/'*) printf '%s' "$TEST_HTTP_CODE"; return "$TEST_CURL_EXIT";; esac
+      printf '200'
+    }
+    prewarm_modern_playground_routes() {
+    """ + function + "\n}\nprewarm_modern_playground_routes 3300\n"
+    for code, curl_exit, configured, expected, health_code in [("405", "0", "7", "7", "200"), ("000", "28", "bad", "20", "000")]:
+        env = {"PATH": os.environ["PATH"], "PLAYGROUND_VARIANT": "modern", "PLAYGROUND_LABEL": "Synthetic",
+               "TEST_HTTP_CODE": code, "TEST_CURL_EXIT": curl_exit, "TEST_HEALTH_CODE": health_code,
+               "VIVENTIUM_PLAYGROUND_PREWARM_REQUEST_TIMEOUT_SECONDS": configured}
+        result = subprocess.run(["bash", "-c", shell], env=env, capture_output=True, text=True, check=True)
+        calls = [line.split()[1:] for line in result.stdout.splitlines() if line.startswith("CURL ")]
+        assert len(calls) == 5
+        assert [args[-1] for args in calls] == [
+            "http://localhost:3300/api/health",
+            "http://localhost:3300/api/call-session-voice-settings?callSessionId=viventium-prewarm",
+            "http://localhost:3300/api/call-session-state?callSessionId=viventium-prewarm",
+            "http://localhost:3300/api/connection-details",
+            "http://localhost:3300/api/call-tasks/viventium-prewarm/cancel",
+        ]
+        assert all(args[:-1] == ["-s", "-o", "/dev/null", "-w", "%{http_code}", "--max-time", expected] for args in calls)
+        assert ("task-action route prewarmed (HTTP 405)" if code == "405" else
+                "task-action route did not prewarm before timeout") in result.stdout
+        assert ("health route prewarmed (HTTP 200)" if health_code == "200" else
+                "health route did not prewarm before timeout") in result.stdout
+    for setting in [{"PLAYGROUND_VARIANT": "classic"}, {"VIVENTIUM_PLAYGROUND_PREWARM": "false"}]:
+        result = subprocess.run(["bash", "-c", shell], env={**env, **setting}, capture_output=True, text=True, check=True)
+        assert "CURL " not in result.stdout
+
+
+def test_native_next_task_action_get_never_invokes_post_or_core() -> None:
+    route = AGENT_STARTER_REACT_ROOT / "app/api/call-tasks/[taskId]/[action]/route.ts"
+    script = r"""
+    const fs = require('fs'), path = require('path'), Module = require('module');
+    const app = process.argv[1], route = process.argv[2];
+    const requireApp = Module.createRequire(path.join(app, 'package.json'));
+    const ts = requireApp('typescript'), cache = new Map();
+    let fetchCalls = 0;
+    global.fetch = () => { fetchCalls++; throw new Error('Unexpected external fetch'); };
+    function load(file) {
+      if (cache.has(file)) return cache.get(file).exports;
+      const mod = new Module(file); cache.set(file, mod);
+      mod.filename = file; mod.paths = Module._nodeModulePaths(path.dirname(file));
+      mod.require = name => name.startsWith('@/') ? load(path.join(app, name.slice(2) + '.ts')) : requireApp(name);
+      mod._compile(ts.transpileModule(fs.readFileSync(file, 'utf8'), {compilerOptions:
+        {module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022,esModuleInterop:true}}).outputText, file);
+      return mod.exports;
+    }
+    (async () => {
+      const handlers = load(route);
+      const {autoImplementMethods} = requireApp('next/dist/server/route-modules/app-route/helpers/auto-implement-methods');
+      const methods = autoImplementMethods(handlers);
+      const response = await methods.GET(new Request('http://localhost:3300/api/call-tasks/viventium-prewarm/cancel'));
+      console.log(JSON.stringify({status:response.status,body:await response.text(),fetchCalls,
+        exportedMethods:Object.keys(handlers),postPreserved:methods.POST === handlers.POST}));
+    })().catch(() => process.exitCode = 1);
+    """
+    result = subprocess.run(["node", "-e", script, str(AGENT_STARTER_REACT_ROOT), str(route)],
+                            env={"PATH": os.environ["PATH"]}, capture_output=True, text=True, check=True)
+    assert json.loads(result.stdout) == {"status": 405, "body": "", "fetchCalls": 0,
+                                      "exportedMethods": ["POST"], "postPreserved": True}
 
 def test_xai_voice_runtime_exposes_only_standalone_tts() -> None:
     launcher = START_SCRIPT.read_text()
@@ -1525,8 +1614,32 @@ def test_modern_playground_launcher_isolates_next_dev_output_and_allows_public_d
     assert "process.env.VIVENTIUM_PUBLIC_PLAYGROUND_URL" in next_config
     assert '".next-viventium-dev/types/**/*.ts"' in ts_config
 
-    assert 'export VIVENTIUM_PLAYGROUND_NEXT_DIST_DIR="${VIVENTIUM_PLAYGROUND_NEXT_DIST_DIR:-.next-viventium-dev}"' in launcher
+    assert 'export VIVENTIUM_PLAYGROUND_NEXT_DIST_DIR="${VIVENTIUM_PLAYGROUND_NEXT_DIST_DIR:-.next-viventium-dev/${VIVENTIUM_RUNTIME_PROFILE}-${PLAYGROUND_PORT}}"' in launcher
     assert 'next_dist_dir="$VIVENTIUM_PLAYGROUND_NEXT_DIST_DIR"' in launcher
+
+
+def test_modern_playground_dist_output_separates_runtime_ports_and_keeps_override() -> None:
+    launcher = START_SCRIPT.read_text()
+    export_line = next(
+        line.strip() for line in launcher.splitlines()
+        if line.strip().startswith('export VIVENTIUM_PLAYGROUND_NEXT_DIST_DIR=')
+    )
+    def resolve(profile: str, port: str, explicit: str = '') -> str:
+        result = subprocess.run(
+            ['bash', '-c', export_line + '\nprintf \"%s\" \"$VIVENTIUM_PLAYGROUND_NEXT_DIST_DIR\"'],
+            env={**os.environ, 'VIVENTIUM_RUNTIME_PROFILE': profile,
+                 'PLAYGROUND_PORT': port, 'VIVENTIUM_PLAYGROUND_NEXT_DIST_DIR': explicit},
+            check=True, capture_output=True, text=True,
+        )
+        return result.stdout
+    primary = resolve('isolated', '3300')
+    side_by_side = resolve('isolated', '4300')
+    other_profile = resolve('compat', '3300')
+    assert len({primary, side_by_side, other_profile}) == 3
+    assert primary.startswith('.next-viventium-dev/')
+    assert side_by_side.startswith('.next-viventium-dev/')
+    assert resolve('isolated', '3300', '.next-custom') == '.next-custom'
+    assert resolve('isolated', '4300', '.next-custom') == '.next-custom'
 
 
 def test_modern_playground_launcher_prewarms_voice_startup_routes_before_worker_start() -> None:
@@ -1536,6 +1649,9 @@ def test_modern_playground_launcher_prewarms_voice_startup_routes_before_worker_
     assert "VIVENTIUM_PLAYGROUND_PREWARM" in launcher
     assert "/api/call-session-voice-settings?callSessionId=viventium-prewarm" in launcher
     assert "/api/call-session-state?callSessionId=viventium-prewarm" in launcher
+    prewarm = launcher.split("\nprewarm_modern_playground_routes() {\n", 1)[1].split("\n}\n", 1)[0]
+    assert "/api/health" in prewarm
+    assert prewarm.index("/api/health") < prewarm.index("/api/call-session-voice-settings")
     assert "/api/connection-details" in launcher
     assert 'wait_for_http "http://localhost:${voice_playground_port}" "${PLAYGROUND_LABEL} before Voice Gateway start"' in launcher
     assert 'prewarm_modern_playground_routes "$voice_playground_port"' in launcher
@@ -2253,3 +2369,118 @@ def test_connection_details_route_uses_public_livekit_only_for_configured_public
     assert "return NEXT_PUBLIC_LIVEKIT_URL ?? LIVEKIT_URL;" in content
     assert "const browserLiveKitUrl = resolveBrowserLiveKitUrl(req);" in content
     assert "serverUrl: browserLiveKitUrl," in content
+
+
+
+def test_synthetic_audio_qa_uses_declared_voice_pipeline_capabilities() -> None:
+    script = textwrap.dedent(
+        f"""
+        const {{ voicePipelineSupported }} = require({json.dumps(str(SYNTHETIC_AUDIO_QA_SCRIPT))});
+        const route = {{ provider: "synthetic-provider", model: "synthetic-high" }};
+        const cases = [
+          [true, route, {{ "synthetic-provider": {{ voice_pipeline_llm: true }} }}],
+          [true, route, {{ "synthetic-provider": {{ realtime_voice: true }} }}],
+          [true, route, {{ "synthetic-provider": {{ voice_pipeline_llm: false, realtime_voice: false }} }}],
+          [true, route, {{}}],
+          [true, route, {{ "other-provider": {{ voice_pipeline_llm: true }} }}],
+          [true, route, {{ "synthetic-provider": {{ voice_pipeline_llm: "true" }} }}],
+          [false, route, {{ "synthetic-provider": {{ voice_pipeline_llm: true }} }}],
+          [true, null, {{ "synthetic-provider": {{ voice_pipeline_llm: true }} }}],
+          [true, {{ provider: "glasshive-harness", model: "synthetic-high" }},
+            {{ "glasshive-harness": {{ voice_pipeline_llm: true, realtime_voice: false }} }}],
+        ];
+        process.stdout.write(JSON.stringify(cases.map((args) => voicePipelineSupported(...args))));
+        """
+    )
+    completed = subprocess.run(
+        ["node", "-e", script], cwd=ROOT, capture_output=True, check=True, text=True,
+    )
+    assert json.loads(completed.stdout) == [True, True, False, False, False, False, False, False, True]
+
+
+def test_synthetic_audio_qa_reads_the_compiled_capability_registry(tmp_path: Path) -> None:
+    config = tmp_path / "compiled.yaml"
+    config.write_text(
+        "endpoints:\n  agents:\n    providerCapabilities:\n"
+        "      synthetic-provider:\n        voice_pipeline_llm: true\n        realtime_voice: false\n"
+    )
+    missing_registry = tmp_path / "missing-registry.yaml"
+    missing_registry.write_text("endpoints:\n  agents: {}\n")
+    malformed_config = tmp_path / "malformed.yaml"
+    malformed_config.write_text("endpoints: [\n")
+    script = textwrap.dedent(
+        f"""
+        const {{ readCompiledProviderCapabilities, voicePipelineSupported }} =
+          require({json.dumps(str(SYNTHETIC_AUDIO_QA_SCRIPT))});
+        const route = {{ provider: "synthetic-provider", model: "synthetic-high" }};
+        process.env.CONFIG_PATH = {json.dumps(str(config))};
+        const registry = readCompiledProviderCapabilities();
+        let missingConfigRejected = false;
+        let malformedConfigRejected = false;
+        try {{ readCompiledProviderCapabilities({json.dumps(str(tmp_path / "absent.yaml"))}); }}
+        catch {{ missingConfigRejected = true; }}
+        try {{ readCompiledProviderCapabilities({json.dumps(str(malformed_config))}); }}
+        catch {{ malformedConfigRejected = true; }}
+        process.stdout.write(JSON.stringify({{
+          registry, missingConfigRejected, malformedConfigRejected,
+          supported: voicePipelineSupported(true, route, registry),
+          missingRegistry: voicePipelineSupported(true, route,
+            readCompiledProviderCapabilities({json.dumps(str(missing_registry))})),
+        }}));
+        """
+    )
+    completed = subprocess.run(
+        ["node", "-e", script], cwd=ROOT, capture_output=True, check=True, text=True,
+    )
+    assert json.loads(completed.stdout) == {
+        "registry": {"synthetic-provider": {"voice_pipeline_llm": True, "realtime_voice": False}},
+        "supported": True,
+        "missingRegistry": False,
+        "missingConfigRejected": True,
+        "malformedConfigRejected": True,
+    }
+
+
+def test_synthetic_audio_qa_checks_pipeline_capability_for_speech_and_wing() -> None:
+    script = textwrap.dedent(
+        f"""
+        const fs = require("fs");
+        const source = fs.readFileSync({json.dumps(str(SYNTHETIC_AUDIO_QA_SCRIPT))}, "utf8");
+        const start = source.indexOf("    result.transportOk =");
+        const end = source.indexOf("    result.ok = result.transportOk;", start);
+        if (start < 0 || end < 0) throw new Error("transport_contract_missing");
+        const evaluate = new Function("result", "args", "pageErrors",
+          source.slice(start, end) + "return result.transportOk;");
+        const healthy = {{
+          seeded: true, autoConnected: true, microphonePublished: true, rtcConnected: true,
+          zeroSetupStartActions: 0, activeJobPresent: true, transcriptCount: 1,
+          transcriptCountWithinLimit: true, transcriptMatchedExpected: true,
+          listenOnlyIsolationObserved: true, intentionalSilenceObserved: true,
+          interactiveTurnCompleted: true, assistantResponsePresent: true,
+          deliveredAudioPresent: true, playbackCompleted: true,
+        }};
+        const cases = [];
+        for (const expectSilence of [false, true]) {{
+          for (const supported of [true, false]) {{
+            cases.push(evaluate({{ ...healthy, voiceLlmProviderSupportsPipeline: supported,
+              voiceLlmProviderIsIndependent: !supported }},
+              {{ interactive: true, expectSilence }}, []));
+          }}
+        }}
+        cases.push(evaluate({{ ...healthy, voiceLlmProviderSupportsPipeline: false }},
+          {{ interactive: false, expectSilence: false }}, []));
+        process.stdout.write(JSON.stringify(cases));
+        """
+    )
+    completed = subprocess.run(
+        ["node", "-e", script], cwd=ROOT, capture_output=True, check=True, text=True,
+    )
+    assert json.loads(completed.stdout) == [True, False, True, False, True]
+
+
+def test_synthetic_audio_qa_keeps_browser_network_security_checks() -> None:
+    content = SYNTHETIC_AUDIO_QA_SCRIPT.read_text()
+    assert "--disable-features=LocalNetworkAccessChecks" not in content
+    assert '"--use-fake-ui-for-media-stream"' in content
+    assert '"--use-fake-device-for-media-stream"' in content
+    assert "--force-webrtc-ip-handling-policy=disable_non_proxied_udp" in content

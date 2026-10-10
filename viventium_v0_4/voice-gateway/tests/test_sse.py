@@ -589,6 +589,43 @@ class TestSSEParser(unittest.IsolatedAsyncioTestCase):
         cleaned = display.feed("Use 1 < 2 and [note: important].")
         self.assertEqual(cleaned, "Use 1 < 2 and [note: important].")
 
+    def test_display_cleans_split_formatting_and_preserves_public_literals(self) -> None:
+        cases = [
+            (["**Pub", "lic**"], "Public"),
+            (["<cust", "om>Public</custom>"], "Public"),
+            (["2 < 3 and <"], "2 < 3 and <"),
+            (["Use snake_case and `**literal** <custom>` now."], "Use snake_case and `**literal** <custom>` now."),
+            (["Use `", "<custom>", "` now."], "Use `<custom>` now."),
+            (["[Report]", "(https://example.invalid/_Section_/File?part=A_B)"], "[Report](https://example.invalid/_Section_/File?part=A_B)"),
+            (["**https://example.invalid/_Section_**"], "https://example.invalid/_Section_"),
+            (["Read **Pub", "lic** 🟢 now."], "Read Public 🟢 now."),
+        ]
+        for chunks, expected in cases:
+            with self.subTest(chunks=chunks):
+                display = VoiceControlDisplayFilter()
+                actual = "".join(display.feed(value) for value in chunks)
+                actual += display.feed("", final=True)
+                self.assertEqual(actual, expected)
+
+    def test_display_releases_safe_prefix_before_later_formatting_completes(self) -> None:
+        display = VoiceControlDisplayFilter()
+        self.assertEqual(display.feed("Read **Pub"), "Read ")
+        self.assertEqual(display.feed("lic** now."), "Public now.")
+
+    def test_display_preserves_matching_backtick_runs_and_unclosed_literals(self) -> None:
+        for raw in (
+            "Read ``**literal** <custom>`` now.",
+            "Read ```text\n<custom> **literal**\n``` now.",
+            "Read ``a `tick` **literal** <custom>`` now.",
+            "Read ``unterminated `tick` **literal** <custom>",
+        ):
+            for cut in range(len(raw) + 1):
+                with self.subTest(raw=raw, cut=cut):
+                    display = VoiceControlDisplayFilter()
+                    actual = display.feed(raw[:cut]) + display.feed(raw[cut:])
+                    actual += display.feed("", final=True)
+                    self.assertEqual(actual, raw)
+
     def test_voice_control_display_filter_preserves_markdown_target_across_label_boundary(self) -> None:
         for chunks in (
             ["Read [the report](https://example.invalid/file?revision=2&view=owner)."],

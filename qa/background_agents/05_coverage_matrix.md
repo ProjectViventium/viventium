@@ -73,3 +73,10 @@
   - `qa/background_agents/activation_reliability_2026-04-12.md` records the Groq-first benchmark
     baseline; later VPN-related failures are provider-reachability QA issues, not a reason to
     promote xAI into the default fast path.
+
+
+- `ACT-49` covers the shared completed-cohort live Main courier and native control consumers:
+  concurrent detection, source-labelled useful-result aggregation, exact active ownership,
+  cancellation, source order, optional artifact capability, nonblocking acknowledgement, and
+  durable after-Main fallback. Apply it across activated cortices and supported user surfaces;
+  raw ACP acceptance alone does not prove product structured-response or visible-UI acceptance.

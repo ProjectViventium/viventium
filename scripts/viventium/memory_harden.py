@@ -80,13 +80,51 @@ def runtime_env_candidates(runtime_dir: Path, librechat_dir: Path) -> tuple[Path
     )
 
 
-def load_runtime_env(runtime_dir: Path, librechat_dir: Path) -> dict[str, str]:
-    env: dict[str, str] = {}
-    for candidate in runtime_env_candidates(runtime_dir, librechat_dir):
-        for key, value in parse_env_file(candidate).items():
-            if value == "" and env.get(key):
+def load_runtime_env(
+    runtime_dir: Path, librechat_dir: Path, *, app_support_dir: Path | None = None
+) -> dict[str, str]:
+    from continuity_audit import load_env_file, resolve_mongo_uri
+
+    candidates = runtime_env_candidates(runtime_dir, librechat_dir)
+    env = parse_env_file(candidates[0])
+    selected_env: dict[str, str] = {}
+    for candidate in candidates[1:]:
+        for key, value in load_env_file(candidate).items():
+            if value == "" and (selected_env.get(key) or env.get(key)):
                 continue
-            env[key] = value
+            selected_env[key] = value
+    env.update(selected_env)
+
+    # Resolve the selected instance before the shared source fallback. Compiled local
+    # profiles declare a port/database rather than repeating MONGO_URI in their env.
+    selected_mongo_uri = resolve_mongo_uri(selected_env, runtime_dir)
+    if selected_mongo_uri:
+        env["MONGO_URI"] = selected_mongo_uri
+
+    if app_support_dir is None or runtime_dir.resolve() != (app_support_dir / "runtime").resolve():
+        return env
+
+    # Use the same existing instance owner as the normal runtime launcher. Read only:
+    # the operator job must not create secrets or borrow another instance's credentials.
+    from native_runtime import RUNTIME_SECRET_LENGTHS, mongodb_uri, runtime_secrets, runtime_state
+
+    native_state_path = app_support_dir / "state" / "native-runtime.json"
+    if not selected_env.get("MONGO_URI") and (
+        native_state_path.exists() or native_state_path.is_symlink()
+    ):
+        runtime_state(app_support_dir)
+        env["MONGO_URI"] = mongodb_uri(app_support_dir)
+
+    secrets_path = app_support_dir / "state" / "native-secrets.json"
+    if secrets_path.exists() or secrets_path.is_symlink():
+        env.update(runtime_secrets(app_support_dir, create=False))
+    elif os.environ.get("VIVENTIUM_APP_SUPPORT_DIR") and (
+        Path(os.environ["VIVENTIUM_APP_SUPPORT_DIR"]).expanduser().resolve()
+        == app_support_dir.resolve()
+    ):
+        for key in RUNTIME_SECRET_LENGTHS:
+            if key not in selected_env and os.environ.get(key):
+                env[key] = os.environ[key]
     return env
 
 
@@ -1509,8 +1547,18 @@ def run_transcript_backfill_until_caught_up(
 
 
 def run_node(args: argparse.Namespace, runtime_env: dict[str, str]) -> int:
+    from native_runtime import RUNTIME_SECRET_LENGTHS
+
     env = os.environ.copy()
     env.update(runtime_env)
+    inherited_support = os.environ.get("VIVENTIUM_APP_SUPPORT_DIR")
+    inherited_owner_matches = bool(inherited_support) and (
+        Path(inherited_support).expanduser().resolve() == args.app_support_dir.resolve()
+    )
+    if not inherited_owner_matches:
+        for key in RUNTIME_SECRET_LENGTHS:
+            if key not in runtime_env:
+                env.pop(key, None)
     configured_fallbacks = authorized_memory_fallbacks(
         runtime_env.get("VIVENTIUM_MEMORY_HARDENING_MODEL_FALLBACKS") or ""
     )
@@ -1693,7 +1741,9 @@ def main(argv: list[str] | None = None) -> int:
     args.app_support_dir = args.app_support_dir.expanduser().resolve()
     args.runtime_dir = args.runtime_dir.expanduser().resolve()
     librechat_dir = args.repo_root / "viventium_v0_4" / "LibreChat"
-    runtime_env = load_runtime_env(args.runtime_dir, librechat_dir)
+    runtime_env = load_runtime_env(
+        args.runtime_dir, librechat_dir, app_support_dir=args.app_support_dir
+    )
     (args.app_support_dir / "logs").mkdir(parents=True, exist_ok=True)
 
     if args.command == "install-schedule":

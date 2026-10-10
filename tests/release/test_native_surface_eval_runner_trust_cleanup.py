@@ -13,6 +13,119 @@ RUNNER = (
 )
 
 
+def test_judge_failure_metadata_keeps_typed_status_without_private_payload() -> None:
+    script = r"""
+const assert = require('assert');
+const crypto = require('crypto');
+const runner = require(process.argv[1]);
+const hash = value => crypto.createHash('sha256').update(value).digest('hex').slice(0,16);
+const events = [{final:true,responseMessage:{content:[
+  {type:'error',error_class:'host_capacity',status:503,code:'synthetic_private_code',
+   error:'synthetic_private_message',token:'synthetic_private_token',name:'Error'},
+  {type:'text',text:'synthetic_private_response'},
+]}}];
+const result = runner.summarizeJudgeFailureMetadata(events,'host_capacity');
+assert.strictEqual(result.errorClass,'host_capacity');
+assert.strictEqual(result.errorStatus,503);
+assert.deepStrictEqual(result.errorCodeHashes,[hash('synthetic_private_code')]);
+assert.deepStrictEqual(result.errorNameHashes,[hash('Error')]);
+assert.strictEqual(result.errorName,'Error');
+assert.strictEqual(result.errorCode,null);
+assert.strictEqual(runner.summarizeJudgeFailureMetadata([
+ {final:true,responseMessage:{content:[{type:'error',error_class:'provider_response_failed',
+  code:'ECONNREFUSED',statusCode:502,name:'TypeError'}]}}
+]).errorCode,'ECONNREFUSED');
+assert.strictEqual(result.errorPartCount,1);
+assert.strictEqual(result.finalEventReceived,true);
+assert.strictEqual(JSON.stringify(result).includes('synthetic_private'),false);
+"""
+    result = _node(script)
+    assert result.returncode == 0, result.stderr
+
+
+def test_judge_metadata_does_not_invent_failure_or_export_unknown_error_strings() -> None:
+    script = r"""
+const assert = require('assert');
+const runner = require(process.argv[1]);
+const success = runner.summarizeJudgeFailureMetadata([
+ {final:true,responseMessage:{content:[{type:'text',text:'synthetic_private_text'}]}}
+]);
+assert.strictEqual(success.errorClass,null);
+assert.strictEqual(success.errorStatus,null);
+assert.strictEqual(success.errorPartCount,0);
+assert.deepStrictEqual(success.errorCodeHashes,[]);
+const unknown = runner.summarizeJudgeFailureMetadata([
+ {final:true,error:'synthetic_secret_token',responseMessage:{content:{private:'body'}}}
+],{status:'503',statusCode:999,code:'synthetic_private_code',name:'synthetic_private_name',
+ message:'synthetic_private_message',token:'synthetic_private_token'});
+assert.strictEqual(unknown.errorClass,null);
+assert.strictEqual(unknown.errorStatus,null);
+assert.strictEqual(unknown.errorCode,null);
+assert.strictEqual(unknown.errorName,null);
+assert.match(unknown.publicErrorClassHash,/^[0-9a-f]{16}$/);
+assert.strictEqual(JSON.stringify(unknown).includes('synthetic_'),false);
+"""
+    result = _node(script)
+    assert result.returncode == 0, result.stderr
+
+
+def test_judge_retains_both_failed_attempts_without_changing_gate_or_cleanup() -> None:
+    script = r"""
+const assert = require('assert');
+const fs = require('fs');
+const path = require('path');
+const Module = require('module');
+const file = process.argv[1];
+const loaded = new Module(file,module);
+loaded.filename = file;
+loaded.paths = Module._nodeModulePaths(path.dirname(file));
+loaded._compile(fs.readFileSync(file,'utf8') +
+ '\nmodule.exports.testRunJudge=runJudge; buildText=testCase=>testCase.prompt;',file);
+let posts = 0;
+let streams = 0;
+const payloads = [];
+global.fetch = async (url,options={}) => {
+ if (options.method === 'POST') {
+  posts += 1; payloads.push(JSON.parse(options.body));
+  return new Response(JSON.stringify({streamId:'synthetic-stream-'+posts}),
+    {status:200,headers:{'Content-Type':'application/json'}});
+ }
+ streams += 1;
+ const event = {final:true,conversation:{conversationId:'synthetic-conversation-'+streams},
+  responseMessage:{messageId:'synthetic-response-'+streams,content:[
+   {type:'error',error_class:'provider_response_failed',status:streams===1?502:503,
+    code:'synthetic-private-code-'+streams,error:'synthetic-private-error'}]},
+  requestMessage:{messageId:'synthetic-request-'+streams}};
+ return new Response('data: '+JSON.stringify(event)+'\n\n',
+   {status:200,headers:{'Content-Type':'text/event-stream'}});
+};
+(async()=>{
+ const result = await loaded.exports.testRunJudge({
+  args:{apiBase:'http://synthetic.invalid',judgeEndpoint:'synthetic-provider',
+    judgeModel:'synthetic-model',qaRunId:'synthetic-qa',timeoutMs:1000},
+  token:'synthetic-private-token',
+  testCase:{id:'synthetic-case',prompt:'Synthetic prompt.',rubric:['Synthetic rubric.']},
+  result:{ok:true,text:'Synthetic answer.'},
+ });
+ assert.strictEqual(posts,2); assert.strictEqual(streams,2);
+ assert.strictEqual(result.ok,false);
+ assert.strictEqual(result.verdict,'judge_parse_failed');
+ assert.strictEqual(result.error,'provider_response_failed');
+ assert.strictEqual(result.attempts,2);
+ assert.strictEqual(result.cleanupFinalMetas.length,2);
+ assert.deepStrictEqual(result.attemptDiagnostics.map(x=>x.errorStatus),[502,503]);
+ assert.deepStrictEqual(result.attemptDiagnostics.map(x=>x.startStatus),[200,200]);
+ assert.deepStrictEqual(result.attemptDiagnostics.map(x=>x.streamStatus),[200,200]);
+ assert.deepStrictEqual(result.attemptDiagnostics.map(x=>x.attempt),[1,2]);
+ assert.ok(result.attemptDiagnostics.every(x=>/^[a-f0-9]{16}$/.test(x.streamIdHash)));
+ assert.strictEqual(JSON.stringify(result.attemptDiagnostics).includes('synthetic-private'),false);
+ assert.ok(payloads.every(x=>x.ephemeralAgent && x.endpoint==='agents' && x.temperature===0));
+})().catch(error=>{console.error(error);process.exit(1)});
+"""
+    result = _node(script)
+    assert result.returncode == 0, result.stderr
+
+
 def _node(source: str, timeout: int = 30) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
         ["node", "-e", source, str(RUNNER)],
@@ -22,6 +135,116 @@ def _node(source: str, timeout: int = 30) -> subprocess.CompletedProcess[str]:
         timeout=timeout,
         check=False,
     )
+
+
+def test_voice_workbench_typed_input_uses_the_server_owned_participant_contract() -> None:
+    script = r"""
+const assert = require('assert');
+const crypto = require('crypto');
+const runner = require(process.argv[1]);
+const input = {inputKind:'participant_text', session:{callSessionId:'synthetic-call',
+  ownerParticipantIdentity:'server-owner'}, sourceEventId:'synthetic-source', text:'  Hello café.  '};
+assert.deepStrictEqual(runner.buildVoiceTypedInput(input), {version:1,kind:'participant_text',
+  callSessionId:'synthetic-call',participantIdentity:'server-owner',sourceEventId:'synthetic-source',
+  textSha256:crypto.createHash('sha256').update('Hello café.','utf8').digest('hex')});
+assert.strictEqual(runner.buildVoiceTypedInput({...input,inputKind:undefined}),null);
+assert.throws(()=>runner.buildVoiceTypedInput({...input,inputKind:'microphone_owner'}),
+  /voice_input_kind_unsupported/);
+assert.throws(()=>runner.buildVoiceTypedInput({...input,session:{callSessionId:'synthetic-call',
+  participantIdentity:'guessed-owner'}}),/voice_typed_input_binding_unavailable/);
+assert.throws(()=>runner.buildVoiceTypedInput({...input,text:' '}),/voice_typed_input_binding_unavailable/);
+assert.throws(()=>runner.buildVoiceTypedInput({...input,sourceEventId:'x'.repeat(161)}),
+  /voice_typed_input_binding_unavailable/);
+"""
+    result = _node(script)
+    assert result.returncode == 0, result.stderr
+    source = RUNNER.read_text()
+    assert 'session: state.body, sourceEventId, text' in source
+    assert '...(typedInput ? { typedInput } : {})' in source
+
+
+def test_native_surface_reads_current_core_trace_metadata_incrementally() -> None:
+    script = r"""
+const assert = require('assert');
+const fs = require('fs');
+const os = require('os');
+const path = require('path');
+const runner = require(process.argv[1]);
+const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'native-frame-trace-'));
+const trace = {
+  version:2, family:'main_run_create', surface:'voice',
+  requested_provider:'h1111111111111111', provider:'h1111111111111111',
+  requested_model:'h2222222222222222', model:'h2222222222222222',
+  requested_effort:'high', effective_effort:'high', fallback_used:false, fallback_reason:'none',
+  agent_id_hash:'3333333333333333', request_identity_hash:'4444444444444444',
+  source_hashes:{agent_source:'5555555555555555',librechat_source:'6666666666666666',
+    compiled_runtime_config:'7777777777777777',live_installed_runtime_config:'7777777777777777',
+    compiler_version:'8888888888888888'},
+  layer_tokens:{main_instructions:100}, layer_hashes:{main_instructions:'9999999999999999'},
+};
+try {
+  for (const fileName of ['debug-synthetic.log', 'debug-synthetic.log.1']) {
+    const file = path.join(dir, fileName);
+    fs.writeFileSync(file, 'old unrelated log\n');
+    const before = runner.collectFrameOffsets({logDir:dir});
+    fs.appendFileSync(file, 'Unrelated private runtime content\n' +
+      'synthetic debug: [PromptFrameTraceTelemetry] '+JSON.stringify(trace)+'\n');
+    const delta = runner.readFrameDelta(before,{logDir:dir});
+    assert.strictEqual(delta.frames.length,1);
+    const frame=delta.frames[0];
+    assert.strictEqual(frame.layer_token_estimates.main_instructions,100);
+    assert.strictEqual(frame.source_hashes.agent_source,trace.source_hashes.agent_source);
+    const evidence=runner.completionEvidenceForCase(delta.frames,'voice',trace.request_identity_hash,true);
+    assert.strictEqual(evidence.verified,true);
+    assert.deepStrictEqual(evidence.completionProviderHashes,['1111111111111111']);
+    assert.deepStrictEqual(evidence.completionModelHashes,['2222222222222222']);
+    assert.deepStrictEqual(evidence.requestedEfforts,['high']);
+    assert.strictEqual(JSON.stringify(delta).includes('Unrelated private runtime content'),false);
+    assert.strictEqual(runner.readFrameDelta(delta.afterOffsets,{logDir:dir}).frames.length,0);
+    fs.renameSync(file, file + '.replaced');
+    fs.writeFileSync(file,'synthetic debug: [PromptFrameTraceTelemetry] '+JSON.stringify(trace)+'\n');
+    fs.writeFileSync(file + '.gz','synthetic debug: [PromptFrameTraceTelemetry] '+JSON.stringify(trace)+'\n');
+    fs.writeFileSync(file + '.invalid','synthetic debug: [PromptFrameTraceTelemetry] '+JSON.stringify(trace)+'\n');
+    const replacement = runner.readFrameDelta(delta.afterOffsets,{logDir:dir});
+    assert.strictEqual(replacement.frames.length,1);
+    assert.strictEqual(runner.readFrameDelta(replacement.afterOffsets,{logDir:dir}).frames.length,0);
+  }
+} finally {fs.rmSync(dir,{recursive:true,force:true});}
+"""
+    completed = _node(script)
+    assert completed.returncode == 0, completed.stderr
+
+
+def test_current_trace_metadata_keeps_missing_source_and_route_lineage_blocked() -> None:
+    script = r"""
+const assert = require('assert');
+const runner = require(process.argv[1]);
+const trace={version:2,family:'main_run_create',surface:'voice',
+  requested_provider:'h1111111111111111',provider:'h1111111111111111',
+  requested_model:'h2222222222222222',model:'h2222222222222222',
+  requested_effort:'high',effective_effort:'high',fallback_used:false,fallback_reason:'none',
+  agent_id_hash:'3333333333333333',request_identity_hash:'4444444444444444',
+  source_hashes:{agent_source:'5555555555555555',librechat_source:'6666666666666666',
+    compiled_runtime_config:'7777777777777777',live_installed_runtime_config:'7777777777777777',
+    compiler_version:'8888888888888888'}};
+const parse=x=>runner.parsePromptFrameTraceLine('debug: [PromptFrameTraceTelemetry] '+JSON.stringify(x));
+for(const change of [
+  {source_hashes:{...trace.source_hashes,agent_source:'none'}},
+  {source_hashes:{...trace.source_hashes,live_installed_runtime_config:'9999999999999999'}},
+  {model:'hmissing'},
+  {version:1},
+]) {
+  assert.throws(()=>runner.completionEvidenceForCase([parse({...trace,...change})],
+    'voice',trace.request_identity_hash,true),/completion_prompt_frame_source_lineage_missing/);
+}
+assert.throws(()=>runner.completionEvidenceForCase([parse({...trace,effective_effort:undefined})],
+  'voice',trace.request_identity_hash,true),/completion_prompt_frame_route_identity_missing/);
+assert.strictEqual(runner.parsePromptFrameTraceLine('unrelated text'),null);
+assert.strictEqual(runner.parsePromptFrameTraceLine('debug: [PromptFrameTraceTelemetry] null').parse_error,true);
+assert.strictEqual(runner.parsePromptFrameTraceLine('debug: [PromptFrameTraceTelemetry] broken').parse_error,true);
+"""
+    completed = _node(script)
+    assert completed.returncode == 0, completed.stderr
 
 
 def test_cli_filters_select_one_exact_native_surface_case() -> None:
@@ -562,7 +785,8 @@ function database(seed) {
   };
   const db = database({
     sessions: [
-      { _id: 'session-run', user: 'qa-user', refreshTokenHash: 'run-hash' },
+      { _id: 'session-run', user: 'qa-user', refreshTokenHash: 'rotated-run-hash' },
+      { _id: 'session-other-qa', user: 'qa-user', refreshTokenHash: 'other-run-hash' },
       { _id: 'session-personal', user: 'personal-user', refreshTokenHash: 'personal-hash' },
     ],
     telegramusermappings: [{
@@ -627,7 +851,7 @@ function database(seed) {
     removedConversationCount: 1,
   });
   assert.deepStrictEqual(db.rows.telegramusermappings, [originalMapping]);
-  assert.deepStrictEqual(db.rows.sessions.map((row) => row._id), ['session-personal']);
+  assert.deepStrictEqual(db.rows.sessions.map((row) => row._id), ['session-other-qa', 'session-personal']);
   assert.deepStrictEqual(
     db.rows.messages.map((row) => row._id).sort(),
     ['message-old-qa', 'message-personal'],
@@ -1007,3 +1231,135 @@ def test_main_finally_requires_cleanup_and_cleanup_failure_exits_nonzero() -> No
     ):
         assert field in source
     assert "await qaAuth.close()" not in source
+
+
+# Reuse the owning runner's existing typed observations without running a live surface.
+_NATIVE_JUDGE_OBSERVATION_FIXTURE = r"""
+const assert = require('assert');
+const fs = require('fs');
+const path = require('path');
+const Module = require('module');
+const file = process.argv[1];
+const loaded = new Module(file, module);
+loaded.filename = file;
+loaded.paths = Module._nodeModulePaths(path.dirname(file));
+loaded._compile(fs.readFileSync(file, 'utf8') +
+  '\nmodule.exports.judgeObservationTest = { summarizeNativeEventsForJudge, readConversationEvidence };', file);
+const runner = loaded.exports;
+const fixture = {
+  user: 'owner-test', conversationId: 'conversation-test', messageId: 'message-test',
+  isCreatedByUser: false, content: [], createdAt: new Date('2026-01-01T00:00:00Z'),
+  attachments: [{ file_id: 'native_synthetic_private_id', filename: 'sample.txt', bytes: 17,
+    type: 'text/plain', filepath: '/home/test/private/sample.txt',
+    download_url: 'https://artifact.example.test/v1/signed-links/synthetic-private' }],
+  metadata: { viventium: { nativeToolEvidence: {
+    logicalTurnId: 'turn-test', revision: 1,
+    evidence: { version: 1, owner_id: 'owner-test', conversation_id: 'conversation-test',
+      message_id: 'message-test', request_id: 'chatcmpl-synthetic-private-id',
+      run_id: 'run_synthetic_private_id', invocation_id: 'synthetic-private-invocation',
+      omitted_results: 0, results: [{ id: 'synthetic-private-call-id', name: 'use_tool',
+        status: 'failed', arguments: { text: 'synthetic-private-arguments' },
+        output: { text: JSON.stringify({ type: 'MCP', output: { OkayOutput: JSON.stringify({
+          status: 'blocked', reason: 'delegation_dispatch_unconfirmed', retryable: true,
+          workRef: 'synthetic-private-work-ref',
+          download_url: 'https://artifact.example.test/v1/signed-links/synthetic-private',
+        }) } }), bytes: 123, redacted: false, omitted_bytes: 0 },
+      }],
+    },
+  } } },
+};
+const events = [ { event: 'attachment', data: fixture.attachments[0] },
+  { final: true, responseMessage: fixture } ];
+const summarize = events => JSON.parse(
+  runner.judgeObservationTest.summarizeNativeEventsForJudge(events));
+"""
+
+
+def test_judge_projects_bound_native_tools_and_normal_files_without_claiming_download() -> None:
+    script = _NATIVE_JUDGE_OBSERVATION_FIXTURE + r"""
+const summary = summarize(events);
+assert.strictEqual(summary.native_tool_evidence.availability, 'observed');
+assert.strictEqual(summary.native_tool_evidence.calls[0].name, 'use_tool');
+assert.strictEqual(summary.native_tool_evidence.calls[0].status, 'failed');
+assert.strictEqual(summary.native_tool_evidence.calls[0].result_status, 'blocked');
+assert.strictEqual(summary.native_tool_evidence.calls[0].result_reason, 'delegation_dispatch_unconfirmed');
+assert.strictEqual(summary.native_tool_evidence.calls[0].retryable, true);
+assert.strictEqual(summary.normal_attachments.length, 1);
+assert.strictEqual(summary.normal_attachments[0].status, 'attached');
+assert.strictEqual(summary.normal_attachments[0].bytes, 17);
+assert.strictEqual(summary.normal_attachments[0].owner_download_verified, false);
+const unavailable = summarize([{ event: 'attachment', data: {
+  filename: 'sample.txt', nativeOutputFile: { version: 1, status: 'unavailable',
+    code: 'native_output_file_unavailable' },
+} }]);
+assert.strictEqual(unavailable.normal_attachments[0].status, 'unavailable');
+assert.strictEqual(unavailable.normal_attachments[0].code, 'native_output_file_unavailable');
+"""
+    completed = _node(script)
+    assert completed.returncode == 0, completed.stderr
+
+
+def test_judge_keeps_unknown_malformed_and_wrong_scope_native_evidence_unavailable() -> None:
+    script = _NATIVE_JUDGE_OBSERVATION_FIXTURE + r"""
+for (const field of ['user', 'conversationId', 'messageId']) {
+  const message = structuredClone(fixture);
+  message[field] = 'different-scope-test';
+  assert.strictEqual(summarize([{ final: true, responseMessage: message }])
+    .native_tool_evidence.availability, 'unavailable', field);
+}
+for (const invalid of [undefined, {}, { evidence: { version: 2, results: [] } },
+  { evidence: { ...fixture.metadata.viventium.nativeToolEvidence.evidence,
+    results: [null] } },
+]) {
+  const message = structuredClone(fixture);
+  message.metadata.viventium.nativeToolEvidence = invalid;
+  const observation = summarize([{ final: true, responseMessage: message }]).native_tool_evidence;
+  assert.strictEqual(observation.availability, 'unavailable');
+  assert.strictEqual(observation.calls, undefined);
+}
+const completedTool = structuredClone(fixture);
+completedTool.metadata.viventium.nativeToolEvidence.evidence.results[0].status = 'completed';
+const observation = summarize([{ final: true, responseMessage: completedTool }]).native_tool_evidence;
+assert.strictEqual(observation.calls[0].status, 'completed');
+assert.strictEqual(observation.calls[0].result_status, 'blocked');
+"""
+    completed = _node(script)
+    assert completed.returncode == 0, completed.stderr
+
+
+def test_existing_db_observations_reach_same_judge_without_sensitive_payloads() -> None:
+    script = _NATIVE_JUDGE_OBSERVATION_FIXTURE + r"""
+(async () => {
+  const db = { collection: () => ({ find: () => ({ sort: () => ({ toArray: async () => [fixture] }) }) }) };
+  const result = { finalMeta: { conversationId: fixture.conversationId,
+    responseMessageId: fixture.messageId }, text: 'The file is ready.', privateEvents: events };
+  result.postCaseEvidence = await runner.judgeObservationTest.readConversationEvidence({
+    db, result, conversationId: fixture.conversationId,
+  });
+  assert.strictEqual(result.postCaseEvidence.nativeToolObservations.availability, 'observed');
+  assert.strictEqual(result.postCaseEvidence.normalAttachmentObservations.availability, 'observed');
+  assert.strictEqual(result.postCaseEvidence.normalAttachmentObservations.attachments.length, 1);
+  const prompt = runner.buildJudgePrompt({ id: 'case-test', surface: 'voice',
+    prompt: 'Give me the file.', rubric: ['Deliver the actual file.'] }, result);
+  assert(prompt.includes('normal_files'));
+  assert(prompt.includes('native_tool_evidence'));
+  assert(prompt.includes('delegation_dispatch_unconfirmed'));
+  for (const privateValue of ['synthetic-private-arguments', 'synthetic-private-work-ref',
+    'synthetic-private-invocation', 'synthetic-private-call-id', 'native_synthetic_private_id',
+    'chatcmpl-synthetic-private-id', 'run_synthetic_private_id',
+    'https://artifact.example.test', '/home/test/private']) {
+    assert.strictEqual(prompt.includes(privateValue), false, privateValue);
+  }
+  const unsafe = structuredClone(fixture);
+  unsafe.metadata.viventium.nativeToolEvidence.evidence.results[0].name =
+    'https://artifact.example.test/private 11111111-2222-7333-8444-555555555555 run_private_test';
+  unsafe.attachments[0].filename = '/home/test/private/sample.txt';
+  const sanitized = JSON.stringify(summarize([{ final: true, responseMessage: unsafe }]));
+  for (const privateValue of ['https://artifact.example.test', '/home/test/private',
+    '11111111-2222-7333-8444-555555555555', 'run_private_test']) {
+    assert.strictEqual(sanitized.includes(privateValue), false);
+  }
+})().catch(error => { console.error(error); process.exit(1); });
+"""
+    completed = _node(script)
+    assert completed.returncode == 0, completed.stderr

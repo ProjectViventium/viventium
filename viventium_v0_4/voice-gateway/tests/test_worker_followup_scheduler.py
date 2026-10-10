@@ -1,5 +1,7 @@
 import asyncio
+import ast
 import hashlib
+import inspect
 import os
 import sys
 import unittest
@@ -7,27 +9,13 @@ from datetime import datetime, timedelta, timezone
 from types import MethodType, SimpleNamespace
 from unittest import mock
 
-from livekit.agents.voice import io as voice_io
-
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
+
+from livekit.agents.voice import io as voice_io
 
 import worker
 from librechat_llm import LibreChatAuth, LibreChatLLM
 from worker import CortexFollowupScheduler
-
-
-class _NativeAudioOutput(voice_io.AudioOutput):
-    def __init__(self) -> None:
-        super().__init__(label="synthetic", capabilities=voice_io.AudioOutputCapabilities(pause=False))
-
-    async def capture_frame(self, frame) -> None:
-        await super().capture_frame(frame)
-
-    def flush(self) -> None:
-        super().flush()
-
-    def clear_buffer(self) -> None:
-        pass
 
 
 class _DummySession:
@@ -53,6 +41,20 @@ class _DummySession:
         if self.current_speech is None:
             self.current_speech = handle
         return handle
+
+
+class _NativeAudioOutput(voice_io.AudioOutput):
+    def __init__(self) -> None:
+        super().__init__(label="synthetic", capabilities=voice_io.AudioOutputCapabilities(pause=False))
+
+    async def capture_frame(self, frame) -> None:
+        await super().capture_frame(frame)
+
+    def flush(self) -> None:
+        super().flush()
+
+    def clear_buffer(self) -> None:
+        pass
 
 
 class _DummySpeechHandle:
@@ -227,6 +229,309 @@ class _RecordingPostSession:
 
 
 class TestCortexFollowupScheduler(unittest.IsolatedAsyncioTestCase):
+
+    def _pending_worker_delivery_event(self, **changes):
+        return {"taskId": "delivery-task", "callSessionId": "call_123",
+            "conversationId": "conversation-one", "streamId": "glasshive-delivery:delivery-one",
+            "owner": {"kind": "glasshive_delivery", "id": "delivery-one"},
+            "state": "completed", "phase": "follow_up", "resultMessageId": "worker-result",
+            "source": {"id": "callback_sha256:" + "a" * 64}, **changes}
+
+    def _install_pending_worker_delivery(self, scheduler, *, claim_allowed=True):
+        text = "The requested result is ready."
+        event = self._pending_worker_delivery_event()
+        presentation = _worker_completion_presentation(text, message_id=event["resultMessageId"])
+        claim = mock.AsyncMock(return_value={
+            "deliveryId": "delivery-one", "claimId": "claim-one",
+            "callbackId": event["source"]["id"], "callbackMessageId": event["resultMessageId"],
+            "voiceCallSessionId": "call_123", "voiceRequestId": presentation["turnId"],
+            "text": text, "fullText": "Raw Worker output must not become speech.",
+            "workerCompletionPresentation": presentation,
+            "presentationTask": {"taskId": event["taskId"], "streamId": event["streamId"]},
+        } if claim_allowed else None)
+        scheduler._claim_glasshive_delivery = claim
+        scheduler._authorize_glasshive_delivery = mock.AsyncMock(return_value=_dispatch_permit(
+            delivery_id="delivery-one", claim_id="claim-one"))
+        scheduler._renew_glasshive_delivery_permit = mock.AsyncMock(return_value=_dispatch_permit(
+            delivery_id="delivery-one", claim_id="claim-one"))
+        scheduler._maintain_glasshive_speech_permit = mock.AsyncMock(return_value=True)
+        scheduler._fetch_glasshive = mock.AsyncMock(side_effect=AssertionError("legacy anchor poll"))
+        return claim, text
+
+    def _startup_readiness_handlers(self, namespace):
+        # Execute the actual startup boundary without constructing a LiveKit job.
+        entry = ast.parse(inspect.getsource(worker.entrypoint)).body[0]
+        health = next(node for node in entry.body if isinstance(node, ast.AsyncFunctionDef)
+            and node.name == "_on_call_task_stream_health")
+        start = next(index for index, node in enumerate(entry.body)
+            if isinstance(node, ast.If) and isinstance(node.test, ast.UnaryOp)
+            and isinstance(node.test.operand, ast.Call)
+            and isinstance(node.test.operand.func, ast.Attribute)
+            and node.test.operand.func.attr == "mark_session_ready")
+        end = next(index for index in range(start, len(entry.body))
+            if isinstance(entry.body[index], ast.Assign)
+            and isinstance(entry.body[index].targets[0], ast.Subscript)
+            and isinstance(entry.body[index].targets[0].value, ast.Name)
+            and entry.body[index].targets[0].value.id == "voice_session_ready")
+        ready = ast.parse("async def _startup_ready_handoff():\n    pass").body[0]
+        ready.body = entry.body[start:end + 1]
+        module = ast.fix_missing_locations(ast.Module(body=[health, ready], type_ignores=[]))
+        namespace.update({"Any": object, "inspect": inspect})
+        exec(compile(module, worker.__file__, "exec"), namespace)
+        return namespace[health.name], namespace[ready.name]
+
+    async def test_initial_connected_before_ready_rearms_pending_worker_only_after_real_ready_barrier(self):
+        for fault in (None, "failed-ready", "lost-transport", "rejected-state"):
+            with self.subTest(fault=fault):
+                session = _DummySession(); scheduler = self._build_scheduler(session=session)
+                claim, text = self._install_pending_worker_delivery(scheduler)
+                suspended, abandoned = mock.Mock(), mock.AsyncMock()
+                authority = worker.CallTaskStreamSpeechAuthority(
+                    call_session_id="call_123", fetch_call_state=mock.AsyncMock(),
+                    suspend=suspended, apply_state=lambda _state: fault != "rejected-state")
+                ready_state = {"version": 1, "callSessionId": "call_123", "mode": "call",
+                    "status": "listening", "revision": 7, "updatedAt": "2026-01-01T00:00:00Z"}
+                if fault == "failed-ready": ready_state["status"] = "failed"
+                ready_flag = [False]
+                health_handler, readiness_handoff = self._startup_readiness_handlers({
+                    "task_stream_authority": authority, "followup_scheduler": scheduler,
+                    "ready_state": ready_state, "voice_session_ready": ready_flag,
+                    "_suspend_for_task_stream_uncertainty": suspended,
+                    "_abandon_unready_claim": abandoned, "ctx": SimpleNamespace(),
+                })
+                health = {"version": 1, "callSessionId": "call_123", "state": "connected", "status": 200}
+                with mock.patch.object(worker.aiohttp, "ClientSession", _FakeClientSession):
+                    await health_handler(health)
+                    self.assertTrue(authority.stream_connected)
+                    self.assertFalse(authority.authoritative)
+                    self.assertFalse(scheduler._task_stream_connected)
+                    scheduler.on_task_event(self._pending_worker_delivery_event(type="snapshot"),
+                        is_task_suppressed=lambda _: False)
+                    self.assertEqual(len(scheduler._cortex_wake_tasks), 0)
+                    if fault == "lost-transport":
+                        await health_handler({**health, "state": "disconnected"})
+                    if fault is None:
+                        await readiness_handoff()
+                        self.assertTrue(authority.authoritative)
+                        self.assertTrue(ready_flag[0])
+                        self.assertTrue(scheduler._task_stream_connected)
+                        await asyncio.gather(*tuple(scheduler._cortex_wake_tasks))
+                        await asyncio.sleep(0)
+                        await health_handler(health)  # Replayed connection does not replay speech.
+                        scheduler.resume_pending()
+                        self.assertEqual([call["text"] for call in session.say_calls], [text])
+                        claim.assert_awaited_once()
+                        abandoned.assert_not_awaited()
+                    else:
+                        with self.assertRaisesRegex(RuntimeError, "lost before voice readiness"):
+                            await readiness_handoff()
+                        self.assertFalse(ready_flag[0])
+                        self.assertFalse(authority.authoritative)
+                        self.assertFalse(scheduler._task_stream_connected)
+                        self.assertEqual(session.say_calls, [])
+                        claim.assert_not_awaited()
+                        abandoned.assert_awaited_once_with("gateway_initialization_failed")
+                await scheduler.close()
+
+    async def test_pending_worker_delivery_source_snapshot_claims_main_text_once(self):
+        session = _DummySession(); scheduler = self._build_scheduler(session=session)
+        claim, text = self._install_pending_worker_delivery(scheduler)
+        scheduler.set_task_stream_connected(True)
+        llm = self._callwide_llm(scheduler)
+        with mock.patch.object(worker.aiohttp, "ClientSession", _FakeClientSession):
+            initial = {**self._callwide_event(),
+                **self._pending_worker_delivery_event(source=None, phase="completed")}
+            self.assertTrue(await llm._relay_task_event_once(initial))
+            self.assertEqual(len(scheduler._cortex_wake_tasks), 0)
+            event = {**initial, **self._pending_worker_delivery_event(type="snapshot"),
+                "eventId": "pending-worker-source", "sequence": 5}
+            self.assertTrue(await llm._relay_task_event_once(event))
+            await asyncio.gather(*tuple(scheduler._cortex_wake_tasks))
+            await asyncio.sleep(0)
+            self.assertFalse(await llm._relay_task_event_once(event))
+            scheduler.set_task_stream_connected(False)
+            scheduler.set_task_stream_connected(True)
+        self.assertEqual([call["text"] for call in session.say_calls], [text])
+        claim.assert_awaited_once_with(mock.ANY, {"callbackId": event["source"]["id"]})
+        scheduler._fetch_glasshive.assert_not_awaited()
+        scheduler._authorize_glasshive_delivery.assert_awaited_once()
+        scheduler._renew_glasshive_delivery_permit.assert_awaited_once()
+        scheduler._maintain_glasshive_speech_permit.assert_awaited_once()
+        await scheduler.close()
+
+    async def test_pending_worker_delivery_replay_and_mode_restore_rearm(self):
+        for initially_silent in (False, True):
+            with self.subTest(initially_silent=initially_silent):
+                session = _DummySession(); scheduler = self._build_scheduler(session=session)
+                claim, text = self._install_pending_worker_delivery(scheduler)
+                if initially_silent: scheduler.set_mode("listen_only")
+                with mock.patch.object(worker.aiohttp, "ClientSession", _FakeClientSession):
+                    scheduler.on_task_event(self._pending_worker_delivery_event(type="snapshot"),
+                        is_task_suppressed=lambda _: False)
+                    self.assertEqual(len(scheduler._cortex_wake_tasks), 0)
+                    scheduler.set_task_stream_connected(True)
+                    if initially_silent:
+                        self.assertEqual(len(scheduler._cortex_wake_tasks), 0)
+                        scheduler.set_mode("call")
+                    await asyncio.gather(*tuple(scheduler._cortex_wake_tasks))
+                    await asyncio.sleep(0)
+                    scheduler.set_mode("listen_only"); scheduler.set_mode("call")
+                self.assertEqual([call["text"] for call in session.say_calls], [text])
+                claim.assert_awaited_once()
+                await scheduler.close()
+
+    async def test_pending_worker_delivery_foreign_suppressed_or_presented_never_arms(self):
+        faults = [{"callSessionId": "foreign"}, {"state": "running"},
+            {"streamId": "glasshive-delivery:foreign"},
+            {"owner": {"kind": "glasshive_run", "id": "delivery-one"}},
+            {"source": {"id": "untyped"}}, {"source": None}, {"resultMessageId": ""},
+            *({"presentation": {"state": state}} for state in
+                ("stop_requested", "completed", "interrupted", "superseded", "failed"))]
+        for change in faults + [{"suppressed": True}]:
+            with self.subTest(change=change):
+                session = _DummySession(); scheduler = self._build_scheduler(session=session)
+                scheduler.set_task_stream_connected(True)
+                scheduler.schedule = mock.Mock()
+                scheduler.on_task_event(self._pending_worker_delivery_event(**change),
+                    is_task_suppressed=lambda _: bool(change.get("suppressed")))
+                scheduler.schedule.assert_not_called()
+                self.assertEqual(session.say_calls, [])
+                await scheduler.close()
+
+    async def test_pending_worker_delivery_without_claim_or_permit_never_speaks(self):
+        for fault in ("claim", "permit", "wrong-delivery", "changed-message"):
+            with self.subTest(fault=fault):
+                session = _DummySession(); scheduler = self._build_scheduler(session=session,
+                    timeout_s=0.001)
+                claim, _text = self._install_pending_worker_delivery(scheduler, claim_allowed=fault != "claim")
+                if fault == "permit": scheduler._authorize_glasshive_delivery.return_value = None
+                if fault == "wrong-delivery": claim.return_value["deliveryId"] = "foreign-delivery"
+                if fault == "changed-message": claim.return_value["callbackMessageId"] = "changed-message"
+                scheduler.set_task_stream_connected(True)
+                with mock.patch.object(worker.aiohttp, "ClientSession", _FakeClientSession):
+                    scheduler.on_task_event(self._pending_worker_delivery_event(),
+                        is_task_suppressed=lambda _: False)
+                    await asyncio.gather(*tuple(scheduler._cortex_wake_tasks))
+                self.assertEqual(session.say_calls, [])
+                scheduler._maintain_glasshive_speech_permit.assert_not_awaited()
+                await scheduler.close()
+
+    async def _assert_callback_selection(self, payload, expected_attempts, claimed_id):
+        session = _DummySession()
+        scheduler = self._build_scheduler(session=session)
+        _install_claimed_terminal_delivery(scheduler, callback_id="callback_ready", text="Owned older result.")
+        attempts = []
+
+        async def fetch(self, _http_session, _message_id):
+            return payload
+
+        async def claim(self, _http_session, callback):
+            attempts.append(callback.get("callbackId"))
+            if callback.get("callbackId") != claimed_id:
+                return None
+            return {"deliveryId": "delivery_ready", "claimId": "claim_ready",
+                    "callbackId": claimed_id, "text": "Owned older result."}
+
+        scheduler._fetch_glasshive = MethodType(fetch, scheduler)
+        scheduler._claim_glasshive_delivery = MethodType(claim, scheduler)
+        with mock.patch.object(worker.aiohttp, "ClientSession", _FakeClientSession):
+            scheduler.schedule("main_anchor", [], "", glasshive_expected=True)
+            await scheduler._task
+        self.assertEqual(attempts, expected_attempts)
+        self.assertEqual([call["text"] for call in session.say_calls],
+                         ["Owned older result."] if claimed_id else [])
+        await scheduler.close()
+
+    async def test_unclaimable_latest_callback_does_not_hide_older_ready_result(self):
+        older = {"callbackId": "callback_ready", "event": "run.completed", "text": "Older result."}
+        latest = {"callbackId": "callback_interrupted", "event": "run.completed", "text": "Already interrupted."}
+        await self._assert_callback_selection({"callbacks": [older, latest], "latest": latest},
+                                             ["callback_interrupted", "callback_ready"], "callback_ready")
+
+    async def test_later_progress_callback_does_not_hide_terminal_result(self):
+        older = {"callbackId": "callback_ready", "event": "run.completed", "text": "Ready result."}
+        latest = {"callbackId": "callback_progress", "event": "run.started", "text": "Still working."}
+        await self._assert_callback_selection({"callbacks": [None, {"text": ""}, older, latest], "latest": latest},
+                                             ["callback_ready"], "callback_ready")
+
+    async def test_all_unclaimable_callbacks_stay_silent_without_replaying(self):
+        older = {"callbackId": "callback_sent", "event": "run.completed", "text": "Already spoken."}
+        latest = {"callbackId": "callback_interrupted", "event": "run.completed", "text": "Already interrupted."}
+        await self._assert_callback_selection({"callbacks": [older, latest], "latest": latest},
+                                             ["callback_interrupted", "callback_sent"], None)
+
+    async def test_identityless_latest_does_not_end_wait_for_delayed_older_delivery(self):
+        session = _DummySession()
+        scheduler = self._build_scheduler(session=session, timeout_s=0.3, interval_s=0.01)
+        older = {"callbackId": "callback_ready", "event": "run.completed", "text": "Older result."}
+        latest = {"event": "run.completed", "text": "No callback identity."}
+        _install_claimed_terminal_delivery(scheduler, callback_id="callback_ready", text="Owned older result.")
+        polls = 0
+
+        async def fetch(self, _http_session, _message_id):
+            nonlocal polls
+            polls += 1
+            return {"callbacks": [older, latest], "latest": latest}
+
+        async def claim(self, _http_session, callback):
+            if callback.get("callbackId") != "callback_ready" or polls < 2:
+                return None
+            return {"deliveryId": "delivery_ready", "claimId": "claim_ready",
+                    "callbackId": "callback_ready", "text": "Owned older result."}
+
+        scheduler._fetch_glasshive = MethodType(fetch, scheduler)
+        scheduler._claim_glasshive_delivery = MethodType(claim, scheduler)
+        with mock.patch.object(worker.aiohttp, "ClientSession", _FakeClientSession):
+            task = scheduler.schedule("main_anchor", [], "", glasshive_expected=True, advance_sequence=False)
+            await asyncio.wait_for(task, timeout=1)
+        self.assertEqual(polls, 2)
+        self.assertEqual([call["text"] for call in session.say_calls], ["Owned older result."])
+        await scheduler.close()
+
+    async def test_two_callback_pollers_keep_other_claim_and_handle_after_stop(self):
+        session = _DummySession()
+        scheduler = self._build_scheduler(session=session)
+        older = {"callbackId": "callback_b", "event": "run.completed", "text": "Worker B result."}
+        latest = {"callbackId": "callback_a", "event": "run.completed", "text": "Worker A result."}
+        claimed = set()
+        _install_claimed_terminal_delivery(scheduler, callback_id="unused", text="unused")
+
+        async def fetch(self, _http_session, _message_id):
+            return {"callbacks": [older, latest], "latest": latest}
+
+        async def claim(self, _http_session, callback):
+            callback_id = callback["callbackId"]
+            if callback_id in claimed:
+                return None
+            claimed.add(callback_id)
+            return {"deliveryId": "delivery_" + callback_id, "claimId": "claim_" + callback_id,
+                    "callbackId": callback_id, "text": callback["text"]}
+
+        async def maintain(self, _http_session, _delivery, _permit, handle, **_kwargs):
+            completed = asyncio.Event()
+            handle.add_done_callback(lambda _: completed.set())
+            await completed.wait()
+            return not handle.interrupted
+
+        scheduler._fetch_glasshive = MethodType(fetch, scheduler)
+        scheduler._claim_glasshive_delivery = MethodType(claim, scheduler)
+        scheduler._maintain_glasshive_speech_permit = MethodType(maintain, scheduler)
+        with mock.patch.object(worker.aiohttp, "ClientSession", _FakeClientSession):
+            first = scheduler.schedule("main_anchor", [], "", glasshive_expected=True, advance_sequence=False)
+            second = scheduler.schedule("main_anchor", [], "", glasshive_expected=True, advance_sequence=False)
+            for _ in range(50):
+                if len(session.speech_handles) == 2:
+                    break
+                await asyncio.sleep(0)
+            self.assertEqual(claimed, {"callback_a", "callback_b"})
+            self.assertEqual([call["text"] for call in session.say_calls],
+                             ["Worker A result.", "Worker B result."])
+            session.speech_handles[0].interrupt(force=True)
+            self.assertFalse(session.speech_handles[1].interrupted)
+            session.speech_handles[1].complete()
+            await asyncio.gather(first, second)
+        await scheduler.close()
+
     def _callwide_event(self, *, child=False, **changes):
         event = {
             "version": 1,
@@ -253,6 +558,61 @@ class TestCortexFollowupScheduler(unittest.IsolatedAsyncioTestCase):
             ),
         )
         return llm
+
+    async def test_presentation_only_parent_updates_do_not_replay_delivered_worker_after_direct_cancel(self):
+        scheduler = self._build_scheduler(session=_DummySession())
+        scheduler._run = mock.AsyncMock()
+        parent, child = self._callwide_event(), self._callwide_event(child=True)
+        for event in (parent, child):
+            scheduler.on_task_event(event, is_task_suppressed=lambda _task: False)
+        await asyncio.gather(*scheduler._glasshive_tasks)
+        self.assertEqual(scheduler._run.await_count, 1)
+        worker._apply_task_cancel_suppression(
+            "unrelated_task", followup_scheduler=scheduler, session=_DummySession(),
+        )
+        self.assertEqual(scheduler._worker_followup_pairs, {})
+        for state in ("speaking", "stop_requested", "interrupted", "superseded"):
+            scheduler.on_task_event({**parent, "type": "snapshot",
+                "presentation": {"ref": "speech-1", "state": state, "startedAtMs": 1000}},
+                is_task_suppressed=lambda _task: False)
+        await asyncio.gather(*scheduler._glasshive_tasks)
+        self.assertEqual(scheduler._run.await_count, 1)
+        await scheduler.close()
+
+    async def test_first_presentation_snapshot_hydrates_parent_and_delivers_waiting_child(self):
+        scheduler = self._build_scheduler(session=_DummySession())
+        scheduler._run = mock.AsyncMock()
+        child = self._callwide_event(child=True)
+        scheduler.on_task_event(child, is_task_suppressed=lambda _task: False)
+        scheduler.on_task_event({**self._callwide_event(), "type": "snapshot",
+            "presentation": {"ref": "speech-1", "state": "speaking", "startedAtMs": 1000}},
+            is_task_suppressed=lambda _task: False)
+        await asyncio.gather(*scheduler._glasshive_tasks)
+        scheduler._run.assert_awaited_once()
+        self.assertEqual(scheduler._run.await_args.args[1], "main_anchor")
+        await scheduler.close()
+
+    async def test_changed_parent_result_and_new_child_terminal_still_use_existing_join(self):
+        scheduler = self._build_scheduler(session=_DummySession())
+        scheduler._run = mock.AsyncMock()
+        parent, child = self._callwide_event(), self._callwide_event(child=True)
+        scheduler.on_task_event(parent, is_task_suppressed=lambda _task: False)
+        scheduler.on_task_event(child, is_task_suppressed=lambda _task: False)
+        await asyncio.gather(*scheduler._glasshive_tasks)
+        scheduler.cancel_pending()
+        new_parent = {**parent, "type": "snapshot", "resultMessageId": "new_anchor",
+            "presentation": {"ref": "speech-2", "state": "speaking", "startedAtMs": 2000}}
+        scheduler.on_task_event(new_parent, is_task_suppressed=lambda _task: False)
+        await asyncio.gather(*scheduler._glasshive_tasks)
+        self.assertEqual([call.args[1] for call in scheduler._run.await_args_list],
+                         ["main_anchor", "new_anchor"])
+        running_child = {**child, "taskId": "new_child", "state": "running"}
+        scheduler.on_task_event(running_child, is_task_suppressed=lambda _task: False)
+        scheduler.on_task_event({**running_child, "state": "completed"},
+                                is_task_suppressed=lambda _task: False)
+        await asyncio.gather(*scheduler._glasshive_tasks)
+        self.assertEqual(scheduler._run.await_count, 3)
+        await scheduler.close()
 
     async def test_callwide_worker_join_converges_in_both_orders_and_replay(self):
         for child_first in (False, True):
@@ -313,12 +673,10 @@ class TestCortexFollowupScheduler(unittest.IsolatedAsyncioTestCase):
         child = self._callwide_event(child=True, state="running")
         await llm._relay_task_event_once(parent)
         await llm._relay_task_event_once(child)
-        progress = mock.Mock()
         worker._apply_task_cancel_suppression(
-            "unrelated_task", progress_controller=progress,
+            "unrelated_task",
             followup_scheduler=scheduler, session=_DummySession(),
         )
-        progress.suppress_task.assert_called_once_with("unrelated_task")
         terminal = {**child, "state": "completed", "sequence": 5,
                     "eventId": "worker_after_unrelated_cancel"}
         await llm._relay_task_event_once(terminal)
@@ -528,9 +886,482 @@ class TestCortexFollowupScheduler(unittest.IsolatedAsyncioTestCase):
             await asyncio.sleep(0)
             await scheduler.close()
             stages = [call.args[2] for call in scheduler._trace_handler.await_args_list]
-            expected = {"audible": ["tts.completed", "audio.completed"], "failed": ["audio.failed"],
+            expected = {"audible": ["audio.started", "tts.completed", "audio.completed"], "failed": ["audio.failed"],
                 "interrupted": ["audio.interrupted"], "stale": ["audio.superseded"]}
             self.assertEqual(stages, expected[outcome])
+
+
+    # === VIVENTIUM START === Exact foreground Stop preserves unrelated completed delivery.
+    async def test_foreground_stop_keeps_completed_unrelated_worker_poll_and_queued_speech(self):
+        from livekit.agents.voice.agent_activity import AgentActivity
+        from livekit.agents.voice.agent_session import AgentSession
+        from livekit.agents.voice.speech_handle import InputDetails, SpeechHandle
+        from voice_hop_trace import VoiceHopTrace
+
+        session = _DummySession()
+        main_speech = SpeechHandle(speech_id="main_speech", allow_interruptions=False,
+                                   input_details=InputDetails(modality="text"))
+        unrelated_queued = SpeechHandle(speech_id="unrelated_queued_worker", allow_interruptions=False,
+                                        input_details=InputDetails(modality="text"))
+        activity = SimpleNamespace(
+            _cancel_preemptive_generation=lambda: None,
+            _interrupt_background_speeches=lambda **kwargs: [],
+            _current_speech=main_speech, _speech_q=[(0, 0, unrelated_queued)], _rt_session=None,
+        )
+        activity.interrupt = MethodType(AgentActivity.interrupt, activity)
+        session._activity = activity
+        session.interrupt = MethodType(AgentSession.interrupt, session)
+        scheduler = self._build_scheduler(session=session, timeout_s=0.5, interval_s=0.001)
+        llm = self._callwide_llm(scheduler)
+        # Preserve the actual registered legacy callback to expose the rejected call-wide effect.
+        llm.set_task_cancel_handler(lambda task_id, _result: worker._apply_task_cancel_suppression(
+            task_id, followup_scheduler=scheduler, session=session))
+        presentation = llm._presentation_coordinator.begin_stable(
+            source_event_id="main_source", presentation_ref="main_trace")
+        llm.register_trace(VoiceHopTrace(correlation_id="main_trace", call_session_id="call_123"))
+        llm.bind_trace_core_context("main_trace", stream_id="main_stream", task_id="main_task",
+                                    presentation=presentation)
+        llm._speech_handles_by_trace_id["main_trace"] = main_speech
+        poll_started, release_poll = asyncio.Event(), asyncio.Event()
+
+        async def fetch_worker(_self, _http_session, message_id):
+            self.assertEqual(message_id, "unrelated_worker_anchor")
+            poll_started.set()
+            await release_poll.wait()
+            return {"latest": {"event": "run.completed", "text": "The worker result arrived.",
+                               "callbackId": "unrelated_completed_callback"}}
+
+        scheduler._fetch_glasshive = MethodType(fetch_worker, scheduler)
+        _install_claimed_terminal_delivery(scheduler, callback_id="unrelated_completed_callback",
+                                           text="The worker result arrived.")
+        parent = self._callwide_event(taskId="unrelated_parent", streamId="unrelated_stream",
+            owner={"kind": "remote_generation", "id": "unrelated_stream"},
+            resultMessageId="unrelated_worker_anchor")
+        child = self._callwide_event(child=True, taskId="unrelated_child",
+                                    parentTaskId="unrelated_parent")
+        stop = self._callwide_event(taskId="main_task", streamId="main_stream",
+            owner={"kind": "remote_generation", "id": "main_stream"}, state="cancelling",
+            phase="cancelling", type="state", sequence=8, eventId="accepted_main_stop",
+            resultMessageId="")
+        try:
+            with mock.patch.object(worker.aiohttp, "ClientSession", _FakeClientSession):
+                await llm._relay_task_event_once(parent)
+                await llm._relay_task_event_once(child)
+                await asyncio.wait_for(poll_started.wait(), timeout=0.5)
+                worker_task = next(iter(scheduler._glasshive_tasks))
+                self.assertFalse(worker_task.done())
+                self.assertEqual(scheduler._worker_followup_pairs,
+                                 {("unrelated_worker_anchor", "unrelated_child"): None})
+                await llm._relay_task_event_once(stop)
+                release_poll.set()
+                await worker_task
+            self.assertEqual([call["text"] for call in session.say_calls],
+                             ["The worker result arrived."])
+            self.assertEqual(scheduler._worker_followup_pairs,
+                             {("unrelated_worker_anchor", "unrelated_child"): None})
+            self.assertTrue(main_speech.interrupted)
+            self.assertFalse(unrelated_queued.interrupted)
+            self.assertTrue(llm.is_task_output_suppressed("main_task"))
+            self.assertFalse(llm.is_task_output_suppressed("unrelated_child"))
+            self.assertFalse(llm.is_task_output_suppressed("unrelated_parent"))
+        finally:
+            release_poll.set()
+            main_speech._mark_done()
+            unrelated_queued._mark_done()
+            await scheduler.close()
+    # === VIVENTIUM END ===
+
+    # === VIVENTIUM START === Exact persisted followup speech Stop.
+    async def test_worker_interrupted_handle_never_settles_sent(self):
+        session = _DummySession()
+        scheduler = self._build_scheduler(session=session)
+        speech = session.say("Synthetic worker result.", allow_interruptions=True, add_to_chat_ctx=False)
+        speech.interrupt(force=True)
+        delivery = {"deliveryId": "worker-delivery", "claimId": "worker-claim",
+                    "workerCompletionPresentation": {"presentationRef": "worker-ref"}}
+        permit = _dispatch_permit(delivery_id="worker-delivery", claim_id="worker-claim")
+        scheduler._complete_glasshive_worker_presentation = mock.AsyncMock(return_value=True)
+        scheduler._mark_glasshive_delivery_status = mock.AsyncMock(return_value=True)
+        outcome = await scheduler._maintain_glasshive_speech_permit(_FakeClientSession(), delivery,
+            permit, speech, seq=scheduler._seq, allow_stale_delivery=True,
+            presentation_is_current=lambda: True)
+        self.assertFalse(outcome)
+        scheduler._complete_glasshive_worker_presentation.assert_not_awaited()
+        scheduler._mark_glasshive_delivery_status.assert_awaited_once_with(
+            mock.ANY, delivery, "delivery_unknown", dispatch_permit=permit,
+            reason="voice_speech_interrupted")
+        await scheduler.close()
+
+    async def test_exact_cortex_stop_uses_actual_native_handle_and_preserves_other_queue(self):
+        from livekit.agents.voice.speech_handle import InputDetails, SpeechHandle
+        main = SpeechHandle(speech_id="cortex-native", allow_interruptions=True,
+                            input_details=InputDetails(modality="text"))
+        unrelated = SpeechHandle(speech_id="worker-native", allow_interruptions=True,
+                                 input_details=InputDetails(modality="text"))
+        session = _DummySession()
+        session.say = lambda *args, **kwargs: main
+        session.current_speech = main
+        scheduler = self._build_scheduler(session=session)
+        scheduler._speech_handles.add(unrelated)
+        scheduler._trace_handler = mock.AsyncMock(return_value=True)
+        scheduler._speak_cortex_followup("Synthetic followup.", scheduler._seq,
+            trace_id="parent-trace", presentation_ref="followup-ref",
+            task_ref={"taskId": "parent-task", "streamId": "parent-stream"})
+        scheduler.note_started_playout(main, 2000)
+        event = self._callwide_event(taskId="parent-task", streamId="parent-stream",
+            owner={"kind": "remote_generation", "id": "parent-stream"}, state="completed",
+            presentation={"ref": "followup-ref", "state": "stop_requested", "startedAtMs": 2000})
+        scheduler.on_task_event(event, is_task_suppressed=lambda _: False)
+        scheduler.on_task_event(event, is_task_suppressed=lambda _: False)
+        self.assertTrue(main.interrupted)
+        self.assertFalse(unrelated.interrupted)
+        callback_observed = asyncio.Event()
+        main.add_done_callback(lambda _: callback_observed.set())
+        main._mark_done()
+        await callback_observed.wait()
+        await asyncio.gather(*scheduler._presentation_trace_tasks)
+        stages = [c.args[2] for c in scheduler._trace_handler.await_args_list]
+        self.assertEqual(stages, ["audio.started", "audio.interrupted"])
+        self.assertEqual(scheduler._followup_presentations, {})
+        unrelated._mark_done()
+        await scheduler.close()
+
+    async def test_stop_foreign_ref_stream_owner_or_unstarted_followup_does_not_interrupt(self):
+        changes = [{"taskId": "foreign"}, {"streamId": "foreign"},
+            {"owner": {"kind": "glasshive_run", "id": "parent-stream"}},
+            {"owner": {"kind": "remote_generation", "id": "foreign"}},
+            {"callSessionId": "foreign"},
+            {"presentation": {"ref": "foreign", "state": "stop_requested", "startedAtMs": 2000}},
+            {"state": "cancelling"}]
+        for change in changes:
+            with self.subTest(change=change):
+                session = _DummySession(); scheduler = self._build_scheduler(session=session)
+                scheduler._speak_cortex_followup("Synthetic followup.", scheduler._seq,
+                    trace_id="parent-trace", presentation_ref="followup-ref",
+                    task_ref={"taskId": "parent-task", "streamId": "parent-stream"})
+                handle = session.speech_handles[-1]
+                scheduler.note_started_playout(handle, 2000)
+                event = self._callwide_event(taskId="parent-task", streamId="parent-stream",
+                    owner={"kind": "remote_generation", "id": "parent-stream"}, state="completed",
+                    presentation={"ref": "followup-ref", "state": "stop_requested", "startedAtMs": 2000})
+                scheduler.on_task_event({**event, **change}, is_task_suppressed=lambda _: False)
+                self.assertFalse(handle.interrupted)
+                handle.complete(); await scheduler.close()
+
+    async def test_worker_stop_keeps_unrelated_completed_worker_poll_pending(self):
+        session = _DummySession(); scheduler = self._build_scheduler(session=session,
+            timeout_s=0.5, interval_s=0.001)
+        scheduler._trace_handler = mock.AsyncMock(return_value=True)
+        started, release = asyncio.Event(), asyncio.Event()
+        async def fetch(_self, _http_session, message_id):
+            self.assertEqual(message_id, "unrelated-anchor")
+            started.set(); await release.wait()
+            return {"latest": {"event": "run.completed", "text": "Unrelated worker result.",
+                               "callbackId": "unrelated-callback"}}
+        scheduler._fetch_glasshive = MethodType(fetch, scheduler)
+        _install_claimed_terminal_delivery(scheduler, callback_id="unrelated-callback",
+                                           text="Unrelated worker result.")
+        parent = self._callwide_event(taskId="unrelated-parent", streamId="unrelated-stream",
+            owner={"kind": "remote_generation", "id": "unrelated-stream"},
+            resultMessageId="unrelated-anchor")
+        child = self._callwide_event(child=True, taskId="unrelated-child", parentTaskId="unrelated-parent")
+        worker_speech = session.say("Worker A result.", allow_interruptions=True, add_to_chat_ctx=False)
+        delivery = {"workerCompletionPresentation": {"presentationRef": "worker-a-ref"}}
+        scheduler._bind_followup_presentation(worker_speech, trace_id="parent-trace",
+            presentation_ref="worker-a-ref", task_ref={"taskId": "parent-task", "streamId": "parent-stream"},
+            worker_delivery=delivery)
+        scheduler._speech_handles.add(worker_speech)
+        scheduler.note_started_playout(worker_speech, 2000)
+        try:
+            with mock.patch.object(worker.aiohttp, "ClientSession", _FakeClientSession):
+                scheduler.on_task_event(parent, is_task_suppressed=lambda _: False)
+                scheduler.on_task_event(child, is_task_suppressed=lambda _: False)
+                await asyncio.wait_for(started.wait(), 0.5)
+                poll = next(iter(scheduler._glasshive_tasks))
+                event = self._callwide_event(taskId="parent-task", streamId="parent-stream",
+                    owner={"kind": "remote_generation", "id": "parent-stream"}, state="completed",
+                    presentation={"ref": "worker-a-ref", "state": "stop_requested", "startedAtMs": 2000})
+                scheduler.on_task_event(event, is_task_suppressed=lambda _: False)
+                self.assertTrue(worker_speech.interrupted)
+                self.assertFalse(poll.done())
+                self.assertEqual(scheduler._worker_followup_pairs,
+                    {("unrelated-anchor", "unrelated-child"): None})
+                release.set(); await poll
+            self.assertEqual([row["text"] for row in session.say_calls],
+                             ["Worker A result.", "Unrelated worker result."])
+        finally:
+            release.set(); await scheduler.close()
+    # === VIVENTIUM END ===
+
+    # === VIVENTIUM START === Interrupted speech is an unknown delivery, never a sent result.
+    async def test_native_interruptions_never_settle_worker_speech_sent(self):
+        from livekit.agents.voice.speech_handle import InputDetails, SpeechHandle
+        for cause in ("stop", "barge_in", "listen_only", "authority_suspended"):
+            for aggregate in (False, True):
+                with self.subTest(cause=cause, aggregate=aggregate):
+                    session = _DummySession()
+                    scheduler = self._build_scheduler(session=session)
+                    speech = SpeechHandle(speech_id="synthetic-native", allow_interruptions=True,
+                        input_details=InputDetails(modality="text"))
+                    scheduler._speech_handles.add(speech)
+                    if cause == "stop":
+                        scheduler._interrupt_speech_handle(speech)
+                    elif cause == "barge_in":
+                        speech.interrupt(force=True)
+                    elif cause == "listen_only":
+                        scheduler.set_mode("listen_only")
+                    else:
+                        scheduler.suspend_until_authoritative()
+                    self.assertTrue(speech.interrupted)
+                    speech._mark_done()
+                    delivery = {"deliveryId": "worker-delivery", "claimId": "worker-claim"}
+                    if aggregate:
+                        delivery["workerCompletionPresentation"] = {"presentationRef": "worker-ref"}
+                    permit = _dispatch_permit(delivery_id="worker-delivery", claim_id="worker-claim")
+                    scheduler._complete_glasshive_worker_presentation = mock.AsyncMock(return_value=True)
+                    scheduler._mark_glasshive_delivery_status = mock.AsyncMock(return_value=True)
+                    result = await scheduler._maintain_glasshive_speech_permit(_FakeClientSession(),
+                        delivery, permit, speech, seq=scheduler._seq, allow_stale_delivery=True,
+                        presentation_is_current=lambda: True)
+                    self.assertFalse(result)
+                    scheduler._complete_glasshive_worker_presentation.assert_not_awaited()
+                    scheduler._mark_glasshive_delivery_status.assert_awaited_once_with(
+                        mock.ANY, delivery, "delivery_unknown", dispatch_permit=permit,
+                        reason="voice_speech_interrupted")
+                    await scheduler.close()
+
+    async def test_native_uninterrupted_worker_completion_keeps_existing_settlement(self):
+        from livekit.agents.voice.speech_handle import InputDetails, SpeechHandle
+        for aggregate in (False, True):
+            with self.subTest(aggregate=aggregate):
+                scheduler = self._build_scheduler(session=_DummySession())
+                speech = SpeechHandle(speech_id="synthetic-complete", allow_interruptions=True,
+                    input_details=InputDetails(modality="text"))
+                scheduler._session.current_speech = speech
+                scheduler._speech_handles.add(speech)
+                scheduler.note_started_playout(speech)
+                speech._mark_done()
+                delivery = {"deliveryId": "worker-delivery", "claimId": "worker-claim"}
+                if aggregate:
+                    delivery["workerCompletionPresentation"] = {"presentationRef": "worker-ref"}
+                permit = _dispatch_permit(delivery_id="worker-delivery", claim_id="worker-claim")
+                scheduler._complete_glasshive_worker_presentation = mock.AsyncMock(return_value=True)
+                scheduler._mark_glasshive_delivery_status = mock.AsyncMock(return_value=True)
+                result = await scheduler._maintain_glasshive_speech_permit(_FakeClientSession(),
+                    delivery, permit, speech, seq=scheduler._seq, allow_stale_delivery=True,
+                    presentation_is_current=lambda: True)
+                self.assertTrue(result)
+                if aggregate:
+                    scheduler._complete_glasshive_worker_presentation.assert_awaited_once()
+                    scheduler._mark_glasshive_delivery_status.assert_not_awaited()
+                else:
+                    scheduler._complete_glasshive_worker_presentation.assert_not_awaited()
+                    scheduler._mark_glasshive_delivery_status.assert_awaited_once_with(
+                        mock.ANY, delivery, "sent", dispatch_permit=permit)
+                await scheduler.close()
+    async def test_finished_interrupted_handle_after_failed_renewal_is_never_sent(self):
+        from livekit.agents.voice.speech_handle import InputDetails, SpeechHandle
+        for aggregate in (False, True):
+            with self.subTest(aggregate=aggregate):
+                scheduler = self._build_scheduler(session=_DummySession())
+                speech = SpeechHandle(speech_id="renewal-native", allow_interruptions=True,
+                    input_details=InputDetails(modality="text"))
+                delivery = {"deliveryId": "worker-delivery", "claimId": "worker-claim"}
+                if aggregate:
+                    delivery["workerCompletionPresentation"] = {"presentationRef": "worker-ref"}
+                permit = _dispatch_permit(delivery_id="worker-delivery", claim_id="worker-claim")
+                permit["expiresAt"] = (datetime.now(timezone.utc) + timedelta(seconds=0.03)).isoformat()
+                async def expired_after_interrupted_completion(*_args):
+                    speech.interrupt(force=True)
+                    speech._mark_done()
+                    return None
+                scheduler._renew_glasshive_delivery_permit = mock.AsyncMock(
+                    side_effect=expired_after_interrupted_completion)
+                scheduler._complete_glasshive_worker_presentation = mock.AsyncMock(return_value=True)
+                scheduler._mark_glasshive_delivery_status = mock.AsyncMock(return_value=True)
+                result = await scheduler._maintain_glasshive_speech_permit(_FakeClientSession(),
+                    delivery, permit, speech, seq=scheduler._seq, allow_stale_delivery=True,
+                    presentation_is_current=lambda: True)
+                self.assertFalse(result)
+                self.assertTrue(speech.interrupted)
+                scheduler._renew_glasshive_delivery_permit.assert_awaited_once()
+                scheduler._complete_glasshive_worker_presentation.assert_not_awaited()
+                scheduler._mark_glasshive_delivery_status.assert_awaited_once_with(
+                    mock.ANY, delivery, "delivery_unknown", dispatch_permit=permit,
+                    reason="voice_speech_interrupted")
+                await scheduler.close()
+
+    async def test_cancel_pending_after_interrupted_native_done_is_never_sent(self):
+        from livekit.agents.voice.speech_handle import InputDetails, SpeechHandle
+        for aggregate in (False, True):
+            with self.subTest(aggregate=aggregate):
+                scheduler = self._build_scheduler(session=_DummySession())
+                speech = SpeechHandle(speech_id="cancel-native", allow_interruptions=True,
+                    input_details=InputDetails(modality="text"))
+                delivery = {"deliveryId": "worker-delivery", "claimId": "worker-claim"}
+                if aggregate:
+                    delivery["workerCompletionPresentation"] = {"presentationRef": "worker-ref"}
+                permit = _dispatch_permit(delivery_id="worker-delivery", claim_id="worker-claim")
+                scheduler._complete_glasshive_worker_presentation = mock.AsyncMock(return_value=True)
+                scheduler._mark_glasshive_delivery_status = mock.AsyncMock(return_value=True)
+                task = asyncio.create_task(scheduler._maintain_glasshive_speech_permit(
+                    _FakeClientSession(), delivery, permit, speech, seq=scheduler._seq,
+                    allow_stale_delivery=True, presentation_is_current=lambda: True))
+                scheduler._task = task
+                scheduler._speech_handles.add(speech)
+                await asyncio.sleep(0)
+                speech.interrupt(force=True)
+                speech._mark_done()
+                scheduler.cancel_pending()
+                with self.assertRaises(asyncio.CancelledError):
+                    await task
+                self.assertTrue(speech.interrupted)
+                scheduler._complete_glasshive_worker_presentation.assert_not_awaited()
+                scheduler._mark_glasshive_delivery_status.assert_awaited_once_with(
+                    mock.ANY, delivery, "delivery_unknown", dispatch_permit=permit,
+                    reason="voice_speech_interrupted")
+                await scheduler.close()
+
+    # === VIVENTIUM END ===
+
+    async def test_settled_callback_claim_returns_exact_sent_receipt(self):
+        scheduler = self._build_scheduler(session=_DummySession())
+        callback = "cb_terminal_" + "a" * 64
+        ref = "callback_sha256:" + hashlib.sha256(callback.encode()).hexdigest()
+        settled = {"deliveryId": "delivery-settled", "callbackId": ref,
+            "userId": "owner-one", "voiceCallSessionId": "call_123", "status": "sent"}
+        result = await scheduler._claim_glasshive_delivery(
+            _RecordingPostSession([(200, {"deliveries": [], "settled": settled})]),
+            {"callbackId": callback, "userId": "owner-one"})
+        self.assertEqual(result, settled)
+
+    async def test_settled_callback_claim_rejects_foreign_or_unsettled_receipt(self):
+        scheduler = self._build_scheduler(session=_DummySession())
+        callback = "cb_terminal_" + "a" * 64
+        ref = "callback_sha256:" + hashlib.sha256(callback.encode()).hexdigest()
+        settled = {"deliveryId": "delivery-settled", "callbackId": ref,
+            "userId": "owner-one", "voiceCallSessionId": "call_123", "status": "sent"}
+        for changes in ({"userId": "foreign"}, {"voiceCallSessionId": "foreign"},
+                {"callbackId": "callback_sha256:" + "b" * 64}, {"status": "pending"},
+                {"status": "delivery_unknown"}, {"deliveryId": ""}, {"userId": ""}):
+            with self.subTest(changes=changes):
+                result = await scheduler._claim_glasshive_delivery(
+                    _RecordingPostSession([(200, {"deliveries": [], "settled": {**settled, **changes}})]),
+                    {"callbackId": callback, "userId": "owner-one"})
+                self.assertIsNone(result)
+
+    async def test_settled_callback_observer_exits_without_speech_or_redispatch(self):
+        session = _DummySession()
+        scheduler = self._build_scheduler(session=session, timeout_s=0.3)
+        callback = "cb_terminal_" + "a" * 64
+        ref = "callback_sha256:" + hashlib.sha256(callback.encode()).hexdigest()
+        fetch = mock.AsyncMock(return_value={"callbacks": [{"callbackId": callback,
+            "event": "run.completed", "text": "Already delivered."}]})
+        scheduler._fetch_glasshive = fetch
+        claim = mock.AsyncMock(return_value={"deliveryId": "delivery-settled", "callbackId": ref,
+            "userId": "owner-one", "voiceCallSessionId": "call_123", "status": "sent"})
+        scheduler._claim_glasshive_delivery = claim
+        authorize = mock.AsyncMock(return_value=None)
+        scheduler._authorize_glasshive_delivery = authorize
+        mark = mock.AsyncMock()
+        scheduler._mark_glasshive_delivery_status = mark
+        with mock.patch.object(worker.aiohttp, "ClientSession", _FakeClientSession):
+            task = scheduler.schedule("main-anchor", [], "", glasshive_expected=True,
+                advance_sequence=False)
+            result = await task
+        self.assertIs(result, True)
+        self.assertEqual(fetch.await_count, 1)
+        self.assertEqual(claim.await_count, 1)
+        self.assertEqual(session.say_calls, [])
+        authorize.assert_not_awaited()
+        mark.assert_not_awaited()
+        await scheduler.close()
+
+    async def test_settled_callback_observer_keeps_pending_sibling_then_resolves(self):
+        scheduler = self._build_scheduler(session=_DummySession(), timeout_s=0.4)
+        callbacks = [{"callbackId": callback, "event": "run.completed", "text": "A result."}
+            for callback in ["callback-first", "callback-later"]]
+        fetch = mock.AsyncMock(return_value={"callbacks": callbacks})
+        scheduler._fetch_glasshive = fetch
+        requests = []
+        async def claim(_session, callback):
+            requests.append(callback["callbackId"])
+            if callback["callbackId"] == "callback-later" and fetch.await_count == 1:
+                return None
+            return {"status": "sent", "deliveryId": "settled-" + callback["callbackId"]}
+        scheduler._claim_glasshive_delivery = claim
+        scheduler._authorize_glasshive_delivery = mock.AsyncMock(return_value=None)
+        with mock.patch.object(worker.aiohttp, "ClientSession", _FakeClientSession):
+            task = scheduler.schedule("main-anchor", [], "", glasshive_expected=True,
+                advance_sequence=False)
+            result = await task
+        self.assertIs(result, True)
+        self.assertEqual(fetch.await_count, 2)
+        self.assertEqual(requests, ["callback-later", "callback-first"] * 2)
+        scheduler._authorize_glasshive_delivery.assert_not_awaited()
+        await scheduler.close()
+
+    async def test_settled_callback_claim_returns_exact_suppressed_receipt(self):
+        scheduler = self._build_scheduler(session=_DummySession())
+        callback = "cb_terminal_" + "a" * 64
+        ref = "callback_sha256:" + hashlib.sha256(callback.encode()).hexdigest()
+        settled = {"deliveryId": "delivery-settled", "callbackId": ref,
+            "userId": "owner-one", "voiceCallSessionId": "call_123", "status": "suppressed"}
+        result = await scheduler._claim_glasshive_delivery(
+            _RecordingPostSession([(200, {"deliveries": [], "settled": settled})]),
+            {"callbackId": callback, "userId": "owner-one"})
+        self.assertEqual(result, settled)
+
+    async def test_suppressed_callback_observer_exits_without_speech_or_redispatch(self):
+        session = _DummySession()
+        scheduler = self._build_scheduler(session=session, timeout_s=0.3)
+        callback = "cb_terminal_" + "a" * 64
+        ref = "callback_sha256:" + hashlib.sha256(callback.encode()).hexdigest()
+        fetch = mock.AsyncMock(return_value={"callbacks": [{"callbackId": callback,
+            "event": "run.completed", "text": "Already delivered."}]})
+        scheduler._fetch_glasshive = fetch
+        claim = mock.AsyncMock(return_value={"deliveryId": "delivery-settled", "callbackId": ref,
+            "userId": "owner-one", "voiceCallSessionId": "call_123", "status": "suppressed"})
+        scheduler._claim_glasshive_delivery = claim
+        authorize = mock.AsyncMock(return_value=None)
+        scheduler._authorize_glasshive_delivery = authorize
+        mark = mock.AsyncMock()
+        scheduler._mark_glasshive_delivery_status = mark
+        with mock.patch.object(worker.aiohttp, "ClientSession", _FakeClientSession):
+            task = scheduler.schedule("main-anchor", [], "", glasshive_expected=True,
+                advance_sequence=False)
+            result = await task
+        self.assertIs(result, True)
+        self.assertEqual(fetch.await_count, 1)
+        self.assertEqual(claim.await_count, 1)
+        self.assertEqual(session.say_calls, [])
+        authorize.assert_not_awaited()
+        mark.assert_not_awaited()
+        await scheduler.close()
+
+    async def test_suppressed_callback_observer_keeps_pending_sibling_then_resolves(self):
+        scheduler = self._build_scheduler(session=_DummySession(), timeout_s=0.4)
+        callbacks = [{"callbackId": callback, "event": "run.completed", "text": "A result."}
+            for callback in ["callback-first", "callback-later"]]
+        fetch = mock.AsyncMock(return_value={"callbacks": callbacks})
+        scheduler._fetch_glasshive = fetch
+        requests = []
+        async def claim(_session, callback):
+            requests.append(callback["callbackId"])
+            if callback["callbackId"] == "callback-later" and fetch.await_count == 1:
+                return None
+            return {"status": "suppressed", "deliveryId": "settled-" + callback["callbackId"]}
+        scheduler._claim_glasshive_delivery = claim
+        scheduler._authorize_glasshive_delivery = mock.AsyncMock(return_value=None)
+        with mock.patch.object(worker.aiohttp, "ClientSession", _FakeClientSession):
+            task = scheduler.schedule("main-anchor", [], "", glasshive_expected=True,
+                advance_sequence=False)
+            result = await task
+        self.assertIs(result, True)
+        self.assertEqual(fetch.await_count, 2)
+        self.assertEqual(requests, ["callback-later", "callback-first"] * 2)
+        scheduler._authorize_glasshive_delivery.assert_not_awaited()
+        await scheduler.close()
 
     def _build_scheduler(
         self,
@@ -948,7 +1779,7 @@ class TestCortexFollowupScheduler(unittest.IsolatedAsyncioTestCase):
                 )
                 while not session_b.speech_handles:
                     await asyncio.sleep(0)
-                session_b.speech_handles[0].complete(audible=True)
+                session_b.speech_handles[0].complete()
                 await asyncio.wait_for(scheduler_b._task, timeout=1.0)
                 release_a_renewal.set()
                 await asyncio.wait_for(scheduler_a._task, timeout=1.0)
@@ -1997,8 +2828,6 @@ class TestCortexFollowupScheduler(unittest.IsolatedAsyncioTestCase):
         async def _complete(_scheduler, _http_session, observed, _permit):
             self.assertEqual(observed, delivery)
             self.assertTrue(session.speech_handles[0].done())
-            self.assertFalse(session.speech_handles[0].interrupted)
-            self.assertIn(session.speech_handles[0], scheduler._audible_cortex_handles)
             completed.append(str(observed["deliveryId"]))
             return True
 
@@ -2008,12 +2837,12 @@ class TestCortexFollowupScheduler(unittest.IsolatedAsyncioTestCase):
 
         scheduler._complete_glasshive_worker_presentation = MethodType(_complete, scheduler)
         scheduler._mark_glasshive_delivery_status = MethodType(_mark, scheduler)
-        spoken, speech_handle, _reason = scheduler._start_speech(text, scheduler._seq)
-        self.assertTrue(spoken)
-        self.assertFalse(session.say_calls[0]["add_to_chat_ctx"])
-        self.assertEqual(speech_handle.chat_items, [])
-        scheduler.note_started_playout(speech_handle)
-        speech_handle.complete()
+        speech_handle = session.say(
+            text,
+            allow_interruptions=True,
+            add_to_chat_ctx=True,
+        )
+        speech_handle.complete(audible=True)
 
         settled = await scheduler._maintain_glasshive_speech_permit(
             object(),
@@ -2028,143 +2857,6 @@ class TestCortexFollowupScheduler(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(settled)
         self.assertEqual(completed, ["ghcd_voice_coalesced"])
         self.assertEqual(marked, [])
-        self.assertNotIn(speech_handle, scheduler._audible_cortex_handles)
-
-    async def test_done_unheard_or_interrupted_speech_never_settles_worker_delivery(self) -> None:
-        for coalesced in (False, True):
-            for outcome in ("unheard", "interrupted", "unknown_interruption", "text_only"):
-                with self.subTest(coalesced=coalesced, outcome=outcome):
-                    session = _DummySession()
-                    scheduler = self._build_scheduler(session=session)
-                    text = "Synthetic worker completion."
-                    delivery = {
-                        "deliveryId": "ghcd_voice_unconfirmed",
-                        "claimId": "claim_voice_unconfirmed",
-                        "text": text,
-                    }
-                    if coalesced:
-                        delivery["workerCompletionPresentation"] = _worker_completion_presentation(text)
-                    permit = _dispatch_permit(
-                        delivery_id=str(delivery["deliveryId"]),
-                        claim_id=str(delivery["claimId"]),
-                    )
-                    _spoken, handle, _reason = scheduler._start_speech(text, scheduler._seq)
-                    if outcome == "interrupted":
-                        handle.interrupted = True
-                    elif outcome == "unknown_interruption":
-                        handle.interrupted = None
-                    elif outcome == "text_only":
-                        session.output.audio_enabled = False
-                        session.output.audio = None
-                        scheduler.note_started_playout(handle)
-                    handle.complete(audible=outcome in {"interrupted", "unknown_interruption", "text_only"})
-                    mark = mock.AsyncMock(return_value=True)
-                    complete = mock.AsyncMock(return_value=True)
-                    release = mock.AsyncMock(return_value=True)
-                    scheduler._mark_glasshive_delivery_status = mark
-                    scheduler._complete_glasshive_worker_presentation = complete
-                    scheduler._release_glasshive_delivery_permit = release
-
-                    settled = await scheduler._maintain_glasshive_speech_permit(
-                        object(), delivery, permit, handle,
-                        seq=scheduler._seq, allow_stale_delivery=True,
-                        presentation_is_current=lambda: True,
-                    )
-
-                    self.assertFalse(settled)
-                    mark.assert_awaited_once_with(
-                        mock.ANY, delivery, "delivery_unknown", dispatch_permit=permit,
-                        reason=("voice_speech_interrupted" if outcome == "interrupted"
-                                else "voice_speech_playout_unconfirmed"),
-                    )
-                    complete.assert_not_awaited()
-                    release.assert_not_awaited()
-                    self.assertEqual(len(session.say_calls), 1)
-
-    async def test_native_playback_tracks_back_to_back_speech_without_a_new_state_event(self) -> None:
-        session = _DummySession()
-        session.output.audio = audio = _NativeAudioOutput()
-        session.agent_state = "speaking"
-        scheduler = self._build_scheduler(session=session)
-        scheduler._trace_handler = mock.AsyncMock(return_value=True)
-        mark = mock.AsyncMock(return_value=True)
-        scheduler._mark_glasshive_delivery_status = mark
-        with mock.patch.object(scheduler, "note_started_playout", wraps=scheduler.note_started_playout) as note:
-            scheduler.bind_audio_playout()
-            scheduler.bind_audio_playout()
-            scheduler._speak_cortex_followup(
-                "Earlier cortex speech.", scheduler._seq,
-                trace_id="trace-earlier", presentation_ref="presentation-earlier",
-            )
-            earlier = session.current_speech
-            audio.on_playback_started(created_at=1.0)
-            self.assertIn(earlier, scheduler._audible_cortex_handles)
-            earlier.complete()
-            await asyncio.sleep(0)
-
-            # A previous SDK speech task can fail after its first frame, before resetting
-            # the global state. The next authorized handle still has its own audio event.
-            session.current_speech = None
-            _spoken, handle, _reason = scheduler._start_speech("Next worker result.", scheduler._seq)
-            self.assertEqual(session.agent_state, "speaking")
-            self.assertEqual(handle.chat_items, [])
-            audio.on_playback_started(created_at=2.0)
-            self.assertIn(handle, scheduler._audible_cortex_handles)
-            handle.complete()
-            delivery = {"deliveryId": "ghcd_voice_next", "claimId": "claim_voice_next"}
-            permit = _dispatch_permit(
-                delivery_id=str(delivery["deliveryId"]), claim_id=str(delivery["claimId"]),
-            )
-            settled = await scheduler._maintain_glasshive_speech_permit(
-                object(), delivery, permit, handle,
-                seq=scheduler._seq, allow_stale_delivery=True, presentation_is_current=lambda: True,
-            )
-            self.assertTrue(settled)
-            mark.assert_awaited_once_with(mock.ANY, delivery, "sent", dispatch_permit=permit)
-            self.assertEqual(note.call_args_list, [mock.call(earlier), mock.call(handle)])
-            self.assertEqual(
-                [call.args for call in scheduler._trace_handler.await_args_list],
-                [("trace-earlier", "presentation-earlier", "tts.completed"),
-                 ("trace-earlier", "presentation-earlier", "audio.completed")],
-            )
-            await scheduler.close()
-            audio.on_playback_started(created_at=3.0)
-            self.assertEqual(note.call_count, 2)
-
-    async def test_current_cortex_playout_does_not_acknowledge_queued_worker_speech(self) -> None:
-        session = _DummySession()
-        scheduler = self._build_scheduler(session=session)
-        scheduler._speak_cortex_followup(
-            "Current cortex follow-up.", scheduler._seq,
-            trace_id="trace-current", presentation_ref="presentation-current",
-        )
-        current = session.speech_handles[0]
-        _spoken, queued, _reason = scheduler._start_speech("Queued worker result.", scheduler._seq)
-        self.assertIs(session.current_speech, current)
-        scheduler.note_started_playout(current)
-        scheduler.note_started_playout(queued)
-        self.assertIn(current, scheduler._audible_cortex_handles)
-        self.assertNotIn(queued, scheduler._audible_cortex_handles)
-        queued.complete()
-        delivery = {"deliveryId": "ghcd_voice_queued", "claimId": "claim_voice_queued"}
-        permit = _dispatch_permit(
-            delivery_id=str(delivery["deliveryId"]), claim_id=str(delivery["claimId"]),
-        )
-        mark = mock.AsyncMock(return_value=True)
-        scheduler._mark_glasshive_delivery_status = mark
-
-        settled = await scheduler._maintain_glasshive_speech_permit(
-            object(), delivery, permit, queued,
-            seq=scheduler._seq, allow_stale_delivery=True, presentation_is_current=lambda: True,
-        )
-
-        self.assertFalse(settled)
-        mark.assert_awaited_once_with(
-            mock.ANY, delivery, "delivery_unknown", dispatch_permit=permit,
-            reason="voice_speech_playout_unconfirmed",
-        )
-        current.complete()
-        await scheduler.close()
 
     async def test_substituted_coalesced_response_digest_blocks_speech(self) -> None:
         session = _DummySession()
@@ -2339,7 +3031,7 @@ class TestCortexFollowupScheduler(unittest.IsolatedAsyncioTestCase):
                 scheduler.schedule("msg_123", [], "", glasshive_expected=True)
                 while not session.speech_handles:
                     await asyncio.sleep(0)
-                session.speech_handles[0].complete(audible=True)
+                session.speech_handles[0].complete()
                 await scheduler._task
 
         rendered = []
@@ -2478,6 +3170,143 @@ class TestCortexFollowupScheduler(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(fetch_calls, [])
         self.assertEqual(session.say_calls, [])
+
+    async def test_done_unheard_or_interrupted_speech_never_settles_worker_delivery(self) -> None:
+        for coalesced in (False, True):
+            for outcome in ("unheard", "interrupted", "unknown_interruption", "text_only"):
+                with self.subTest(coalesced=coalesced, outcome=outcome):
+                    session = _DummySession()
+                    scheduler = self._build_scheduler(session=session)
+                    text = "Synthetic worker completion."
+                    delivery = {
+                        "deliveryId": "ghcd_voice_unconfirmed",
+                        "claimId": "claim_voice_unconfirmed",
+                        "text": text,
+                    }
+                    if coalesced:
+                        delivery["workerCompletionPresentation"] = _worker_completion_presentation(text)
+                    permit = _dispatch_permit(
+                        delivery_id=str(delivery["deliveryId"]),
+                        claim_id=str(delivery["claimId"]),
+                    )
+                    _spoken, handle, _reason = scheduler._start_speech(text, scheduler._seq)
+                    if outcome == "interrupted":
+                        handle.interrupted = True
+                    elif outcome == "unknown_interruption":
+                        handle.interrupted = None
+                    elif outcome == "text_only":
+                        session.output.audio_enabled = False
+                        session.output.audio = None
+                        scheduler.note_started_playout(handle)
+                    handle.complete(audible=outcome in {"interrupted", "unknown_interruption", "text_only"})
+                    mark = mock.AsyncMock(return_value=True)
+                    complete = mock.AsyncMock(return_value=True)
+                    release = mock.AsyncMock(return_value=True)
+                    scheduler._mark_glasshive_delivery_status = mark
+                    scheduler._complete_glasshive_worker_presentation = complete
+                    scheduler._release_glasshive_delivery_permit = release
+
+                    settled = await scheduler._maintain_glasshive_speech_permit(
+                        object(), delivery, permit, handle,
+                        seq=scheduler._seq, allow_stale_delivery=True,
+                        presentation_is_current=lambda: True,
+                    )
+
+                    self.assertFalse(settled)
+                    mark.assert_awaited_once_with(
+                        mock.ANY, delivery, "delivery_unknown", dispatch_permit=permit,
+                        reason=("voice_speech_interrupted" if outcome == "interrupted"
+                                else "voice_speech_playout_unconfirmed"),
+                    )
+                    complete.assert_not_awaited()
+                    release.assert_not_awaited()
+                    self.assertEqual(len(session.say_calls), 1)
+
+    async def test_native_playback_tracks_back_to_back_speech_without_a_new_state_event(self) -> None:
+        session = _DummySession()
+        session.output.audio = audio = _NativeAudioOutput()
+        session.agent_state = "speaking"
+        scheduler = self._build_scheduler(session=session)
+        scheduler._trace_handler = mock.AsyncMock(return_value=True)
+        mark = mock.AsyncMock(return_value=True)
+        scheduler._mark_glasshive_delivery_status = mark
+        with mock.patch.object(scheduler, "note_started_playout", wraps=scheduler.note_started_playout) as note:
+            scheduler.bind_audio_playout()
+            scheduler.bind_audio_playout()
+            scheduler._speak_cortex_followup(
+                "Earlier cortex speech.", scheduler._seq,
+                trace_id="trace-earlier", presentation_ref="presentation-earlier",
+            )
+            earlier = session.current_speech
+            audio.on_playback_started(created_at=1.0)
+            self.assertIn(earlier, scheduler._audible_cortex_handles)
+            earlier.complete()
+            await asyncio.sleep(0)
+
+            # A previous SDK speech task can fail after its first frame, before resetting
+            # the global state. The next authorized handle still has its own audio event.
+            session.current_speech = None
+            _spoken, handle, _reason = scheduler._start_speech("Next worker result.", scheduler._seq)
+            self.assertEqual(session.agent_state, "speaking")
+            self.assertEqual(handle.chat_items, [])
+            audio.on_playback_started(created_at=2.0)
+            self.assertIn(handle, scheduler._audible_cortex_handles)
+            handle.complete()
+            delivery = {"deliveryId": "ghcd_voice_next", "claimId": "claim_voice_next"}
+            permit = _dispatch_permit(
+                delivery_id=str(delivery["deliveryId"]), claim_id=str(delivery["claimId"]),
+            )
+            settled = await scheduler._maintain_glasshive_speech_permit(
+                object(), delivery, permit, handle,
+                seq=scheduler._seq, allow_stale_delivery=True, presentation_is_current=lambda: True,
+            )
+            self.assertTrue(settled)
+            mark.assert_awaited_once_with(mock.ANY, delivery, "sent", dispatch_permit=permit)
+            self.assertEqual(note.call_args_list, [mock.call(earlier), mock.call(handle)])
+            self.assertEqual(
+                [call.args for call in scheduler._trace_handler.await_args_list],
+                [("trace-earlier", "presentation-earlier", "audio.started"),
+                 ("trace-earlier", "presentation-earlier", "tts.completed"),
+                 ("trace-earlier", "presentation-earlier", "audio.completed")],
+            )
+            await scheduler.close()
+            audio.on_playback_started(created_at=3.0)
+            self.assertEqual(note.call_count, 2)
+
+    async def test_current_cortex_playout_does_not_acknowledge_queued_worker_speech(self) -> None:
+        session = _DummySession()
+        scheduler = self._build_scheduler(session=session)
+        scheduler._speak_cortex_followup(
+            "Current cortex follow-up.", scheduler._seq,
+            trace_id="trace-current", presentation_ref="presentation-current",
+        )
+        current = session.speech_handles[0]
+        _spoken, queued, _reason = scheduler._start_speech("Queued worker result.", scheduler._seq)
+        self.assertIs(session.current_speech, current)
+        scheduler.note_started_playout(current)
+        scheduler.note_started_playout(queued)
+        self.assertIn(current, scheduler._audible_cortex_handles)
+        self.assertNotIn(queued, scheduler._audible_cortex_handles)
+        queued.complete()
+        delivery = {"deliveryId": "ghcd_voice_queued", "claimId": "claim_voice_queued"}
+        permit = _dispatch_permit(
+            delivery_id=str(delivery["deliveryId"]), claim_id=str(delivery["claimId"]),
+        )
+        mark = mock.AsyncMock(return_value=True)
+        scheduler._mark_glasshive_delivery_status = mark
+
+        settled = await scheduler._maintain_glasshive_speech_permit(
+            object(), delivery, permit, queued,
+            seq=scheduler._seq, allow_stale_delivery=True, presentation_is_current=lambda: True,
+        )
+
+        self.assertFalse(settled)
+        mark.assert_awaited_once_with(
+            mock.ANY, delivery, "delivery_unknown", dispatch_permit=permit,
+            reason="voice_speech_playout_unconfirmed",
+        )
+        current.complete()
+        await scheduler.close()
 
 
 if __name__ == "__main__":

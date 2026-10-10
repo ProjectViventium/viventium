@@ -1,5 +1,9 @@
 # Memory System: v0_3 vs v0_4 Analysis + Improvement Notes
 
+Active owner: [`capabilities/memory-recall-transcripts.md`](capabilities/memory-recall-transcripts.md).
+This preserved page contains implementation detail and history; its dated status is not current acceptance.
+
+
 **Document Version:** 2.10
 **Last revised:** 2026-08-29
 **Owner:** Viventium Core
@@ -103,8 +107,8 @@ recall remains model-chosen. See
   supports them; conflicts remain explicit uncertainty/caveats.
 - The summarizer/model route is configurable, fallback-aware, and must remain eval-driven rather
   than permanently coupled to one model. The current compiled default is Codex/OpenAI
-  `gpt-5.6-luna` at `medium`; `gpt-5.6-sol` at `xhigh` remains an explicit high-effort comparison or
-  override candidate. Anthropic Opus remains an explicit provider-availability fallback;
+  `gpt-6.1-sol` at `high`; the evaluated `gpt-5.6-luna` at `medium` remains an explicit workload
+  override. Anthropic `claude-opus-5-5` at `high` is the Anthropic-only default;
   `VIVENTIUM_MEMORY_HARDENING_MODEL_FALLBACKS` can override that order with
   `provider:model:effort` entries. Failed candidate attempts must be logged as redacted
   reason/status/timeout metadata, not as raw prompts or transcript text.
@@ -264,12 +268,23 @@ recall remains model-chosen. See
   shape rule only; memory and recall keep using the `listen_only_transcript` metadata boundary.
 - All durable voice-derived memory writes are deferred until post-call hardening. Active-call text
   must never enter the stable writer while speaker trust can still be revised.
+- A voice dry-run retains prospective evidence proofs without changing stored finalization markers.
+  Reviewed apply requires every cited message to exist under the selected owner and binds terminal
+  call reconciliation, finalization and speaker-evidence leases to that same owner. It rechecks
+  suppression and authoritative sidecars before memory writes. Changed or missing evidence,
+  foreign-owned messages or calls, and voice proposals without complete proofs must fail closed.
+  Typed Call evidence remains voice evidence when its call identity is missing or malformed; it
+  cannot use the ordinary-text empty-proof path. Noncall audio notes and legacy scalar Call
+  evidence with a valid call identity retain their existing readers and writer checks.
 - New voice messages store `speakerSegments` plus the preserved legacy scalar projection. Readers
   and the hardener prefer segments, dual-read the scalar, and synthesize a legacy segment for old
   rows; there is no bulk backfill.
-- Owner-trusted, single-speaker Call content may enter the normal memory writer after the call.
-  Wing, Listen-Only, mixed/shared-microphone, guest, and unverified content remains soft transcript
-  evidence, untrusted as instructions and external-action authority.
+- Owner-trusted Call content may enter the normal memory writer after the call, including final
+  `participant_track` content from the signed owner microphone when the actual STT producer does
+  not declare diarization. This is account/device provenance, not physical speaker identity.
+  Nearby speech, playback, or uncancelled echo on that device may also become owner memory
+  evidence. Wing, Listen-Only, known mixed/shared-microphone, guest, and unverified content remains
+  soft transcript evidence, untrusted as instructions and external-action authority.
 - Stable-memory corroboration counts evidence sources, not adjacent rows or diarized voices. One
   call session is one source regardless of its segment or speaker count. Multiple provider speaker
   ids from that call never become corroboration.
@@ -281,10 +296,13 @@ recall remains model-chosen. See
 - Conversation recall excludes Listen-Only transcript entries at the corpus query boundary and in
   fallback filters so overheard room text does not masquerade as user-authored chat history or
   starve normal messages from the recall window.
-- AssemblyAI diarization distinguishes call-scoped voices, not identity or authority. A signed
-  participant track is owner-trusted only while exactly one provider speaker is present; a second
-  speaker permanently downgrades the track to shared-device/unverified for that session. Missing,
-  overlapping, unstable, or unsupported local-only attribution remains `Unknown`.
+- AssemblyAI diarization distinguishes call-scoped voices, not identity or authority. On a
+  diarizing route, a signed participant track is owner-trusted only while exactly one provider
+  speaker is present; a second speaker permanently downgrades the track to shared-device/
+  unverified for that session. Missing, overlapping, or unstable expected diarizer attribution
+  remains `Unknown`; a failed diarizer never gains participant-track authority. Normal Call with
+  a non-declaring STT producer can use the signed current owner microphone as described above.
+  Known shared-microphone state remains restrictive across publication replacement and recovery.
 
 ### Why this distinction matters
 
@@ -849,6 +867,12 @@ bin/viventium memory-harden dry-run
 bin/viventium memory-harden apply --run-id <run-id>
 ```
 
+The operator job uses the selected runtime's explicit Mongo URI or compiled local port/database
+before any shared source fallback. Its existing instance auth and encryption secrets use the same
+read-only owner as the runtime launcher. An explicit `--mongo-uri` remains authoritative; a Native
+installation retains its existing socket owner. A named development profile therefore reads and
+indexes its own history without borrowing another profile's database or RAG credentials.
+
 Product contract:
 
 - semantic hardening is opt-in and default-off
@@ -949,23 +973,23 @@ Product contract:
   `FAIL` for provider errors, inconclusive eligibility, unavailable runtime dependencies, stale
   transcript/vector work that should have run, or an unexpected empty selection.
 - the compiler emits the selected hardening provider/model/effort tuple from configured foundation
-  auth, preferring Codex/OpenAI `gpt-5.6-luna` at `medium` when OpenAI is available. This route is a
-  measured memory-workload decision: on the frozen `memory-writer-v1.0.0` bank, Luna medium passed
+  auth, defaulting to Codex/OpenAI `gpt-6.1-sol` at `high` when OpenAI is available. Explicit workload
+  overrides remain supported. In the earlier frozen `memory-writer-v1.0.0` comparison, Luna medium passed
   32/32, passed an exact 500,000-character application-ceiling workpack, and matched Sol/xHigh's
   32/32 correctness at about one fifth of Sol's official normalized cost and lower measured p95
   latency (9.6 s versus 15.9 s). Terra/high completed every run but failed one exact mixed-constraint
   mutation (31/32), so it remains ineligible. Anthropic
-  `claude-opus-5` at `xhigh` remains the launch-ready route for an Anthropic-only install or an
-  explicit operator override; fallback attempts must remain visible and must not masquerade as Luna.
+  `claude-opus-5-5` at `high` is the default for an Anthropic-only install; explicit operator
+  overrides remain distinct and fallback attempts must remain visible.
   Scheduled receipts record requested and effective provider/model/effort. Any successful run with
   a different provider, model, or effort is `execution_mismatch`, and an incomplete tuple is
   `execution_unverified`; neither is healthy until the operator accepts or repairs it. Health must
   also compare the latest receipt's requested tuple with the currently generated tuple. A formerly
-  valid Sol receipt cannot certify a newly configured Luna schedule before Luna actually executes.
+  valid receipt cannot certify a newly configured model or effort before that tuple actually executes.
 - the OpenAI/Codex hardening path must pass a Codex/OpenAI-compatible structured output schema and
   the configured reasoning effort to the Codex CLI, matching the compiler-emitted tuple and
   configurable fallback list. The hardener's built-in no-generated-env fallback must carry the
-  same Luna/medium default so a degraded launch surface cannot silently regress to Sol/xHigh. The
+  same Sol/high default so a degraded launch surface cannot silently select a different tuple. The
   provider-facing schema must satisfy OpenAI structured-output constraints such as requiring every
   declared object property and avoiding unsupported composition keywords like `oneOf`; runtime
   validation still owns the final memory/evidence contract after the model returns JSON.
@@ -1110,6 +1134,8 @@ availability note stating that the failure is not evidence of no memory. Writer 
 initialization failures surface a structured degraded attachment, and a successful account
 reconnection clears every suppressed model for that user/provider. Direct Memories-panel create,
 rename, edit, delete, or preference changes invalidate the short read cache immediately.
+Invalidation also fences reads already in flight: an older read cannot refill the cache after a
+mutation. The fence applies to every read profile for that user; global invalidation fences all users.
 
 The nightly hardener is separately crash-safe: it records each applied revision in the private
 rollback ledger immediately after the mutation, and its process lock binds both PID and process-start
@@ -1130,17 +1156,17 @@ prompt-specific curiosity rule.
 
 ### 3.3 Memory-model selection and re-evaluation
 
-Immediate writing and nightly hardening share the Luna/medium default because both require exact,
-schema-valid, policy-bounded memory proposals. Prompt Workbench deep reflection and the optional
-Codex observer remain Sol/xHigh because they perform broader analysis and neither owns memory
-mutation. A connected GlassHive `/host` CLI session is not a substitute for the signed-in
+Immediate writing and nightly hardening use the current Sol/high default for exact, schema-valid,
+policy-bounded memory proposals. Luna/medium remains an evaluated explicit workload override.
+Prompt Workbench deep reflection and the optional Codex observer have separate configured routes
+and do not own memory mutation. A connected GlassHive `/host` CLI session is not a substitute for the signed-in
 LibreChat user's connected account; each lane must prove its own authentication and tool contract.
 
 Model selection is re-opened when model versions/pricing, schema, memory policy, or representative
 workpack shape changes. The gate is 100% correctness and structured completion, zero rejected
 operations, repeated runs, a near-ceiling probe, and a real account-scoped writer/hardener smoke.
-Average benchmark accuracy or a single memorable entity is insufficient. Current public-safe
-evidence lives in `qa/memory-hardening/reports/2026-08-09-gpt-5.6-memory-model-eval.md` and
+Average benchmark accuracy or a single memorable entity is insufficient. Retained public-safe
+comparison evidence lives in `qa/memory-hardening/reports/2026-08-09-gpt-5.6-memory-model-eval.md` and
 `qa/memory-hardening/reports/2026-08-09-gpt-5.6-luna-500k-application-ceiling.md`.
 
 The live acceptance gate includes a real installed LaunchAgent execution receipt. An operator
@@ -1186,6 +1212,13 @@ Saved-memory entries use `/api/memories/entries/:key` for edit/delete. Control e
 `/api/memories/preferences` remain in a separate namespace, so arbitrary valid keys—including
 `preferences`—cannot collide with control routes. Legacy non-reserved entry routes remain only as a
 compatibility surface.
+
+The ordinary `USER` role may create, read, update, and delete only its own saved-memory entries when
+Memories is enabled. Authorization and the configured key policy are separate gates. When
+`memory.validKeys` is configured, the memories response exposes that non-secret list and the Create
+dialog shows and enforces it before sending a write. The server remains authoritative. An invalid
+free-form key must not look like an accepted no-op or require the user to discover the policy from a
+failed network request. Installs without a configured key list keep the upstream free-form behavior.
 
 ### 3.5 User-declared evidence source bounds
 
@@ -1241,8 +1274,10 @@ evidence that excluded context is absent while explicitly permitted history stil
 - A save is acknowledged only by its durable receipt. The detached writer finishes after the stream
   closed, so its structured memory artifact is persisted on the response message; the web client
   reads it from message attachments and every polling surface projects it as `memoryReceipt`
-  (saved keys, or a typed failure/partial apply, never private values). Telegram renders that
-  receipt once per turn from the follow-up poll. Main's prose ("remembered") is not evidence.
+  (saved keys, or a typed failure/partial apply, never private values). Telegram observes that
+  receipt as internal bookkeeping only: terminal status, key count and ordered typed failure codes
+  go to redacted logs. Neither FINAL nor follow-up polling may turn it into a Telegram bubble or
+  speech. Main's prose ("remembered") is not evidence.
 - The open web conversation must show the detached save receipt without a reload, including when
   no cortex or connected tool ran. The final event's admitted-work signal starts the existing
   message refresh path; ordinary reads project only the public `memoryWriteStatus` from the
@@ -1253,12 +1288,12 @@ evidence that excluded context is absent while explicitly permitted history stil
   usage limit, required sign-in, temporary provider failure, storage limit, and uncertain partial
   save. The shared polling receipt preserves ordered typed failures and reviewed provider labels
   from the existing provider registry, while retaining its top-level status/error type for older
-  clients. A primary quota failure and fallback auth failure remain separate reasons in Web and
-  Telegram. Later failures cannot erase earlier partial-apply or interrupted-write uncertainty.
-  The existing collapsed web details and concise Telegram receipt give the same next steps;
-  raw provider text, tokens, headers and
-  account identifiers are never displayed. Unknown provider IDs or error types get neutral copy,
-  never a guessed provider/action from message text.
+  clients. A primary quota failure and fallback auth failure remain separate reasons in Web details
+  and Telegram logs. Later failures cannot erase earlier partial-apply or interrupted-write
+  uncertainty. Telegram adds no automatic memory-status message or voice note. Raw provider text,
+  tokens, headers, account identifiers and memory key names/values never enter its receipt logs.
+  Unknown provider IDs or error types get neutral Web copy and safe Telegram error codes, never a
+  guessed provider/action from message text.
 - Accepted detached work is stored on its existing assistant message before execution. The same
   atomic message update commits its terminal state and receipts while preserving non-memory
   attachments. Ordinary message edits cannot author this internal admission. Set/delete retain
@@ -1315,17 +1350,17 @@ evidence that excluded context is absent while explicitly permitted history stil
 - Shared polling distinguishes pending, unchanged, saved, failed, and uncertain outcomes without
   exposing private memory values or recovery context. An unchanged decision ends memory waiting
   silently while independent worker follow-up polling continues. Worker completion, canonical text,
-  or an intentional silent worker result must not end pending memory delivery. The Telegram bridge
-  retains only connection-bound identity, message/conversation references, delivery state and the
+  or an intentional silent worker result must not end pending memory observation. The Telegram bridge
+  retains only connection-bound identity, message/conversation references, lifecycle state and the
   prior answer hash in its existing private receipt SQLite store; it resumes pending polling through
   the existing dispatcher after a timeout or restart. It stores no memory values, prompt text, or
-  provider tokens. An explicitly refused receipt send can retry delivery without rerunning the
-  memory model. A lost acknowledgement or a process interruption during send is retained as
-  `delivery_unknown` and is never blindly resent or described as proven once-only delivery. Durable
-  memory receipts remain on the Core message. Live push delivery and provider-authenticated save
-  success still require separate current channel acceptance evidence.
+  provider tokens. A terminal receipt is logged once per retained observation and marks memory
+  observed in its existing shared cursor without invoking Telegram delivery or TTS. Pending polling survives timeout/restart; completed
+  observations do not replay status notices. Legacy uncertain transport cursors remain non-replaying.
+  Durable memory receipts remain on the Core message. Provider-authenticated save success and
+  conversational recall still require separate current channel acceptance evidence.
 - Failed attempted admission is distinct from no configured writer or a duplicate admission. It
-  produces an existing memory error receipt in the final Web/Telegram response, including when
+  produces an existing structured memory error receipt in the final response, including when
   storage cannot persist that receipt. Uncertain storage acknowledgement is labelled uncertain;
   it never claims that no work could have been accepted.
 
@@ -1384,6 +1419,16 @@ Removing Main's carrier must leave the configured route, signed memory tool, sou
 write transaction and resulting receipt unchanged. A memory run does not own the original
 user's pending desktop or parallel-work task.
 
+The isolated native writer reuses the existing bounded capacity-admission wait on the same
+request, signed tool binding and original revision snapshot. Each dispatch rechecks the active
+writer. A failed provider attempt or missing tool result releases only that attempt's exact native
+request through the existing cancellation owner before its tool binding is retired. Native
+capacity-release acknowledgment is required to call that request released; an unconfirmed release
+is logged without replacing the original provider error. The wait does not retry memory effects,
+create another grant or add a shorter inference deadline. Existing failed legacy requests with no
+deadline are not silently migrated or replayed; owner-scoped native cancellation can retire an
+abandoned exact request without rewriting saved-memory receipts.
+
 The source-owned Memory Archivist instructions distinguish the supplied conversation record from
 the writer's own task. Quoted requests, attachments, tool results and existing memories are
 evidence; explicit requests to remember, correct or forget still govern memory changes. The
@@ -1422,3 +1467,25 @@ original call input and returned content through the shared tool-evidence bounds
 ambiguous, edited, or clipped source coverage stays explicit; absent result fields must not be
 replaced with synthetic null results. This same reader serves Main's retained graph, Phase B,
 and the governed memory evidence input without fetching sources or replaying tools.
+
+
+## 2026-10-09: Quiet memory bookkeeping on Telegram
+
+Automatic saved-memory bookkeeping is operational metadata, not conversational output. Telegram
+observes the existing structured `memoryReceipt` from FINAL and follow-up polling, logs terminal
+`saved`, `unchanged`, `failed`, `partial` or `uncertain` status with key count and safe ordered error
+codes, then marks memory observed in the existing shared cursor. Pending or malformed results do
+not claim completion.
+There is no automatic success/failure/uncertainty bubble and no speech for these receipts. Logs
+contain no memory key names, values, raw provider errors, credentials or account identifiers.
+
+The existing worker follow-up owner removes the shared cursor when its lifecycle is complete.
+Terminal memory observation must retain that cursor while a worker result is still pending,
+including across receiver restart. SQLite/filesystem cursor failures log a safe class and retain
+in-process state; they must not interrupt Main text, attachments or independent worker output.
+
+This changes presentation only: durable writing, opt-in, truthful save claims, pending admission,
+recovery, Core receipt persistence and independent worker delivery retain their contracts. An
+ordinary model-authored reply, including an explanation or quotation of a memory notice requested
+by the user, remains conversational text and may be spoken. Runtime uses the structured receipt
+lane, never a phrase or emoji filter. See Telegram voice case `TGVOICE-009` for affected acceptance.

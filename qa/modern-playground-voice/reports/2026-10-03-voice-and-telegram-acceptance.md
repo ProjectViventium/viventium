@@ -141,3 +141,45 @@ The private delivery ledger preserves exact commands, old failures, candidate by
 - [x] No account, conversation, message, call, session, Telegram or raw provider identifiers.
 - [x] No absolute machine paths, hostnames, private stack traces, DB exports or runtime dumps.
 - [x] Private evidence is represented only by sanitized outcomes, counts and measurements.
+
+
+## 2026-10-09 — Current local candidate and bounded acceptance
+
+**PARTIAL for the full requested experience.** The compatible repair source was implemented,
+loaded and checked on its affected paths. This section supersedes only the earlier current-state
+claims above; prior failed and unrun cases remain historical evidence. These results describe the
+local candidate before publication and do not certify the new merged commit or installed release.
+
+| Requested outcome | Current evidence | Remaining limit |
+| --- | --- | --- |
+| Preserve current speech choices and real reply flow | Selected actual Calls report the initialized Listening/Speaking routes correctly, stream received audio, and retain authored words after normal chat reload. Validated public text enters synthesis before Main completion. | Broader role/provider/hardware coverage and glitch-free human perception remain unaccepted. |
+| Preserve interrupted input and durable work | Selected acoustic and typed interruption retain the authentic source admission and accepted partial-removal/current-response states. Five normal Ends leave no active received PCM during the recorded three-second window. | A genuine false-interruption probe did not produce the SDK false-resume event; that branch is NOT EXERCISED. Process-death and endurance breadth remain open. |
+| Combine useful background results without blocking Main | Activation and Main overlap. The finite turn-owned cohort produces one combined useful source; silent/NTA and canceled results are excluded. Exact canonical evidence remains available to later and fallback context. | Grok live interjection remains QA-only; the primary optional live hook is OFF. Current Codex exec and Anthropic adapters retain after-Main delivery. Queue/history acknowledgement does not prove safe context-only authority, model consumption or user presentation. |
+| Keep automatic Telegram memory bookkeeping quiet | All 341 owning bridge checks pass. On the loaded native Telegram surface, one ordinary reply produces its normal text and voice note; its later unchanged receipt produces one bounded metadata log and no extra bubble/audio. | Saved, failed, partial and uncertain silence have deterministic test evidence; these outcomes were not each induced on the live account. Audible playback quality was not assessed. |
+| Keep the requested model defaults and supported choices | Main GPT 6.1 Sol/high; Voice xPerfect with supported Grok 4.7/high; Opus 5.5/high fallback. Supported alternatives stay selectable. Grok Fast is used only where its native catalog supports it. | OpenCode stays unchanged and backlogged. Universal provider/role acceptance is not claimed. |
+
+### Current timing boundary
+
+The latest selected typed-input-to-received-active-PCM sample is **14.705 seconds**. It is not
+physical end-of-user-speech latency, pure inference, a matched speedup or an instant-model floor.
+The former 8.82-second instant-model result does not certify this candidate.
+
+| Disjoint measured stage | Duration |
+| --- | ---: |
+| SDK text to gateway | 2.949 ms |
+| Gateway to Core admission acknowledgement | 75.074 ms |
+| Core acknowledgement to Native admission | 753.594 ms |
+| Native admission to harness start | 109.077 ms |
+| Harness start to first validated public text | 13,285.683 ms |
+| Public text to first TTS byte | 269.255 ms |
+| First TTS byte to LiveKit handoff | 0.752 ms |
+| Handoff to received active PCM | 208.876 ms |
+| Total | 14,705.260 ms |
+
+The harness span includes model, tool and output-contract work; it is not a pure-inference
+measurement. The Core preparation span is not separately attributed to memory, tools or auth.
+Independent detector/worker timers can overlap these spans and must not be added to this total.
+Under-two-second response remains **UNMET**. Full hardware, remote, endurance and natural-perception
+acceptance remain open. Public DNS repair was user-deferred; it does not block independent local
+work. Private source prompts, conversation identities, screenshots, raw audio and joined logs stay
+outside the public repository.

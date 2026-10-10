@@ -11,7 +11,7 @@
 | `ANTI-005` | Failure honesty                         | Missing evidence/provider/tool state is not fabricated                                   | Web, tool/provider health            | `PASS` 2026-08-11 — healthy, empty, rate-limit, auth, unavailable, rejected, refresh, and recovery paths passed through the signed broker         |
 | `ANTI-006` | Persistence/reload                      | Consult order, evidence, and final answer survive refresh/restart                        | Web, DB                              | `PARTIAL` 2026-08-11                                                                                                                   |
 | `ANTI-007` | Telegram parity                         | User receives one Main-authored final answer with persisted evidence                     | Telegram, DB/ledger                  | `BLOCKED` 2026-08-11                                                                                                                   |
-| `ANTI-008` | Voice latency/exclusion                 | Voice remains responsive and does not block on foreground research                       | Voice/playground                     | `PARTIAL` 2026-08-11 — real isolated voice transport ran, but latency targets missed and the required balanced semantic, lookup, interruption, cancel, recovery, and persistence paths remain open |
+| `ANTI-008` | Voice responsiveness and capability parity | Voice retains authorized tools/consultants, interruptible work and evidence-grounded speech | Voice/playground                     | `PARTIAL` 2026-08-11 — real isolated voice transport ran, but latency targets missed and the required balanced semantic, lookup, interruption, cancel, recovery, and persistence paths remain open |
 | `ANTI-009` | Phase B duplicate suppression           | Already-used evidence does not create a repetitive follow-up                             | Web, Phase B, DB                     | `PARTIAL` 2026-09-06 — development-Web duplicate retry passed after formatter/route repair; later-candidate installed and channel proof remains   |
 | `ANTI-010` | Deep Memory late surfacing              | Relevant older evidence appears later; irrelevant search stays silent                    | Web, recall/RAG, Phase B             | `PARTIAL` 2026-09-06 — independent original-source recall passed; distinct useful late evidence and channel acceptance remain           |
 | `ANTI-011` | My World context/tool evidence          | Shared context arrives automatically; each agent uses only assigned tools                | Web, memory, RAG, Life/GlassHive     | `FAIL` 2026-08-29 — current source lacks required Reality Check and Deep Research `web_search` declarations                           |
@@ -218,12 +218,13 @@ Historical Real-Web results remain evidence for their tested candidate only.
 - Automation: Telegram bridge tests support; real bot send/receive mandatory.
 - Last run: `BLOCKED` 2026-08-11 — no disposable real Telegram identity was available.
 
-## `ANTI-008` — Voice remains fast and truth-seeking without foreground research
+## `ANTI-008` — Voice remains responsive and truth-seeking with full authorized capability
 
-- Requirement: foreground research must not block the live voice path; background work may surface
-  later through the existing supported follow-up behavior.
-- Risk covered: a spoken turn stalls on Reality/Red Team, is canceled mid-audio, or claims research
-  that did not finish.
+- Requirement: Voice retains the same authorized tools and consultants as other Main surfaces.
+  Main chooses useful foreground work; it stays interruptible, cancellable and evidence-grounded.
+  Background work stays nonblocking and may surface later through the existing Phase B behavior.
+- Risk covered: Voice loses an authorized capability, waits for unrelated background work, is
+  canceled mid-audio, or claims research that did not finish.
 - Preconditions: real modern playground/call, working STT/LLM/TTS, neutral transport prompts, and
   a representative voice subset of the balanced evidence-pair bank. Do not preselect only risky
   claims, missing facts, or safety-policy cases.
@@ -232,15 +233,16 @@ Historical Real-Web results remain evidence for their tested candidate only.
      paired turns, hold the user question constant and change only the supplied evidence.
   2. Measure speech end → first audible response and full response; compare with the same-runtime
      pre-change baseline and record p50/p95 separately from detector/model/TTS timings.
-  3. Score semantic turns against the evidence-blind truth-seeking rubric, then run the explicit
-     lookup, interruption, cancel, recovery, persistence, logs, DB, and active-config gates.
-- Expected result: the initial voice response does not foreground-handoff or wait for research; it
-  clearly supports, refutes, qualifies, or updates according to the packet; remains interruptible;
-  and shows no material regression against the accepted voice baseline. Any later background value
-  follows Phase B rules.
-- Forbidden result: foreground Reality/Red Team in the live audible path, mid-speech nevermind,
-  invented current evidence, default pessimism, default approval, over-caveating decisive evidence,
-  or transport/instrumentation-only semantic acceptance.
+  3. Score semantic turns against the evidence-blind truth-seeking rubric, including Main's choice
+     of useful authorized tools/consultants and sufficient prepared evidence. Run explicit lookup,
+     interruption, cancel, recovery, persistence, logs, DB, and active-config gates.
+- Expected result: Main chooses useful authorized tools and consultations, claims results only
+  after authoritative evidence returns, and clearly supports, refutes, qualifies, or updates
+  according to the packet. Work remains interruptible and cancellable, with no material regression
+  against the accepted voice baseline. Later background value follows existing Phase B rules.
+- Forbidden result: Voice-only tool/consultant exclusions, unnecessary waits for unrelated
+  background work, mid-speech nevermind, invented current evidence, default pessimism, default
+  approval, over-caveating decisive evidence, or transport/instrumentation-only semantic acceptance.
 - Automation: voice gateway/playground suites plus `qa/modern-playground-voice/cases.md` `MPV-014`;
   real audible run mandatory.
 - Last run: `PARTIAL` — 2026-08-11, a copy-on-write isolated runtime completed two excluded warmups
@@ -544,7 +546,7 @@ Historical Real-Web results remain evidence for their tested candidate only.
 | `ANTI-UC-004` | Ask while search/provider/tool is empty, missing, slow, or rejected | `ANTI-005`              | Web + provider/tool | Provider health, tool result, final wording              | Exact degraded class and honest recovery                      | `PASS` 2026-08-11 |
 | `ANTI-UC-005` | Refresh or restart after a consultant chain                         | `ANTI-006`              | Web                 | UI before/after, stored graph/message state              | Order and final ownership persist                             | `PARTIAL` 2026-08-11 |
 | `ANTI-UC-006` | Send the same decision through Telegram                             | `ANTI-007`              | Telegram            | Delivered message, ledger, stored graph state            | One Main-authored delivered answer                            | `BLOCKED` 2026-08-11 |
-| `ANTI-UC-007` | Ask the same live-fact question by voice                            | `ANTI-008`              | Voice/playground    | Audio/RTC state, transcript, graph/tool events           | Responsive honest speech without blocking foreground research | `PARTIAL` 2026-08-11 |
+| `ANTI-UC-007` | Ask the same live-fact question by voice                            | `ANTI-008`              | Voice/playground    | Audio/RTC state, transcript, graph/tool events           | Responsive evidence-grounded speech with authorized tool/consultant parity | `PARTIAL` 2026-08-11 |
 | `ANTI-UC-008` | Wait for overlapping background work                                | `ANTI-009`              | Web                 | Phase B state and persisted parts                        | New value surfaces once; duplicate evidence stays silent      | `PASS` 2026-08-11 |
 | `ANTI-UC-009` | Let old evidence become relevant naturally                          | `ANTI-010`              | Web + recall        | Scoped recall provenance, Phase B, refresh               | Main answers first; useful memory surfaces later once         | `PARTIAL` 2026-09-06 — receipt enforced; useful distinct late delivery remains |
 | `ANTI-UC-010` | Require Memory Keys, recall, `Life/`, and web together              | `ANTI-011`              | Web + tools         | Shared context, signed capability scope, tool provenance | Sources stay distinct and no manual recap is needed           | `FAIL` 2026-08-29 — current source lacks required web tools |

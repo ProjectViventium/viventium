@@ -579,13 +579,29 @@ viventium_meilisearch_container_owns_port() {
   [[ -n "$port" ]] || return 1
   command -v docker >/dev/null 2>&1 || return 1
   local names=""
-  names="$(
-    docker ps \
-      --filter "label=viventium.stack=viventium_v0_4" \
-      --filter "label=viventium.service=meilisearch" \
-      --filter "publish=${port}" \
-      --format '{{.Names}}' 2>/dev/null || true
-  )"
+  if ! names="$(
+    "$PYTHON_BIN" - "$REPO_ROOT" "$port" <<'PY' 2>/dev/null
+from pathlib import Path
+import sys
+
+sys.path.insert(0, str(Path(sys.argv[1]) / "scripts" / "viventium"))
+from preflight import DEFAULT_DOCKER_READINESS_TIMEOUT_SECONDS, run_checked
+
+result = run_checked(
+    ["docker", "ps",
+     "--filter", "label=viventium.stack=viventium_v0_4",
+     "--filter", "label=viventium.service=meilisearch",
+     "--filter", "publish=" + sys.argv[2],
+     "--format", "{{.Names}}"],
+    timeout_seconds=DEFAULT_DOCKER_READINESS_TIMEOUT_SECONDS,
+)
+if result.returncode == 0:
+    print(result.stdout, end="")
+sys.exit(result.returncode)
+PY
+  )"; then
+    return 1
+  fi
   [[ -n "$names" ]]
 }
 

@@ -117,7 +117,17 @@ def test_real_worker_initial_and_selected_callback_use_the_unwrapped_renderer():
     capabilities = []
     direct = SimpleNamespace(capabilities=SimpleNamespace(streaming=True))
     namespace.update(llm_impl=llm, capabilities=capabilities,
-                     primary_voice_provider="synthetic", primary_tts_impl=direct)
+                     primary_voice_provider="synthetic", primary_tts_impl=direct,
+                     call_session_id="synthetic-call", turn_detection=None, primary_tts_ready=True,
+                     env=SimpleNamespace(
+                         stt_provider="pywhispercpp", tts_provider="xai", tts_provider_fallback="",
+                         stt_model="synthetic-stt", assemblyai_stt_model="synthetic-stt",
+                         openai_stt_model="synthetic-stt", mlx_audio_model_id="synthetic-tts",
+                         cartesia_voice_id="synthetic-voice", elevenlabs_voice_id="synthetic-voice",
+                         openai_tts_model="synthetic-tts", xai_voice="synthetic-voice",
+                         voice_min_endpointing_delay_s=0.1, voice_max_endpointing_delay_s=0.5,
+                         voice_min_interruption_duration_s=0.3, voice_min_interruption_words=1,
+                     ))
     exec(compile(ast.fix_missing_locations(ast.Module(body=[initial], type_ignores=[])),
                  "<worker-initial-tts-seam>", "exec"), namespace)
     assert llm._voice_native_streaming is True
@@ -153,38 +163,40 @@ def test_worker_attempt_capability_changes_only_input_policy():
     assert llm._voice_accepts_inline_controls is True
 
 
-@pytest.mark.asyncio
 @pytest.mark.parametrize("primary_native", [True, False])
-async def test_current_attempt_capability_resets_before_repeated_stream_input(primary_native):
-    primary_type = FakeStreamingTTS if primary_native else FakeTTS
-    fallback_type = FakeTTS if primary_native else FakeStreamingTTS
-    primary = primary_type(sample_rate=44100, should_fail=True)
-    fallback = fallback_type(sample_rate=44100)
-    llm = LibreChatLLM(origin="http://core.test", auth=LibreChatAuth(
-        call_session_id="synthetic-call", call_secret="synthetic-secret"))
-    selected = []
-    wrapper = FallbackTTS(
-        attempts=[ProviderAttempt(label="primary", tts=primary),
-                  ProviderAttempt(label="fallback", tts=fallback)],
-        on_provider_attempt=lambda raw: llm.set_voice_native_streaming(
-            _tts_uses_native_streaming(raw)),
-        on_provider_selected=lambda label, raw: selected.append(label),
-    )
-    stream = wrapper.stream()
-    stream.push_text("Synthetic sentence.")
-    stream.end_input()
-    async with stream:
-        async for _ in stream:
-            pass
-    assert llm._voice_native_streaming is not primary_native
-    assert selected == ["fallback"]
-    # The live buffer reads the flag at each feed, even if constructed before stream creation.
-    buffer = _VoiceTtsDeltaBuffer(native_streaming=lambda: llm._voice_native_streaming)
-    next_stream = wrapper.stream()
-    assert llm._voice_native_streaming is primary_native
-    assert buffer.feed("I hear") == (["I "] if primary_native else [])
-    assert selected == ["fallback"]  # No new audible provider is claimed by the reset.
-    await next_stream.aclose()
+def test_current_attempt_capability_resets_before_repeated_stream_input(primary_native):
+    async def run():
+        primary_type = FakeStreamingTTS if primary_native else FakeTTS
+        fallback_type = FakeTTS if primary_native else FakeStreamingTTS
+        primary = primary_type(sample_rate=44100, should_fail=True)
+        fallback = fallback_type(sample_rate=44100)
+        llm = LibreChatLLM(origin="http://core.test", auth=LibreChatAuth(
+            call_session_id="synthetic-call", call_secret="synthetic-secret"))
+        selected = []
+        wrapper = FallbackTTS(
+            attempts=[ProviderAttempt(label="primary", tts=primary),
+                      ProviderAttempt(label="fallback", tts=fallback)],
+            on_provider_attempt=lambda raw: llm.set_voice_native_streaming(
+                _tts_uses_native_streaming(raw)),
+            on_provider_selected=lambda label, raw: selected.append(label),
+        )
+        stream = wrapper.stream()
+        stream.push_text("Synthetic sentence.")
+        stream.end_input()
+        async with stream:
+            async for _ in stream:
+                pass
+        assert llm._voice_native_streaming is not primary_native
+        assert selected == ["fallback"]
+        # The live buffer reads the flag at each feed, even if constructed before stream creation.
+        buffer = _VoiceTtsDeltaBuffer(native_streaming=lambda: llm._voice_native_streaming)
+        next_stream = wrapper.stream()
+        assert llm._voice_native_streaming is primary_native
+        assert buffer.feed("I hear") == (["I "] if primary_native else [])
+        assert selected == ["fallback"]  # No new audible provider is claimed by the reset.
+        await next_stream.aclose()
+
+    asyncio.run(run())
 
 
 class _ImmediateFailureStream(tts.SynthesizeStream):
@@ -197,43 +209,45 @@ class _ImmediateFailureTTS(FakeStreamingTTS):
         return _ImmediateFailureStream(tts=self, conn_options=conn_options)
 
 
-@pytest.mark.asyncio
 @pytest.mark.parametrize("fallback_native", [True, False])
-async def test_current_attempt_capability_changes_before_fallback_audio(fallback_native):
-    primary = _ImmediateFailureTTS(sample_rate=44100)
-    fallback_type = FakeStreamingTTS if fallback_native else FakeTTS
-    fallback = fallback_type(sample_rate=44100)
-    llm = LibreChatLLM(origin="http://core.test", auth=LibreChatAuth(
-        call_session_id="synthetic-call", call_secret="synthetic-secret"))
-    reached_fallback = asyncio.Event()
-    selected = []
+def test_current_attempt_capability_changes_before_fallback_audio(fallback_native):
+    async def run():
+        primary = _ImmediateFailureTTS(sample_rate=44100)
+        fallback_type = FakeStreamingTTS if fallback_native else FakeTTS
+        fallback = fallback_type(sample_rate=44100)
+        llm = LibreChatLLM(origin="http://core.test", auth=LibreChatAuth(
+            call_session_id="synthetic-call", call_secret="synthetic-secret"))
+        reached_fallback = asyncio.Event()
+        selected = []
 
-    def attempt(raw):
-        llm.set_voice_native_streaming(_tts_uses_native_streaming(raw))
-        if raw is fallback:
-            reached_fallback.set()
+        def attempt(raw):
+            llm.set_voice_native_streaming(_tts_uses_native_streaming(raw))
+            if raw is fallback:
+                reached_fallback.set()
 
-    wrapper = FallbackTTS(
-        attempts=[ProviderAttempt(label="primary", tts=primary),
-                  ProviderAttempt(label="fallback", tts=fallback)],
-        on_provider_attempt=attempt,
-        on_provider_selected=lambda label, raw: selected.append(label),
-    )
-    buffer = _VoiceTtsDeltaBuffer(native_streaming=lambda: llm._voice_native_streaming)
-    stream = wrapper.stream()
-    try:
-        await asyncio.wait_for(reached_fallback.wait(), timeout=1)
-        assert selected == []
-        assert llm._voice_native_streaming is fallback_native
-        assert buffer.feed("I hear") == (["I "] if fallback_native else [])
-        stream.push_text("Synthetic sentence.")
-        stream.end_input()
-        async with stream:
-            async for _ in stream:
-                pass
-        assert selected == ["fallback"]
-    finally:
-        await stream.aclose()
+        wrapper = FallbackTTS(
+            attempts=[ProviderAttempt(label="primary", tts=primary),
+                      ProviderAttempt(label="fallback", tts=fallback)],
+            on_provider_attempt=attempt,
+            on_provider_selected=lambda label, raw: selected.append(label),
+        )
+        buffer = _VoiceTtsDeltaBuffer(native_streaming=lambda: llm._voice_native_streaming)
+        stream = wrapper.stream()
+        try:
+            await asyncio.wait_for(reached_fallback.wait(), timeout=1)
+            assert selected == []
+            assert llm._voice_native_streaming is fallback_native
+            assert buffer.feed("I hear") == (["I "] if fallback_native else [])
+            stream.push_text("Synthetic sentence.")
+            stream.end_input()
+            async with stream:
+                async for _ in stream:
+                    pass
+            assert selected == ["fallback"]
+        finally:
+            await stream.aclose()
+
+    asyncio.run(run())
 
 
 @pytest.mark.parametrize("chunks,expected", [
@@ -463,6 +477,104 @@ def test_public_links_survive_display_while_only_tts_projects_speech():
         assert 'https://' not in "".join(spoken)
 
     asyncio.run(run())
+
+
+def test_raw_public_transmission_uses_separate_display_and_expressive_speech_nodes():
+    async def run():
+        chunks = ["<whis", "per>**Pub", "lic** 🟢</whisper> [Report]",
+                  "(https://example.invalid/_Section_/File?part=A_B)."]
+        raw = "".join(chunks)
+        spoken = []
+        async def source():
+            for value in chunks:
+                yield value
+        async def default_node(agent, text, settings):
+            async for value in text:
+                spoken.append(value)
+                yield value
+        llm = LibreChatLLM(origin="http://core.test", auth=LibreChatAuth(
+            call_session_id="synthetic-call", call_secret="synthetic-secret"),
+            voice_native_streaming=True)
+        llm.set_voice_provider("xai", accepts_inline_voice_controls=True)
+        agent = worker.ViventiumVoiceAgent(instructions="Synthetic", llm=llm)
+        displayed = "".join([value async for value in agent.transcription_node(source(), None)])
+        assert displayed == "Public 🟢 [Report](https://example.invalid/_Section_/File?part=A_B)."
+        with patch.object(worker.Agent.default, "tts_node", default_node):
+            async for _ in agent.tts_node(source(), None):
+                pass
+        assert "".join(spoken) == sanitize_voice_tts_text(raw, allow_voice_controls=True)
+        assert "<whisper>" in "".join(spoken)
+        assert "https://" not in "".join(spoken)
+    asyncio.run(run())
+
+
+def test_actual_display_node_preserves_every_formatting_and_url_cut():
+    cases = [
+        ("**Public**", "Public"),
+        ("<custom>Public</custom>", "Public"),
+        ("[report](https://example.test/_Section_?x=snake_case)",
+         "[report](https://example.test/_Section_?x=snake_case)"),
+        ("`**literal** <custom>`", "`**literal** <custom>`"),
+        ("https://example.test/_Section_?x=snake_case",
+         "https://example.test/_Section_?x=snake_case"),
+        ("2 < 3 and <", "2 < 3 and <"),
+        ("Read **Public** 🟢 now.", "Read Public 🟢 now."),
+        ("Use snake_case and `a_b` now.", "Use snake_case and `a_b` now."),
+        ("Read ``**literal** <custom>`` now.", "Read ``**literal** <custom>`` now."),
+        ("Read ```text\n<custom> **literal**\n``` now.",
+         "Read ```text\n<custom> **literal**\n``` now."),
+        ("Read:\n```text\n<custom> **literal**\n```\nDone.",
+         "Read:\n```text\n<custom> **literal**\n```\nDone."),
+        ("Read ``a `tick` **literal** <custom>`` now.",
+         "Read ``a `tick` **literal** <custom>`` now."),
+        ("Read ``unterminated `tick` **literal** <custom>",
+         "Read ``unterminated `tick` **literal** <custom>"),
+    ]
+    async def run():
+        agent = worker.ViventiumVoiceAgent(instructions="Synthetic")
+        for raw, expected in cases:
+            for chunks in [[raw[:cut], raw[cut:]] for cut in range(len(raw) + 1)] + [list(raw)]:
+                async def source():
+                    for chunk in chunks:
+                        yield chunk
+                actual = "".join([value async for value in agent.transcription_node(source(), None)])
+                assert actual.strip() == expected, (raw, chunks, actual)
+    asyncio.run(run())
+
+
+def test_display_node_keeps_ordinary_first_word_streaming_and_timed_fields():
+    async def run():
+        agent = worker.ViventiumVoiceAgent(instructions="Synthetic")
+        release = asyncio.Event()
+        async def source():
+            yield "Hello there"
+            await release.wait()
+            yield "."
+        stream = agent.transcription_node(source(), None)
+        assert await asyncio.wait_for(anext(stream), 1) == "Hello "
+        release.set()
+        assert "".join([value async for value in stream]) == "there."
+        original = worker.TimedString("<whisper>Public</whisper>", start_time=1, end_time=2,
+            confidence=0.9, start_time_offset=3, speaker_id="synthetic-speaker")
+        async def timed():
+            yield original
+        values = [value async for value in agent.transcription_node(timed(), None)]
+        assert len(values) == 1 and str(values[0]) == "Public"
+        assert isinstance(values[0], worker.TimedString)
+        for field in ("start_time", "end_time", "confidence", "start_time_offset", "speaker_id"):
+            assert getattr(values[0], field) == getattr(original, field)
+    asyncio.run(run())
+
+
+@pytest.mark.parametrize("native", [True, False])
+def test_shared_speech_buffer_holds_opaque_url_through_scheme_and_query(native):
+    buffer = _buffer(native=native)
+    pieces = []
+    for value in ("Visit https:", "//example.test/_Section_?", "x=snake_case", " now."):
+        pieces.extend(buffer.feed(value))
+    pieces.extend(buffer.finalize())
+    assert "".join(pieces) == "Visit link available now."
+    assert "https" not in "".join(pieces) and "snake_case" not in "".join(pieces)
 
 def test_pinned_xai_pushes_share_one_segment_until_end_input():
     async def run():

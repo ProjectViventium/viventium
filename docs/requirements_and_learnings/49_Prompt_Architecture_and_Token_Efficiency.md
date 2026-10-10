@@ -1128,6 +1128,11 @@ workload rather than a conscious-agent reasoning route.
   lineage contract; legacy frames that cannot prove effort or fallback reason remain unverified.
   Persistence and independent history readback hash the complete execution-route object, so a
   projected or replayed receipt cannot silently drop the added lineage.
+  The native-surface runner consumes the current structured `PromptFrameTraceTelemetry` metadata
+  from the existing Core debug log. It preserves hashed route identities, request and agent binding,
+  effort, fallback, layer hashes, and source hashes. Missing source identity or disagreement between
+  compiled and installed configuration remains blocked; the retired prompt-frame file sink is not
+  an evidence source.
 - Connected-launch evidence given to the semantic judge is receipt-bound and public-safe. Each
   execution reports whether a View / Steer URL was returned, a URL hash, the exact execution-receipt
   hash, and a binding hash over those two hashes. It never includes the raw URL, launch arguments, or
@@ -1812,3 +1817,16 @@ GOV-026: Every runtime prompt placeholder is declared. An undeclared or misspell
 GOV-027: Scheduling and GlassHive MCP cognition must be discoverable and usable by supported non-LibreChat agents/clients from server and tool contracts alone; do not copy a separate manual into each client.
 HARD-020: Prompt Workbench authentication material must not enter URLs, browser history, referrers, logs, or persistent `localStorage`.
 <!-- VIVENTIUM-STABLE-REQUIREMENT-DECLARATIONS:END -->
+
+### Native Profile MCP Access Facts
+
+The registered `worker.grok_mcp_tool_access` fact describes Grok's native `search_tool` and
+`use_tool` mechanism. The existing Grok command owner adds it to Worker rules or conversation
+System authority only for the registered profile with a nonempty authorized MCP projection and
+native tools enabled. It is emitted once, before the exact final Feeling authority tail. This
+fact does not select a tool or provider, require delegation, change permissions, or change the
+host's separate deferred `capability_describe` server contract. Managed missing prompt sources
+fail closed. Standalone execution gains no hidden inline fallback.
+If the declared tail does not match, retain the original authority, omit this advisory fact,
+and record only a boolean skip. The native launch receipt checks the complete registered
+composition and rejects any changed authority, fact, or tail.

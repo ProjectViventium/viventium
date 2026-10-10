@@ -1,5 +1,7 @@
 import asyncio
 import json
+import logging
+import sqlite3
 import sys
 import tempfile
 import types
@@ -13,7 +15,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from TelegramVivBot.utils.librechat_bridge import (
-    format_memory_receipt_text,
+    log_memory_receipt,
     TELEGRAM_CALLBACK_INTERRUPTED_NOTICE,
     _async_client_options_for_url,
     _bridge_error_event,
@@ -747,6 +749,32 @@ async def test_deliver_callback_sends_voice_audio_when_preference_gate_passes(mo
     assert captured["message"] == "hello"
     assert captured["parse_mode"] == "MarkdownV2"
     assert captured["voice_audio"] == b"voice-bytes"
+
+
+@pytest.mark.asyncio
+async def test_proactive_authored_memory_notice_quote_remains_conversational_speech(monkeypatch):
+    bridge = _make_bridge()
+    raw = "The earlier system notice said: 🧠 Saved to memory: preferences."
+    spoken, delivered = [], []
+    async def callback(_chat, text, *, parse_mode=None, voice_audio=None):
+        delivered.append((text, voice_audio))
+        return ["9001"]
+    fake_voice = types.ModuleType("utils.voice")
+    fake_voice.should_send_voice_reply = lambda **_kwargs: True
+    fake_tts = types.ModuleType("utils.tts")
+    async def synthesize(text, _convo, *, voice_route=None):
+        spoken.append(text)
+        return b"voice-bytes"
+    fake_tts.synthesize_speech = synthesize
+    monkeypatch.setitem(sys.modules, "config", types.SimpleNamespace(
+        Users=types.SimpleNamespace(get_config=lambda *_args: True)))
+    monkeypatch.setitem(sys.modules, "utils", types.ModuleType("utils"))
+    monkeypatch.setitem(sys.modules, "utils.voice", fake_voice)
+    monkeypatch.setitem(sys.modules, "utils.tts", fake_tts)
+    bridge.set_on_message_callback(callback)
+    await bridge._deliver_callback(123, raw, preference_convo_id="123", raw_message=raw)
+    assert spoken == [raw]
+    assert delivered == [(raw, b"voice-bytes")]
 
 
 @pytest.mark.asyncio
@@ -2670,14 +2698,48 @@ async def test_stream_response_schedules_glasshive_followup_when_tool_call_strea
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("memory_receipt", [None, {"status": "failed", "keys": [], "errorType": "writer_unavailable"}])
-async def test_stream_response_text_attachments_and_memory_receipt(monkeypatch, memory_receipt):
+@pytest.mark.parametrize("memory_receipt,cleanup_locked,writer_scheduled", [
+    (None, False, False), ({"status": "pending"}, False, False),
+    ({"status": "saved", "keys": ["preferences"]}, False, False), ({"status": "unchanged"}, False, False),
+    ({"status": "failed", "keys": [], "errorType": "writer_unavailable"}, False, False),
+    ({"status": "partial", "keys": ["preferences"], "errorType": "provider_auth"}, False, False),
+    ({"status": "uncertain", "errorType": "writer_interrupted"}, False, False),
+    ({"status": "saved", "keys": ["preferences"]}, sqlite3.OperationalError, False),
+    ({"status": "saved", "keys": ["preferences"]}, PermissionError, False),
+    ({"status": "pending"}, sqlite3.OperationalError, True),
+    ({"status": "pending"}, PermissionError, True),
+])
+@pytest.mark.parametrize("authored", ["Hello", "You asked about the notice: 🧠 Saved to memory: preferences."])
+async def test_stream_response_preserves_authored_text_and_files_but_never_speaks_receipt(
+    monkeypatch, memory_receipt, cleanup_locked, writer_scheduled, authored, caplog
+):
     bridge = _make_bridge()
+    caplog.set_level(logging.INFO)
+    disposition = {"version": 1, "audio": "eligible", "required": True,
+        "valid": True, "source": "model"}
+    original_save = bridge._cortex_ack_store.save_memory_poll
+    save_calls = []
+    if cleanup_locked:
+        stream_id, chat_id = "stream-text-attach", "333"
+        _bind_poll_delivery_authority(bridge, stream_id=stream_id, telegram_chat_id=chat_id)
+        bridge._response_message_ids[stream_id] = "answer"
+        bridge._conversation_by_stream[stream_id] = "conversation"
+        bridge._memory_receipt_pending.add(stream_id)
+        bridge._memory_poll_cursors.add(stream_id)
+        if not writer_scheduled:
+            bridge._save_memory_poll(stream_id, chat_id)
+        bridge._delivery_disposition_required_by_stream[stream_id] = True
+        def save_locked_once(*args):
+            save_calls.append(args)
+            if len(save_calls) == 1:
+                raise cleanup_locked("synthetic-private-lock-detail")
+            return original_save(*args)
+        monkeypatch.setattr(bridge._cortex_ack_store, "save_memory_poll", save_locked_once)
 
     payloads = [
         {
             "event": "on_message_delta",
-            "data": {"delta": {"content": [{"type": "text", "text": "Hello"}]}},
+            "data": {"delta": {"content": [{"type": "text", "text": authored}]}},
         },
         {
             "final": True,
@@ -2688,6 +2750,12 @@ async def test_stream_response_text_attachments_and_memory_receipt(monkeypatch, 
             },
         },
     ]
+
+    if writer_scheduled:
+        payloads[-1]["memoryWriterScheduled"] = True
+        payloads[-1]["responseMessage"].update(messageId="answer", conversationId="conversation")
+    if cleanup_locked:
+        payloads[-1]["metadata"] = {"viventium": {"deliveryDisposition": disposition}}
 
     async def fake_iter_sse_json_events(*, chunk_iter):
         _ = chunk_iter
@@ -2734,12 +2802,59 @@ async def test_stream_response_text_attachments_and_memory_receipt(monkeypatch, 
 
     chunks = [chunk async for chunk in bridge._stream_response("stream-text-attach", "333")]
 
-    assert chunks == ["Hello", *(["\n\n" + format_memory_receipt_text(memory_receipt)] if memory_receipt else []),
+    assert chunks == [authored,
+        *([{"type": "delivery_disposition", "delivery_disposition": disposition,
+            "required": True, "present": True}] if cleanup_locked else []),
         {
             "type": "attachment",
             "attachment": {"file_id": "file-3", "filename": "z.txt", "filepath": "/files/u/z.txt"},
         },
     ]
+    spoken, delivered = [], []
+    fake_config = types.SimpleNamespace(Users=types.SimpleNamespace(get_config=lambda *_args: True))
+    fake_voice = types.ModuleType("utils.voice")
+    fake_voice.should_send_voice_reply = lambda **_kwargs: True
+    fake_tts = types.ModuleType("utils.tts")
+    async def synthesize(text, _convo, *, voice_route=None):
+        spoken.append(text)
+        return b"voice-bytes"
+    async def on_message(_chat, text, *, parse_mode=None, voice_audio=None):
+        delivered.append((text, voice_audio))
+        return ["9001"]
+    fake_tts.synthesize_speech = synthesize
+    monkeypatch.setitem(sys.modules, "config", fake_config)
+    monkeypatch.setitem(sys.modules, "utils", types.ModuleType("utils"))
+    monkeypatch.setitem(sys.modules, "utils.voice", fake_voice)
+    monkeypatch.setitem(sys.modules, "utils.tts", fake_tts)
+    bridge.set_on_message_callback(on_message)
+    text = "".join(chunk for chunk in chunks if isinstance(chunk, str))
+    await bridge._deliver_callback("333", text, preference_convo_id="333", raw_message=text)
+    assert spoken == [authored]
+    assert delivered == [(authored, b"voice-bytes")]
+
+    if cleanup_locked:
+        assert len(save_calls) == 1  # No Main retry or attachment replay after local cursor failure.
+        assert (stream_id in bridge._memory_receipt_pending) is writer_scheduled
+        assert (stream_id in bridge._memory_receipt_sent) is not writer_scheduled
+        assert len(bridge._cortex_ack_store.pending_memory_polls(bridge._memory_poll_scope())) == (0 if writer_scheduled else 1)
+        assert "cursor=retry" in caplog.text and cleanup_locked.__name__ in caplog.text
+        assert "synthetic-private-lock-detail" not in caplog.text
+        bridge.set_on_message_callback(lambda *args, **kwargs: pytest.fail("memory reached Telegram"))
+        if writer_scheduled:
+            terminal = {"status": "saved", "keys": ["preferences"]}
+            await bridge._poll_memory_receipt(stream_id, chat_id, {"memoryReceipt": terminal})
+            _assert_memory_observed_shared_cursor(bridge, stream_id)
+        async def fetched(**kwargs):
+            return {"memoryReceipt": memory_receipt, "followUp": {"text": "{NTA}"}}
+        bridge._fetch_followup_state = fetched
+        bridge.followup_interval_s = .01
+        bridge.followup_timeout_s = 1
+        bridge.followup_grace_s = .01
+        bridge._set_active_stream(chat_id, stream_id)
+        await bridge._poll_for_followup(stream_id=stream_id, chat_id=chat_id)
+        assert spoken == [authored]  # The shared owner finishes without memory speech/replay.
+        assert bridge._cortex_ack_store.pending_memory_polls(bridge._memory_poll_scope()) == []
+
 
 
 @pytest.mark.asyncio
@@ -7017,26 +7132,33 @@ async def test_glasshive_terminal_delivery_still_requires_terminal_permit():
     assert marked == [("ghcd_terminal_failed", "sent", "", "")]
 
 
-def test_memory_receipt_text_renders_only_durable_truth():
-    assert format_memory_receipt_text(None) == ""
-    assert format_memory_receipt_text({"status": "pending", "keys": []}) == ""
-    assert format_memory_receipt_text({"status": "unchanged", "keys": []}) == ""
-    assert "Some changes may already be saved" in format_memory_receipt_text({"status": "uncertain", "keys": []})
-    assert format_memory_receipt_text({"status": "saved", "keys": []}) == ""
-    assert format_memory_receipt_text({"status": "saved", "keys": ["core", "preferences"]}) == (
-        "🧠 Saved to memory: core, preferences"
-    )
-    failed = format_memory_receipt_text(
-        {"status": "failed", "keys": [], "errorType": "usage_limit_reached", "message": "private"}
-    )
-    assert failed == "⚠️ Not saved to memory.\nProvider usage limit reached. Check usage or wait for the limit to reset."
-    assert "private" not in failed
-    partial = format_memory_receipt_text({"status": "partial", "keys": ["core"], "errorType": "provider_unavailable"})
-    assert "partially saved" in partial and "saved: core" in partial
+@pytest.mark.parametrize("receipt,terminal", [
+    (None, False), ("malformed", False), ({}, False),
+    ({"status": "pending", "keys": []}, False),
+    ({"status": "unknown", "keys": []}, False),
+    ({"status": "unchanged", "keys": []}, True),
+    ({"status": "saved", "keys": []}, True),
+    ({"status": "saved", "keys": ["synthetic-private-key"]}, True),
+    ({"status": "failed", "errorType": "writer_unavailable"}, True),
+    ({"status": "partial", "keys": ["synthetic-private-key"], "errorType": "provider_auth"}, True),
+    ({"status": "uncertain", "errorType": "writer_interrupted"}, True),
+])
+def test_memory_receipt_is_a_terminal_metadata_observation_only(caplog, receipt, terminal):
+    caplog.set_level(logging.INFO)
+    assert log_memory_receipt(receipt, stream_id="synthetic-memory-stream") is terminal
+    if terminal:
+        assert len(caplog.records) == 1
+        assert f"status={receipt['status']}" in caplog.text
+        assert "key_count=" in caplog.text
+        assert "error_types=" in caplog.text
+    else:
+        assert caplog.records == []
+    assert "synthetic-private-key" not in caplog.text
 
 
 @pytest.mark.asyncio
-async def test_followup_poll_surfaces_the_durable_memory_receipt_once_and_keeps_polling():
+async def test_followup_poll_logs_memory_once_and_keeps_worker_delivery(caplog):
+    caplog.set_level(logging.INFO)
     bridge = _make_bridge()
     delivered = []
     states = [
@@ -7073,11 +7195,8 @@ async def test_followup_poll_surfaces_the_durable_memory_receipt_once_and_keeps_
     await asyncio.wait_for(bridge._poll_for_followup(stream_id=stream_id, chat_id=chat_id), timeout=2.0)
 
     texts = [text for _chat, text, _mode in delivered]
-    # Exactly one receipt for the turn, and the Phase B follow-up still reaches the user.
-    assert texts.count("🧠 Saved to memory: preferences") == 1
-    assert "Follow-up text." in texts
-    # The receipt never displaces the follow-up: it is delivered on the poll pass that saw it.
-    assert texts.index("🧠 Saved to memory: preferences") < texts.index("Follow-up text.")
+    assert texts == ["Follow-up text."]
+    assert sum("status=saved" in record.getMessage() for record in caplog.records) == 1
 
 
 @pytest.mark.asyncio
@@ -7153,46 +7272,37 @@ async def test_memory_writer_anchor_arms_the_bounded_followup_poll_for_an_ordina
     assert scheduled == expected
 
 
-def test_memory_receipt_keeps_primary_limit_and_fallback_sign_in_distinct():
-    receipt = {"status": "failed", "keys": [], "errorType": "provider_auth", "failures": [
+@pytest.mark.parametrize("status", ["failed", "partial", "uncertain"])
+def test_memory_receipt_logs_ordered_typed_failures_without_private_fields(caplog, status):
+    caplog.set_level(logging.INFO)
+    receipt = {"status": status, "keys": ["synthetic-private-key"], "errorType": "provider_auth", "failures": [
         {"errorType": "usage_limit_reached", "provider": "openAI", "providerLabel": "OpenAI",
-         "message": "Bearer synthetic-private-token"},
-        {"errorType": "provider_auth", "provider": "anthropic", "providerLabel": "Anthropic",
-         "accountId": "synthetic-private-account"},
-    ]}
-    text = format_memory_receipt_text(receipt)
-    assert "OpenAI usage limit reached. Check usage or wait for the limit to reset." in text
-    assert "Anthropic needs sign-in. Reconnect it in Connected Accounts." in text
-    assert "synthetic-private" not in text and "Bearer" not in text
-    assert text.startswith("⚠️ Not saved to memory.")
-
-
-def test_memory_receipt_uncertainty_keeps_provider_failures():
-    text = format_memory_receipt_text({"status": "uncertain", "keys": [], "failures": [
-        {"errorType": "provider_rate_limited", "provider": "openAI", "providerLabel": "OpenAI"},
+         "message": "Bearer synthetic-private-token", "accountId": "synthetic-private-account"},
         {"errorType": "provider_auth", "provider": "anthropic", "providerLabel": "Anthropic"},
-    ]})
-    assert "Some changes may already be saved" in text
-    assert "OpenAI is temporarily unavailable. Try again shortly." in text
-    assert "Anthropic needs sign-in" in text
-    assert "Not saved to memory" not in text
+    ], "values": {"synthetic-private-key": "synthetic-private-value"}}
+    assert log_memory_receipt(receipt, stream_id="synthetic-memory-stream") is True
+    assert f"status={status}" in caplog.text
+    assert "key_count=1" in caplog.text
+    assert "usage_limit_reached" in caplog.text and "provider_auth" in caplog.text
+    assert caplog.text.index("usage_limit_reached") < caplog.text.index("provider_auth")
+    for private in ("synthetic-private", "Bearer", "OpenAI", "Anthropic"):
+        assert private not in caplog.text
 
 
-def test_memory_receipt_text_states_only_what_happened():
-    """Nothing schedules a retry here, so the wording may not promise one."""
-    failed = format_memory_receipt_text(
-        {"status": "failed", "keys": [], "errorType": "writer_exception"}
-    )
-    assert failed == "⚠️ Not saved to memory.\nThe memory writer failed."
-    assert "retry" not in failed.lower()
+def test_memory_receipt_unknown_failure_logs_safe_type_only(caplog):
+    caplog.set_level(logging.INFO)
+    assert log_memory_receipt({"status": "failed", "keys": [],
+        "errorType": "Bearer synthetic-private-token"}, stream_id="synthetic-memory-stream") is True
+    assert "status=failed" in caplog.text and "unknown" in caplog.text
+    assert "Bearer" not in caplog.text and "synthetic-private" not in caplog.text
 
 
 @pytest.mark.asyncio
-async def test_memory_receipt_is_retried_until_delivery_succeeds_and_then_never_repeats():
-    """A refused send must not consume the once-only mark, and per-stream state is cleaned."""
+async def test_repeated_memory_receipt_is_logged_once_without_channel_delivery(caplog):
+    """Memory bookkeeping does not enter delivery; the real worker still does."""
+    caplog.set_level(logging.INFO)
     bridge = _make_bridge()
     attempts = []
-    outcomes = [False, True]
     receipt = {"status": "saved", "keys": ["preferences"]}
     states = [
         {"cortexParts": [], "followUp": None, "memoryReceipt": receipt},
@@ -7218,12 +7328,9 @@ async def test_memory_receipt_is_retried_until_delivery_succeeds_and_then_never_
         if before_side_effect is not None:
             await before_side_effect()
         attempts.append(text)
-        ok = True
-        if text.startswith("\U0001f9e0"):
-            ok = outcomes.pop(0) if outcomes else True
         if return_receipt:
-            return {"sent": ok, "message_ids": ["9001"] if ok else []}
-        return ok
+            return {"sent": True, "message_ids": ["9001"]}
+        return True
 
     bridge.set_on_message_callback(on_message)
     bridge.followup_interval_s = 0.01
@@ -7242,15 +7349,10 @@ async def test_memory_receipt_is_retried_until_delivery_succeeds_and_then_never_
         bridge._poll_for_followup(stream_id=stream_id, chat_id=chat_id), timeout=2.0
     )
 
-    saved_text = "\U0001f9e0 Saved to memory: preferences"
-    receipts = [text for text in attempts if text.startswith("\U0001f9e0")]
-    # Refused once, retried on the next pass, then never repeated.
-    assert receipts == [saved_text, saved_text]
-    # The receipt never displaces the Phase B follow-up.
-    assert "Follow-up text." in attempts
-    assert attempts.index(saved_text) < attempts.index("Follow-up text.")
-    # Per-stream dedupe state does not leak past the poll.
+    assert attempts == ["Follow-up text."]
+    assert sum("status=saved" in record.getMessage() for record in caplog.records) == 1
     assert stream_id not in bridge._memory_receipt_sent
+
 
 
 @pytest.mark.asyncio
@@ -7260,7 +7362,8 @@ async def test_memory_receipt_is_retried_until_delivery_succeeds_and_then_never_
     {"followUp": {"messageId": "followup", "text": "{NTA}"}},
     {"followUpDecision": {"result": "suppressed"}},
 ])
-async def test_memory_receipt_waits_after_worker_terminal_and_retries_refused_delivery(completion):
+async def test_memory_receipt_waits_after_worker_terminal_and_finishes_silently(completion, caplog):
+    caplog.set_level(logging.INFO)
     bridge = _make_bridge()
     stream_id, chat_id = "memory-after-worker", "111"
     _bind_poll_delivery_authority(bridge, stream_id=stream_id, telegram_chat_id=chat_id)
@@ -7293,9 +7396,55 @@ async def test_memory_receipt_waits_after_worker_terminal_and_retries_refused_de
     bridge._fetch_followup_state = fetch
     bridge._send_followup_text = send
     await bridge._poll_for_followup(stream_id=stream_id, chat_id=chat_id)
-    assert receipts == ["🧠 Saved to memory: preferences"] * 2
-    assert len(fetches) >= 3
-    assert worker_texts.count("Worker finished.") <= 1
+    assert receipts == []
+    assert sum("status=saved" in record.getMessage() for record in caplog.records) == 1
+    assert len(fetches) >= 2
+    expected_worker = completion.get("canonicalText") == "Worker finished." or completion.get("followUp", {}).get("text") == "Worker finished."
+    assert worker_texts == (["Worker finished."] if expected_worker else [])
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("fault", [sqlite3.OperationalError, PermissionError])
+async def test_memory_cursor_cleanup_lock_does_not_suppress_same_poll_worker_result(monkeypatch, caplog, fault):
+    bridge = _make_bridge()
+    caplog.set_level(logging.INFO)
+    stream_id, chat_id = "memory-worker-lock", "111"
+    _bind_poll_delivery_authority(bridge, stream_id=stream_id, telegram_chat_id=chat_id)
+    bridge._response_message_ids[stream_id] = "answer"
+    bridge._conversation_by_stream[stream_id] = "conversation"
+    bridge._set_active_stream(chat_id, stream_id)
+    bridge._memory_receipt_pending.add(stream_id)
+    bridge._memory_poll_cursors.add(stream_id)
+    bridge._save_memory_poll(stream_id, chat_id)
+    bridge.followup_interval_s = .01
+    bridge.followup_timeout_s = 1
+    bridge.followup_grace_s = .01
+    bridge.set_on_message_callback(lambda *args, **kwargs: ["9001"])
+    original_save = bridge._cortex_ack_store.save_memory_poll
+    save_calls, worker_texts = [], []
+    def finish(*args):
+        save_calls.append(args)
+        if len(save_calls) == 1:
+            raise fault("synthetic-private-lock-detail")
+        return original_save(*args)
+    monkeypatch.setattr(bridge._cortex_ack_store, "save_memory_poll", finish)
+    async def fetch(**kwargs):
+        return {"cortexParts": [], "memoryReceipt": {"status": "saved", "keys": ["preferences"]},
+            "followUp": {"messageId": "worker-answer", "text": "Worker finished."}}
+    async def send(_chat, text, **kwargs):
+        # The worker must arrive while memory cleanup is still pending, on the same first pass.
+        assert len(save_calls) == 1
+        assert stream_id not in bridge._memory_receipt_pending
+        assert stream_id in bridge._memory_receipt_sent
+        worker_texts.append(text)
+        return {"sent": True, "message_ids": ["9001"]} if kwargs.get("return_receipt") else True
+    bridge._fetch_followup_state = fetch
+    bridge._send_followup_text = send
+    await bridge._poll_for_followup(stream_id=stream_id, chat_id=chat_id)
+    assert worker_texts == ["Worker finished."]
+    assert len(save_calls) >= 1
+    assert "cursor=retry" in caplog.text and "synthetic-private-lock-detail" not in caplog.text
+    assert bridge._cortex_ack_store.pending_memory_polls(bridge._memory_poll_scope()) == []
 
 
 @pytest.mark.asyncio
@@ -7304,7 +7453,8 @@ async def test_memory_receipt_waits_after_worker_terminal_and_retries_refused_de
     {"status": "failed", "message": "Memory provider unavailable."},
     {"status": "unchanged"},
 ])
-async def test_memory_receipt_restart_retains_identity_and_worker_completion(terminal):
+async def test_memory_receipt_restart_retains_identity_and_worker_completion(terminal, caplog):
+    caplog.set_level(logging.INFO)
     bridge = _make_bridge()
     stream_id, chat_id = "memory-restart", "111"
     _bind_poll_delivery_authority(bridge, stream_id=stream_id, telegram_chat_id=chat_id)
@@ -7351,10 +7501,54 @@ async def test_memory_receipt_restart_retains_identity_and_worker_completion(ter
     assert restarted._poll_delivery_authority(stream_id)["source_sequence"] == 43
     task = restarted._followup_task_by_stream[stream_id]
     await task
-    expected = format_memory_receipt_text(terminal)
-    assert deliveries == ([expected] if expected else [])
+    assert deliveries == []
+    assert sum(f"status={terminal['status']}" in record.getMessage() for record in caplog.records) == 1
+    restarted._resume_memory_polls()
+    assert sum(f"status={terminal['status']}" in record.getMessage() for record in caplog.records) == 1
     assert restarted._cortex_ack_store.pending_memory_polls(restarted._memory_poll_scope()) == []
     assert stream_id not in restarted._response_message_ids
+
+
+@pytest.mark.asyncio
+async def test_terminal_memory_observation_survives_restart_before_worker_result(caplog):
+    bridge = _make_bridge()
+    caplog.set_level(logging.INFO)
+    stream_id, chat_id = "terminal-memory-pending-worker", "111"
+    _bind_poll_delivery_authority(bridge, stream_id=stream_id, telegram_chat_id=chat_id, source_sequence=43)
+    bridge._response_message_ids[stream_id] = "answer"
+    bridge._conversation_by_stream[stream_id] = "conversation"
+    bridge._memory_receipt_pending.add(stream_id)
+    bridge._memory_poll_cursors.add(stream_id)
+    bridge._save_memory_poll(stream_id, chat_id)
+    receipt = {"status": "saved", "keys": ["preferences"]}
+    await bridge._poll_memory_receipt(stream_id, chat_id, {"memoryReceipt": receipt})
+    cursor = _assert_memory_observed_shared_cursor(bridge, stream_id)
+    assert cursor["followup_sent"] is False
+    assert cursor["identity"]["telegram_message_id"] == "43"
+    restarted = _make_bridge()
+    restarted._cortex_ack_store = _CortexTelegramAckStore(bridge._cortex_ack_store.path)
+    _bind_poll_delivery_authority(restarted, stream_id=stream_id, telegram_chat_id=chat_id, source_sequence=43)
+    delivered = []
+    async def callback(_chat, text, **kwargs):
+        delivered.append(text)
+        return ["9001"]
+    async def fetched(**kwargs):
+        assert kwargs["message_id"] == "answer" and kwargs["conversation_id"] == "conversation"
+        assert restarted._poll_delivery_authority(stream_id)["source_sequence"] == 43
+        return {"cortexParts": [], "memoryReceipt": receipt,
+            "followUp": {"messageId": "worker-answer", "text": "Worker completed after restart."}}
+    restarted.set_on_message_callback(callback)
+    restarted._fetch_followup_state = fetched
+    restarted.followup_interval_s = .01
+    restarted.followup_timeout_s = 1
+    restarted.followup_grace_s = .01
+    restarted._resume_memory_polls()
+    await restarted._followup_task_by_stream[stream_id]
+    assert delivered == ["Worker completed after restart."]
+    assert sum("status=saved" in record.getMessage() for record in caplog.records) == 1
+    assert restarted._cortex_ack_store.pending_memory_polls(restarted._memory_poll_scope()) == []
+    restarted._resume_memory_polls()
+    assert delivered == ["Worker completed after restart."]
 
 
 @pytest.mark.asyncio
@@ -7377,30 +7571,46 @@ async def test_memory_receipt_restart_never_replays_uncertain_transport(interrup
     assert restarted._cortex_ack_store.pending_memory_polls(restarted._memory_poll_scope()) == []
 
 
+def _assert_memory_observed_shared_cursor(bridge, stream_id):
+    rows = bridge._cortex_ack_store.pending_memory_polls(bridge._memory_poll_scope())
+    assert len(rows) == 1 and rows[0][0] == stream_id
+    assert rows[0][1]["memory_sent"] is True
+    assert stream_id not in bridge._memory_receipt_pending
+    return rows[0][1]
+
+
 @pytest.mark.asyncio
-@pytest.mark.parametrize("outcome", ["refused", "exception", "no_receipt", "success"])
-async def test_memory_receipt_transport_distinguishes_refusal_from_lost_ack(outcome):
+@pytest.mark.parametrize("status", ["saved", "unchanged", "failed", "partial", "uncertain"])
+async def test_terminal_memory_receipt_cannot_enter_callback_or_tts(monkeypatch, caplog, status):
     bridge = _make_bridge()
-    stream_id = "memory-transport"
-    _bind_poll_delivery_authority(bridge, stream_id=stream_id, telegram_chat_id="111")
+    caplog.set_level(logging.INFO)
+    stream_id, chat_id = "memory-terminal", "111"
+    _bind_poll_delivery_authority(bridge, stream_id=stream_id, telegram_chat_id=chat_id)
     bridge._response_message_ids[stream_id] = "answer"
     bridge._conversation_by_stream[stream_id] = "conversation"
-
-    async def callback(*args, **kwargs):
-        if outcome == "exception":
-            raise RuntimeError("acknowledgement lost")
-        if outcome == "refused":
-            return False
-        return ["telegram-id"] if outcome == "success" else None
-
-    bridge.set_on_message_callback(callback)
-    await bridge._poll_memory_receipt(stream_id, "111", {"memoryReceipt": {"status": "saved", "keys": ["preferences"]}})
-    assert bridge._memory_delivery_state[stream_id] == {
-        "refused": "pending", "exception": "delivery_unknown", "no_receipt": "delivery_unknown", "success": "sent",
-    }[outcome]
-    cursor = bridge._cortex_ack_store.pending_memory_polls(bridge._memory_poll_scope())[0][1]
-    assert "preferences" not in json.dumps(cursor)
-    assert cursor["memory_sent"] is (outcome == "success")
+    bridge._memory_receipt_pending.add(stream_id)
+    bridge._memory_poll_cursors.add(stream_id)
+    bridge._save_memory_poll(stream_id, chat_id)
+    bridge.set_on_message_callback(lambda *args, **kwargs: pytest.fail("memory reached Telegram"))
+    async def no_tts(*args, **kwargs):
+        pytest.fail("memory reached TTS")
+    fake_tts = types.ModuleType("utils.tts")
+    fake_tts.synthesize_speech = no_tts
+    fake_voice = types.ModuleType("utils.voice")
+    fake_voice.should_send_voice_reply = lambda **_kwargs: True
+    monkeypatch.setitem(sys.modules, "config", types.SimpleNamespace(
+        Users=types.SimpleNamespace(get_config=lambda *_args: True)))
+    monkeypatch.setitem(sys.modules, "utils", types.ModuleType("utils"))
+    monkeypatch.setitem(sys.modules, "utils.voice", fake_voice)
+    monkeypatch.setitem(sys.modules, "utils.tts", fake_tts)
+    receipt = {"status": status, "keys": ["synthetic-private-key"], "errorType": "provider_auth"}
+    await bridge._poll_memory_receipt(stream_id, chat_id, {"memoryReceipt": receipt})
+    await bridge._poll_memory_receipt(stream_id, chat_id, {"memoryReceipt": receipt})
+    assert sum(f"status={status}" in record.getMessage() for record in caplog.records) == 1
+    assert "synthetic-private-key" not in caplog.text
+    assert stream_id in bridge._memory_receipt_sent
+    assert stream_id not in bridge._memory_receipt_pending
+    _assert_memory_observed_shared_cursor(bridge, stream_id)
 
 
 def _memory_cursor_for_missing_receipt(bridge, monkeypatch, *, created_at=100.0):
@@ -7462,7 +7672,8 @@ async def _record_memory_cursor_ack(
 
 
 @pytest.mark.asyncio
-async def test_memory_cursor_missing_receipt_expires_once_after_its_committed_ack(monkeypatch):
+async def test_memory_cursor_missing_receipt_logs_uncertainty_once_after_its_committed_ack(monkeypatch, caplog):
+    caplog.set_level(logging.INFO)
     bridge = _make_bridge()
     stream_id, chat_id, clock = _memory_cursor_for_missing_receipt(bridge, monkeypatch)
     delivered = []
@@ -7482,12 +7693,10 @@ async def test_memory_cursor_missing_receipt_expires_once_after_its_committed_ac
     clock[0] += 0.2
     await bridge._poll_memory_receipt(stream_id, chat_id, {"memoryReceipt": None})
     await bridge._poll_memory_receipt(stream_id, chat_id, {"memoryReceipt": None})
-    assert delivered == [format_memory_receipt_text({
-        "status": "uncertain", "errorType": "writer_interrupted",
-    })]
-    assert "Not saved" not in delivered[0] and "Saved to memory" not in delivered[0]
-    assert "Check Memories before retrying." in delivered[0]
-    assert bridge._cortex_ack_store.pending_memory_polls(bridge._memory_poll_scope()) == []
+    assert delivered == []
+    assert sum("status=uncertain" in record.getMessage() for record in caplog.records) == 1
+    assert "writer_interrupted" in caplog.text
+    _assert_memory_observed_shared_cursor(bridge, stream_id)
     assert stream_id not in bridge._memory_receipt_pending
 
 
@@ -7527,7 +7736,7 @@ async def test_memory_cursor_ack_and_creation_survive_receiver_restart(monkeypat
     restarted._resume_memory_polls()
     await restarted._followup_task_by_stream[stream_id]
     restarted._resume_memory_polls()
-    assert len(deliveries) == 1
+    assert deliveries == []
     assert restarted._cortex_ack_store.pending_memory_polls(restarted._memory_poll_scope()) == []
 
 
@@ -7558,8 +7767,8 @@ async def test_memory_cursor_core_restart_before_ack_retains_safe_unaccepted_sta
     assert await _record_memory_cursor_ack(restarted, monkeypatch) == "recorded"
     clock[0] += max(restarted.followup_timeout_s, 1.0) + 1.0
     await restarted._poll_memory_receipt(stream_id, chat_id, {"memoryReceipt": None})
-    assert len(deliveries) == 1
-    assert restarted._cortex_ack_store.pending_memory_polls(restarted._memory_poll_scope()) == []
+    assert deliveries == []
+    _assert_memory_observed_shared_cursor(restarted, stream_id)
 
 
 @pytest.mark.asyncio
@@ -7624,8 +7833,8 @@ async def test_memory_cursor_exact_promoted_parent_commit_is_main_acceptance(mon
     })
     clock[0] += 3.0
     await bridge._poll_memory_receipt(stream_id, chat_id, {"memoryReceipt": None})
-    assert len(delivered) == 1
-    assert bridge._cortex_ack_store.pending_memory_polls(bridge._memory_poll_scope()) == []
+    assert delivered == []
+    _assert_memory_observed_shared_cursor(bridge, stream_id)
 
 
 @pytest.mark.asyncio
@@ -7648,7 +7857,9 @@ async def test_memory_cursor_pending_writer_and_late_success_are_not_expired(mon
     assert deliveries == []
     assert stream_id in bridge._memory_receipt_pending
     await bridge._poll_memory_receipt(stream_id, chat_id, {"memoryReceipt": {"status": "saved", "keys": ["preferences"]}})
-    assert deliveries == ["🧠 Saved to memory: preferences"]
+    assert deliveries == []
+    assert stream_id not in bridge._memory_receipt_pending
+    _assert_memory_observed_shared_cursor(bridge, stream_id)
 
 
 @pytest.mark.asyncio
@@ -7686,33 +7897,42 @@ async def test_memory_cursor_expired_uncertainty_is_terminal_without_transport_r
     restarted = _make_bridge()
     restarted._cortex_ack_store = _CortexTelegramAckStore(bridge._cortex_ack_store.path)
     restarted.set_on_message_callback(lambda *args, **kwargs: pytest.fail("receipt replayed"))
+    async def fetch(**kwargs):
+        return {"memoryReceipt": None, "followUp": {"text": "{NTA}"}}
+    restarted._fetch_followup_state = fetch
+    restarted.followup_interval_s = .01
+    restarted.followup_timeout_s = 1
+    restarted.followup_grace_s = .01
     restarted._resume_memory_polls()
-    assert len(calls) == 1
+    await restarted._followup_task_by_stream[stream_id]
+    assert calls == []
     assert restarted._followup_task_by_stream == {}
     assert restarted._cortex_ack_store.pending_memory_polls(restarted._memory_poll_scope()) == []
 
 
 @pytest.mark.asyncio
-async def test_memory_cursor_expired_notice_survives_interruption_during_transport_without_replay(monkeypatch):
+async def test_memory_cursor_expiry_never_calls_transport_and_restart_cannot_replay(monkeypatch, caplog):
     bridge = _make_bridge()
+    caplog.set_level(logging.INFO)
     stream_id, chat_id, clock = _memory_cursor_for_missing_receipt(bridge, monkeypatch)
-
-    async def send(_chat, text, **kwargs):
-        # Telegram may have accepted the notice before the receiver process stops.
-        cursor = bridge._cortex_ack_store.pending_memory_polls(bridge._memory_poll_scope())[0][1]
-        assert cursor["delivery_state"] == "sending"
-        assert cursor["missing_receipt_terminal"] is True
-        raise asyncio.CancelledError
-
+    async def send(*args, **kwargs):
+        pytest.fail("internal memory status entered transport")
     bridge._send_followup_text = send
     await _record_memory_cursor_ack(bridge, monkeypatch)
     clock[0] += 3.0
-    with pytest.raises(asyncio.CancelledError):
-        await bridge._poll_memory_receipt(stream_id, chat_id, {"memoryReceipt": None})
+    await bridge._poll_memory_receipt(stream_id, chat_id, {"memoryReceipt": None})
+    assert sum("status=uncertain" in record.getMessage() for record in caplog.records) == 1
     restarted = _make_bridge()
     restarted._cortex_ack_store = _CortexTelegramAckStore(bridge._cortex_ack_store.path)
-    restarted.set_on_message_callback(lambda *args, **kwargs: pytest.fail("uncertain receipt replayed"))
+    restarted.set_on_message_callback(lambda *args, **kwargs: pytest.fail("internal status replayed"))
+    async def fetch(**kwargs):
+        return {"memoryReceipt": None, "followUp": {"text": "{NTA}"}}
+    restarted._fetch_followup_state = fetch
+    restarted.followup_interval_s = .01
+    restarted.followup_timeout_s = 1
+    restarted.followup_grace_s = .01
     restarted._resume_memory_polls()
+    await restarted._followup_task_by_stream[stream_id]
     assert restarted._followup_task_by_stream == {}
     assert restarted._cortex_ack_store.pending_memory_polls(restarted._memory_poll_scope()) == []
 
@@ -7794,7 +8014,8 @@ async def test_memory_cursor_legacy_admitted_writer_survives_window_offline_and_
 
     restarted._send_followup_text = send
     await restarted._poll_memory_receipt(stream_id, chat_id, {"memoryReceipt": {"status": "saved", "keys": ["preferences"]}})
-    assert delivered == ["🧠 Saved to memory: preferences"]
+    assert delivered == []
+    _assert_memory_observed_shared_cursor(restarted, stream_id)
 
 
 @pytest.mark.asyncio
