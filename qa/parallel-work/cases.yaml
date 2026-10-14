@@ -42,7 +42,7 @@ journeys:
     userAction: Run two overlapping artifact missions, ask a quick question, revise one late input, Steer only A, and open both outputs.
     surfaces: [installed Telegram, headed Web, Active Work]
     expectedResult: Main remains responsive, B is unchanged, and two distinct valid files are delivered exactly once. A Web callback's imported file link opens the owner-authenticated host copy with its original filename and bytes; canonical text and content remain intact through a subsequent protected Main turn; native grants and remote-channel attachment delivery remain intact.
-    degradedAndRecovery: A stale or late result cannot replace the current answer or affect the other mission.
+    degradedAndRecovery: A stale or late result cannot replace the current answer or affect the other mission. If the exact source completes or fails during an already accepted Steer, its reserved correction survives with immutable source history and exact release proof. Stop, closure, changed lifecycle generation, and changed mission attachment prevent stale control effects; an unapplied action retains the draft and reports the no-op truthfully.
     persistenceAndCleanup: Reload and restart preserve both work records and artifacts before exact cleanup.
     evidence: [visible transcript, action receipt, attempt and lease state, artifact hashes, callback and delivery rows]
   - id: PAR-QA-E2E-002

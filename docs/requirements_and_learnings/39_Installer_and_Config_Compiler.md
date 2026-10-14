@@ -29,6 +29,12 @@ need Terminal, Git, or this source checkout.
    - `viventium_v0_4/LibreChat/scripts/viventium-seed-agents.js`
    - `viventium_v0_4/LibreChat/viventium/source_of_truth/local.viventium-agents.yaml`
 
+Startup preserves the existing Main agent's real `USER` or `ADMIN` author when no explicit or
+stored canonical administrator is selected. This resource ownership does not promote the user or
+grant Native operator authority. Explicit and stored Native owners must remain real administrators.
+Missing users, placeholder owners, unsupported roles, and conflicting non-placeholder agent authors
+remain guarded; startup must not rewrite legitimate authors to make seeding succeed.
+
 The health runtime is a generated installed artifact, not an authoring surface. Install, upgrade,
 component bootstrap, and start rebuild it atomically from the exact `components.lock.json` ref,
 reject a mismatched or dirty component package, and preserve OAuth/archive state outside the runtime

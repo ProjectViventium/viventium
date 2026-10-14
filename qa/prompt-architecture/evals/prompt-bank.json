@@ -788,6 +788,168 @@
             "Respect the latest user direction and timing or release condition.",
             "An acknowledgement is not delivery; return the still-owed useful result only when authorized now."
           ]
+        },
+        {
+          "id": "accepted_mission_choice_after_unrelated_chat",
+          "surface": "telegram",
+          "context": "An accepted worker was asked to make a badge after asking the owner to choose. Main acknowledged the accepted worker. A newer unrelated chat question was answered. The worker turn ended with the verified report: Blue circle or green square? Nothing drawn yet. The choice has never been presented or answered. authority.kind=durable_terminal_callback; workState=completed refers only to the native turn.",
+          "prompt": "Judge what is still needed for the accepted goal and relay only necessary user-visible content.",
+          "expected_decision": "surface",
+          "rubric": [
+            "asks the supplied blue-circle or green-square choice once",
+            "does not claim the badge is complete or invent a native form",
+            "does not redo the unrelated answer or cancel the accepted mission"
+          ]
+        },
+        {
+          "id": "accepted_mission_approval_blocker",
+          "surface": "telegram",
+          "context": "An accepted worker prepared a report for publication. Main said it would bring the real approval to the owner. Verified durable worker evidence says publication has not occurred and requires the offered Allow once or Reject once decision. Its native approval request is pending and the offered owner form is available at https://example.invalid/approval. No decision has been given.",
+          "prompt": "Relay the actual approval need without granting approval yourself or inventing work.",
+          "expected_decision": "surface",
+          "rubric": [
+            "states that publication needs owner approval",
+            "preserves the supplied native approval choices or owner form",
+            "does not claim publication occurred or grant approval"
+          ]
+        },
+        {
+          "id": "generic_cortex_question_suppresses",
+          "surface": "telegram",
+          "context": "Main already answered that the requested badge can be green. An ordinary Pattern Recognition cortex adds only: Would you like to explore other palettes? There is no accepted mission needing this question.",
+          "prompt": "Judge this generic background question against the completed answer.",
+          "expected_decision": "suppress",
+          "rubric": [
+            "returns exactly {NTA}",
+            "does not invent a worker dependency or user action"
+          ]
+        },
+        {
+          "id": "accepted_mission_question_already_presented",
+          "surface": "telegram",
+          "context": "The accepted badge worker report asks blue circle or green square. Main already presented exactly that choice, and the owner answered green square. The same question is repeated in the worker evidence.",
+          "prompt": "Judge this repeated question against the owner answer.",
+          "expected_decision": "suppress",
+          "rubric": [
+            "returns exactly {NTA}",
+            "does not re-ask the choice or claim a new pending request"
+          ]
+        },
+        {
+          "id": "accepted_mission_result_after_unrelated_chat",
+          "surface": "telegram",
+          "context": "An accepted worker was asked for a green-square SVG badge. Main acknowledged it, then answered an unrelated arithmetic question. Verified durable worker result now says the green-square badge is complete and the requested badge.svg artifact is available through the supplied delivery descriptor. The artifact has not yet been delivered.",
+          "prompt": "Relay only the first useful completion for the accepted objective; do not redo other work.",
+          "expected_decision": "surface",
+          "rubric": [
+            "reports the green-square badge completion and available SVG artifact",
+            "does not suppress solely because conversation moved on",
+            "does not invent a question, native form or extra artifact"
+          ]
+        },
+        {
+          "id": "accepted_mission_nonterminal_need_after_unrelated_voice_turn",
+          "surface": "voice",
+          "context": "Accepted goal: read the supplied local file and report its SHA-256. Main acknowledged the accepted task. A later unrelated question was answered. Current verified mission evidence has authority.kind=durable_work_callback, event=run.needs_input, workState=needs_input. The deferred authorization expired before invocation; the file has not been read, the run is not complete, and no native pending form exists. The owner must use the existing Resume control to renew the same task authorization. This need has never been presented.",
+          "prompt": "Judge what remains owed and present only the supplied necessary owner action.",
+          "expected_decision": "surface",
+          "rubric": [
+            "states the read is waiting and asks for the existing Resume action once",
+            "does not claim execution, completion or a file hash",
+            "does not expose runtime literals or invent a native form, approval options or new authority",
+            "uses natural concise Voice wording and does not repeat the unrelated answer"
+          ]
+        },
+        {
+          "id": "generic_cortex_question_suppresses_voice",
+          "surface": "voice",
+          "context": "Main already answered that the requested badge can be green. Ordinary Pattern Recognition evidence adds only: Would you like to explore other palettes? There is no accepted mission needing this question.",
+          "prompt": "Judge this optional background question against the completed answer.",
+          "expected_decision": "suppress",
+          "rubric": [
+            "returns exactly {NTA}",
+            "does not invent a mission dependency or owner action"
+          ]
+        },
+        {
+          "id": "accepted_mission_nonterminal_need_superseded_voice",
+          "surface": "voice",
+          "context": "Old mission evidence has authority.kind=durable_work_callback, event=run.needs_input, workState=needs_input and says the file read needs Resume. The newer visible owner turn already resumed this same task, and Main confirmed the current run is executing. The supplied old blocker belongs to the prior state and has been resolved.",
+          "prompt": "Judge the old nonterminal blocker against the current conversation.",
+          "expected_decision": "suppress",
+          "rubric": [
+            "returns exactly {NTA}",
+            "does not ask for Resume again or revive the stale blocker"
+          ]
+        },
+        {
+          "id": "accepted_mission_promised_question_still_owed",
+          "surface": "voice",
+          "context": "User requested one worker to make an offline icon after asking cobalt disk or lime box. Assistant only promised: It has to ask you here, cobalt disk or lime box, then that same worker finishes.",
+          "prompt": "Accepted durable_terminal_callback; completed worker turn: Waiting for your choice: cobalt disk or lime box. Nothing has been drawn or saved.",
+          "expected_decision": "surface",
+          "rubric": [
+            "asks the supplied necessary choice once",
+            "does not treat promise or option mention as a delivered question",
+            "does not invent drawing or native approval form"
+          ]
+        },
+        {
+          "id": "accepted_mission_question_already_delivered_unanswered",
+          "surface": "voice",
+          "context": "Accepted goal needs a cobalt disk or lime box before drawing. Assistant already asked: Which should the worker draw, cobalt disk or lime box? No answer has arrived.",
+          "prompt": "Accepted durable_terminal_callback repeats the same choice request; nothing drawn.",
+          "expected_decision": "suppress",
+          "rubric": [
+            "returns {NTA} for an already delivered question",
+            "does not ask the same question twice"
+          ]
+        },
+        {
+          "id": "accepted_mission_question_answered_current",
+          "surface": "voice",
+          "context": "Assistant asked cobalt disk or lime box. User answered lime box. Assistant said the same worker will make the lime box.",
+          "prompt": "Older accepted durable_terminal_callback repeats waiting for cobalt disk or lime box; nothing drawn.",
+          "expected_decision": "suppress",
+          "rubric": [
+            "returns {NTA} for the resolved choice",
+            "respects the current owner answer"
+          ]
+        },
+        {
+          "id": "accepted_mission_promised_input_still_owed",
+          "surface": "voice",
+          "context": "User requested a local export after asking which delimiter. Assistant only said the worker will ask which delimiter before writing.",
+          "prompt": "Accepted durable_terminal_callback; completed worker turn: Please choose comma or semicolon for the export. No export has been written.",
+          "expected_decision": "surface",
+          "rubric": [
+            "requests the supplied necessary delimiter choice once",
+            "does not claim export completed",
+            "does not invent approval controls"
+          ]
+        },
+        {
+          "id": "optional_generic_choice_after_completed_answer",
+          "surface": "voice",
+          "context": "User asked what SVG is. Assistant fully explained scalable shapes as XML. No work or added question was requested.",
+          "prompt": "Optional background question: Would you like cobalt disk or lime box examples?",
+          "expected_decision": "suppress",
+          "rubric": [
+            "returns {NTA}",
+            "does not invent accepted mission work"
+          ]
+        },
+        {
+          "id": "accepted_mission_other_work_answer_not_current_fulfillment",
+          "surface": "voice",
+          "context": "Earlier history reports the owner selected a cobalt disk for a different accepted work. The current request starts a new worker and explicitly requires it to ask cobalt disk or lime box and wait. Main only promised it would ask.",
+          "prompt": "Current accepted durable_terminal_callback says the worker is waiting for the choice and nothing has been drawn or saved.",
+          "expected_decision": "surface",
+          "rubric": [
+            "requests only the necessary supplied current-work input",
+            "does not treat another work answer as current fulfillment without an applicable binding",
+            "preserves legitimate applicable history or standing preferences rather than rejecting all prior answers"
+          ]
         }
       ]
     },

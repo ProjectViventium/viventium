@@ -4741,3 +4741,85 @@ def test_native_runtime_accepts_reviewed_host_grok_hash_without_container_opt_in
     config_compiler.dump_env(path, {**native, "WPR_GROK_CONTAINER_REVIEWED_BINARY_SHA256": "b" * 64})
     with pytest.raises(runtime.RuntimeError_, match="unapproved key"):
         runtime.load_native_runtime_env(path)
+
+
+def test_scheduler_payload_carries_exact_shared_speech_library(tmp_path: Path, monkeypatch) -> None:
+    assembler = load_native_assembler(monkeypatch)
+    source = REPO_ROOT / "viventium_v0_4/LibreChat"
+    relative_root = "viventium/MCPs/scheduling-cortex"
+    paths = [relative_root + "/pyproject.toml", relative_root + "/uv.lock"]
+    paths += [item.relative_to(source).as_posix()
+              for item in sorted((source / relative_root / "scheduling_cortex").rglob("*.py"))]
+    monkeypatch.setattr(assembler, "selected_component_pin", lambda *_: "a" * 40)
+    def command(arguments):
+        if "rev-parse" in arguments:
+            return "a" * 40
+        if "status" in arguments:
+            return ""
+        if "ls-files" in arguments:
+            return "\n".join(paths)
+        raise AssertionError(arguments)
+    monkeypatch.setattr(assembler, "command_output", command)
+    def dependencies(arguments, **_kwargs):
+        # The owning production export remains locked; no build/install during this test.
+        if "export" in arguments:
+            Path(arguments[arguments.index("--output-file") + 1]).write_text("httpx==0.28.1\n")
+            assert "--locked" in arguments and "--no-dev" in arguments
+        elif "sync" in arguments:
+            Path(arguments[arguments.index("--target") + 1]).mkdir()
+            assert "--require-hashes" in arguments and "--strict" in arguments
+        else:
+            raise AssertionError(arguments)
+    monkeypatch.setattr(assembler, "run_glasshive_build", dependencies)
+    output = tmp_path / "scheduling"
+    assembler.stage_scheduling(REPO_ROOT, Path(sys.executable), Path("uv"), output,
+                               source_date_epoch=1, local_qa_worktree=True)
+    spec = importlib.util.spec_from_file_location(
+        "payload_speech_inventory", REPO_ROOT / "viventium_v0_4/shared/telegram_tts.py"
+    )
+    speech = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(speech)
+    for relative in speech.RUNTIME_SUPPORT_FILES:
+        assert (output / relative).read_bytes() == (REPO_ROOT / "viventium_v0_4" / relative).read_bytes()
+    assert not (output / "telegram-viventium/TelegramVivBot/bot.py").exists()
+    assert not (output / "telegram-viventium/TelegramVivBot/config.py").exists()
+
+
+@pytest.mark.parametrize("configured,expected", [(None, 1), ("17", 17)])
+def test_native_scheduling_poll_entrypoint_default_preserves_explicit_override(monkeypatch, configured, expected):
+    from types import SimpleNamespace
+    entrypoint = REPO_ROOT / "scripts/viventium/native_scheduling_server.py"
+    spec = importlib.util.spec_from_file_location("native_scheduling_poll_fixture", entrypoint)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    seen = []
+    class Engine:
+        def __init__(self, *args):
+            seen.append(args[1])
+        def start(self):
+            pass
+        def stop(self):
+            pass
+    class Listener:
+        def __enter__(self):
+            return self
+        def __exit__(self, *_):
+            pass
+        def bind(self, _):
+            pass
+    if configured is None:
+        monkeypatch.delenv("SCHEDULER_POLL_INTERVAL_S", raising=False)
+    else:
+        monkeypatch.setenv("SCHEDULER_POLL_INTERVAL_S", configured)
+    monkeypatch.setenv("SCHEDULING_DB_PATH", "/synthetic/schedules.db")
+    monkeypatch.setattr(sys, "argv", ["native-scheduling", "/synthetic/package", "/synthetic/scheduling.sock"])
+    monkeypatch.setattr(sys, "path", list(sys.path))
+    monkeypatch.setattr(module.os, "umask", lambda _: None)
+    monkeypatch.setattr(module.os, "chmod", lambda *_: None)
+    monkeypatch.setattr(module.socket, "socket", lambda *_: Listener())
+    monkeypatch.setitem(sys.modules, "scheduling_cortex.server", SimpleNamespace(build_server=lambda _: SimpleNamespace(http_app=lambda: object())))
+    monkeypatch.setitem(sys.modules, "scheduling_cortex.scheduler", SimpleNamespace(SchedulerEngine=Engine))
+    monkeypatch.setitem(sys.modules, "scheduling_cortex.storage", SimpleNamespace(StorageConfig=lambda **_: object(), ScheduleStorage=lambda _: object()))
+    monkeypatch.setitem(sys.modules, "uvicorn", SimpleNamespace(Config=lambda *_args, **_kwargs: object(), Server=lambda _: SimpleNamespace(run=lambda **_: None)))
+    module.main()
+    assert seen == [expected]

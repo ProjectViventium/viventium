@@ -242,3 +242,15 @@ CC-048: Telegram voice-note transcript is source input, never assistant output. 
 CC-049: Stable live-voice barge-in supersedes presentation only. False barge-in may resume; stale speech must not resume after a stable interruption.
 CC-056: Validate A→B→C→D on Web, Telegram text/triple burst/voice-note/file, live stable/false barge-in, callbacks, concurrent isolated conversations, restart/reload, transcript failure, and a durable effect before C.
 <!-- VIVENTIUM-STABLE-REQUIREMENT-DECLARATIONS:END -->
+
+### Terminal failure closure
+
+A settled Main or host-fallback failure follows the existing error lifecycle. Its saved reply keeps
+partial authored content, files, supporting Cortex parts and one typed public failure, with
+`error=true` and `unfinished=false`. It does not wait for a successful external presentation ACK,
+admit memory maintenance, promote accepted Main context, or generate a success title. Successful
+host continuations retain their existing delivery acknowledgement owner. Abort, supersession and
+Native terminal publication keep their original identity, receipt and cleanup fences.
+A settled Agents failure permits ordinary new input in the same conversation; pending or unknown
+settlement keeps the existing input lock. Endpoint configuration, attachment loading, empty-message
+and generation controls retain their existing owners. The failed reply and original request remain saved.

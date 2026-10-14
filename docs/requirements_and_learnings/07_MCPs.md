@@ -35,6 +35,12 @@
 
 - Server config: `viventium_v0_3_py/viventium_v1/backend/brain/tools/mcp/servers/ms365.yaml`
 - Default transport: `streamable-http`
+- HTTP MCP requests are stateless. Each authenticated POST owns its server, transport, and
+  token-bearing Graph client; overlapping users must not share those objects. Close them when
+  the response closes. Repeated initialization and tool discovery must remain usable.
+- Authenticated GET `/mcp` returns 405 because this mode has no standalone event stream;
+  unauthenticated requests remain 401. STDIO retains its process connection. This lifecycle
+  must not change OAuth scopes, saved credentials, tool controls, or account permissions.
 - Required env vars:
   - `MS365_MCP_CLIENT_ID`
   - `MS365_MCP_CLIENT_SECRET`
@@ -1027,3 +1033,19 @@ tool-binding parity, live-agent sync review, and a real user-level browser answe
 | `auth/scopes.py` | Scope management for Google APIs |
 | `Dockerfile` | Container build for Azure deployment |
 | `azure_configs/librechat-cloud.yaml` | Example cloud LibreChat MCP server configuration |
+
+### Shared OAuth refresh and connection expiry boundary
+
+Persisted MCP access-token loading and the live connection guard use the same
+configured `MCP_OAUTH_TOKEN_EXPIRE_GRACE_MS` boundary. A token inside that window
+is refreshed through the existing owner-scoped OAuth mechanism before a new
+connection uses it. This prevents restart and warm-up retries from repeatedly
+loading a token that the live guard immediately rejects as expiring. Tokens
+outside the window retain the existing saved-token path. Zero grace retains
+exact-expiry behavior. Missing refresh credentials and failed refresh keep their
+existing truthful error and recovery semantics; no account, scope, consent or
+transport mode is changed.
+
+The causal tests cover immediately before, exactly at and immediately after the
+shared boundary, plus zero grace and retained grant/error cases. Current loaded
+owner discovery remains an acceptance check separate from deterministic tests.

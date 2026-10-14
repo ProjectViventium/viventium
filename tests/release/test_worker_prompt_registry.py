@@ -1,6 +1,7 @@
 """Workbench source changes must reach the actual worker composition boundary."""
 
 import ast
+import hashlib
 import json
 import os
 import subprocess
@@ -71,12 +72,16 @@ def test_registered_initial_bodies_match_explicit_standalone_compatibility():
         assert registered == standalone
 
 
-def test_managed_and_standalone_emit_identical_actual_worker_frames(tmp_path):
+def test_managed_source_preserves_standalone_mission_frames(tmp_path):
     standalone = probe(managed=False)
     managed = probe(write_bundle(tmp_path))
     assert standalone.returncode == managed.returncode == 0, managed.stderr
     old, new = json.loads(standalone.stdout), json.loads(managed.stdout)
+    old['hashes'].pop('conversationFiles')
+    actual_conversation = new['hashes'].pop('conversationFiles')
     assert old['hashes'] == new['hashes']
+    registered = render_prompt('worker.conversation_file_delivery', load_prompt_registry(PROMPTS))
+    assert actual_conversation == hashlib.sha256((registered.strip() + '\n').encode()).hexdigest()
     assert old['compiledLoaderImported'] is False
     assert new['compiledLoaderImported'] is True
 
@@ -178,13 +183,22 @@ def test_host_frame_substitutes_current_source_dependencies_in_order(tmp_path):
     assert text.index('GlassHive completion contract') < text.index('Safety boundary:')
 
 
-def test_registered_conversation_body_matches_standalone_compatibility():
+def test_registered_conversation_body_reaches_managed_boundary_without_changing_standalone(tmp_path):
     registry = load_prompt_registry(PROMPTS)
     module = ast.parse(BOOTSTRAP.read_text())
     function = next(node for node in module.body if isinstance(node, ast.FunctionDef) and node.name == 'conversation_file_delivery_instructions')
     value = next(node for node in ast.walk(function) if isinstance(node, ast.Return)).value
     standalone = ast.literal_eval(value.args[1])
-    assert render_prompt('worker.conversation_file_delivery', registry).strip() == standalone.strip()
+    registered = render_prompt('worker.conversation_file_delivery', registry).strip()
+    managed = probe(write_bundle(tmp_path))
+    legacy = probe(managed=False)
+    assert managed.returncode == legacy.returncode == 0
+    assert json.loads(managed.stdout)['hashes']['conversationFiles'] == hashlib.sha256(
+        (registered + ('\n' if standalone.endswith('\n') else '')).encode()
+    ).hexdigest()
+    assert json.loads(legacy.stdout)['hashes']['conversationFiles'] == hashlib.sha256(
+        standalone.encode()
+    ).hexdigest()
 
 
 @pytest.mark.parametrize('failure', ['missing', 'unknown_variable'])
@@ -214,7 +228,11 @@ def test_registered_grok_tool_access_fact_uses_current_compiler_and_workbench(mo
     assert detail["metadata"]["owner_layer"] == "glasshive_worker"
     assert detail["rendered"].strip() == detail["body"].strip()
     assert "`search_tool`" in detail["body"] and "`use_tool`" in detail["body"]
-    assert {row["selector"] for row in prompt_service.related_config_for_prompt("worker.grok_mcp_tool_access")} == {"_worker_prompt", "native_profile_tool_access_instructions"}
+    assert {row["selector"] for row in prompt_service.related_config_for_prompt("worker.grok_mcp_tool_access")} == {
+        "_worker_prompt", "native_profile_tool_access_instructions",
+        "conversation_output_schema", "conversation_output_contract_instructions",
+        "_grok_conversation_output_schema", "grok_native_authority_instructions",
+    }
     bundle = build_prompt_bundle(PROMPTS)
     assert bundle["prompts"]["worker.grok_mcp_tool_access"]["body"].strip() == detail["body"].strip()
 

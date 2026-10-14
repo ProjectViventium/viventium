@@ -561,6 +561,20 @@ try:
         shutil.copy2(candidate, destination)
 
     copy_selected_tree(shared_source, stage / "shared", frozenset({".py"}))
+    # The shared speech facade owns the exact side-effect-free runtime support.
+    sys.path.insert(0, str(shared_source))
+    from telegram_tts import RUNTIME_SUPPORT_FILES
+    for relative in RUNTIME_SUPPORT_FILES:
+        candidate = shared_source.parent / relative
+        if candidate.is_symlink() or not candidate.is_file():
+            raise SystemExit(f"[viventium] Missing safe Scheduler speech support: {relative}")
+        try:
+            candidate.resolve(strict=True).relative_to(repo_resolved)
+        except ValueError as error:
+            raise SystemExit("[viventium] Scheduler speech support escapes runtime checkout") from error
+        destination = stage / relative
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(candidate, destination)
     copy_selected_tree(
         workbench_source,
         stage / "viventium_v0_4" / "prompt-workbench" / "backend" / "prompt_workbench",

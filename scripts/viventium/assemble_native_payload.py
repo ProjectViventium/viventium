@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import importlib.util
 import io
 import json
 import os
@@ -456,6 +457,18 @@ def stage_scheduling(repo: Path, python: Path, uv: Path, output: Path, *, source
         *((source / f"viventium/source_of_truth/{name}", output / f"viventium_v0_4/LibreChat/viventium/source_of_truth/{name}")
           for name in ("local.viventium-agents.yaml", "local.librechat.yaml")),
     ):
+        copy_safe(origin, destination, boundary=repo, source_date_epoch=source_date_epoch)
+        digest.update(origin.relative_to(repo).as_posix().encode() + b"\0" + sha256_file(destination).encode() + b"\n")
+    speech_spec = importlib.util.spec_from_file_location(
+        "viventium_scheduler_speech_support", repo / "viventium_v0_4/shared/telegram_tts.py"
+    )
+    if speech_spec is None or speech_spec.loader is None:
+        raise AssemblyError("Scheduler speech support inventory is unavailable")
+    speech_support = importlib.util.module_from_spec(speech_spec)
+    speech_spec.loader.exec_module(speech_support)
+    for relative in speech_support.RUNTIME_SUPPORT_FILES:
+        origin = repo / "viventium_v0_4" / relative
+        destination = output / relative
         copy_safe(origin, destination, boundary=repo, source_date_epoch=source_date_epoch)
         digest.update(origin.relative_to(repo).as_posix().encode() + b"\0" + sha256_file(destination).encode() + b"\n")
     requirements = output / "requirements.txt"

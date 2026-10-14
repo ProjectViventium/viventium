@@ -22,6 +22,106 @@ def work_payload():
             'actions': ['resume', 'stop'], 'pendingNativeInput': permission_payload()}
 
 
+QUESTION_KEY = 'Which colour?\nKeep exact spacing '
+
+
+def question_work_payload():
+    raw = work_payload()
+    pending = raw['pendingNativeInput']
+    pending.update(kind='question', message='Which colour should I use?')
+    pending['requestedSchema'] = {
+        'type': 'object', 'required': ['answers'], 'additionalProperties': False,
+        'properties': {
+            'answers': {'type': 'object', 'additionalProperties': False,
+                'minProperties': 1, 'maxProperties': 16, 'properties': {
+                    QUESTION_KEY: {'type': 'array', 'uniqueItems': True,
+                        'minItems': 1, 'maxItems': 1,
+                        'items': {'type': 'string', 'enum': ['Blue', 'Red', 'Other']}}}},
+            'annotations': {'type': 'object', 'additionalProperties': False,
+                'properties': {QUESTION_KEY: {'type': 'object',
+                    'additionalProperties': False, 'required': ['notes'],
+                    'properties': {'notes': {'type': 'string', 'minLength': 1,
+                        'maxLength': 8000}}}}},
+        },
+    }
+    return raw
+
+
+def test_native_question_keeps_wire_keys_and_exact_offered_choices():
+    item = orchestration._parse_work_item(question_work_payload())
+    question = item.pending_native_input
+    assert isinstance(question, orchestration.NativeQuestion)
+    assert question.message == 'Which colour should I use?'
+    assert question.options == (('Blue', 'Blue'), ('Red', 'Red'), ('Other', 'Other'))
+    assert item.actions == ('stop',)
+    assert question.response('Blue')['content'] == {'answers': {QUESTION_KEY: ['Blue']}}
+    notes = {'answers': {QUESTION_KEY: ['Other']},
+             'annotations': {QUESTION_KEY: {'notes': 'Green  with exact spacing'}}}
+    assert question.validate_content(notes) == notes
+    assert question.response('Other')['content'] == {'answers': {QUESTION_KEY: ['Other']}}
+
+
+@pytest.mark.parametrize('content', [
+    {'answers': {QUESTION_KEY: ['blue']}},
+    {'answers': {QUESTION_KEY: ['Blue', 'Red']}},
+    {'answers': {'Which colour?': ['Blue']}},
+    {'answers': {QUESTION_KEY: ['Blue']}, 'annotations': {QUESTION_KEY: {'notes': 'wrong'}}},
+    {'answers': {QUESTION_KEY: ['Other']}, 'annotations': {QUESTION_KEY: {'notes': ' '}}},
+])
+def test_native_question_rejects_invalid_content_before_effect(content):
+    question = orchestration._parse_work_item(question_work_payload()).pending_native_input
+    with pytest.raises(ValueError):
+        question.validate_content(content)
+
+
+@pytest.mark.parametrize('mutation', ['expired', 'missing_fingerprint', 'duplicate_labels', 'wrong_notes', 'unknown_shape'])
+def test_invalid_question_never_exposes_generic_resume(mutation):
+    raw = question_work_payload()
+    pending = raw['pendingNativeInput']
+    if mutation == 'expired':
+        pending['expiresAt'] = '2000-01-01T00:00:00Z'
+    elif mutation == 'missing_fingerprint':
+        pending.pop('requestFingerprint')
+    elif mutation == 'duplicate_labels':
+        pending['requestedSchema']['properties']['answers']['properties'][QUESTION_KEY]['items']['enum'] = ['Blue', 'Blue', 'Other']
+    elif mutation == 'wrong_notes':
+        pending['requestedSchema']['properties']['annotations']['properties'][QUESTION_KEY]['properties']['notes']['maxLength'] = 9000
+    else:
+        pending['requestedSchema'] = {'type': 'array'}
+    item = orchestration._parse_work_item(raw)
+    assert item.pending_native_input is None
+    assert item.actions == ('stop',)
+
+
+def test_multiselect_question_keeps_native_content_without_single_choice_buttons():
+    raw = question_work_payload()
+    raw['pendingNativeInput']['requestedSchema']['properties']['answers']['properties'][QUESTION_KEY]['maxItems'] = 3
+    question = orchestration._parse_work_item(raw).pending_native_input
+    assert question.options == ()
+    content = {'answers': {QUESTION_KEY: ['Blue', 'Red']}}
+    assert question.validate_content(content) == content
+    with pytest.raises(ValueError):
+        question.response('Blue')
+
+
+def test_question_capability_replays_exact_notes_and_owner_topic_fences(tmp_path):
+    store = orchestration.CallbackCapabilityStore(tmp_path / 'callbacks.sqlite3', action_lease_s=5)
+    question = orchestration._parse_work_item(question_work_payload()).pending_native_input
+    body = question.response('Blue')
+    body['content'] = question.validate_content({'answers': {QUESTION_KEY: ['Other']},
+        'annotations': {QUESTION_KEY: {'notes': 'Green  exact spacing'}}})
+    token = store.issue_actions(telegram_user_id='owner', chat_id='chat', message_thread_id='7',
+        targets=[('work-1', 'resume')], native_input=body, expires_at=110, now=100)[0].token
+    assert store.reserve_action(token, telegram_user_id='owner', chat_id='chat', message_thread_id='8', now=101) is None
+    first = store.reserve_action(token, telegram_user_id='owner', chat_id='chat', message_thread_id='7', now=101)
+    assert first.target.native_input == body
+    store.complete_action(first, succeeded=False, definitive=False, now=102)
+    second = orchestration.CallbackCapabilityStore(store.path).reserve_action(token,
+        telegram_user_id='owner', chat_id='chat', message_thread_id='7', now=103)
+    assert second.operation_id == first.operation_id
+    assert second.target.native_input == body
+
+
 def test_current_native_permission_preserves_offered_choices_and_hides_generic_resume():
     item = orchestration._parse_work_item(work_payload())
     assert item.pending_native_input.options == (('allow_once', 'Allow once'), ('reject_once', 'Reject once'))

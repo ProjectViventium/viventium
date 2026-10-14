@@ -83,8 +83,13 @@ class NativePermission:
     options: tuple[tuple[str, str], ...]
     session_id: str = ""
 
+    def validate_content(self, content: Any) -> dict[str, Any]:
+        if not isinstance(content, dict) or set(content) != {"optionId"}:
+            raise ValueError("Native permission option is invalid")
+        return self.response(content["optionId"])["content"]
+
     def response(self, option_id: str) -> dict[str, Any]:
-        if option_id not in {value for value, _ in self.options}:
+        if not isinstance(option_id, str) or option_id not in {value for value, _ in self.options}:
             raise ValueError("Native permission option is not offered")
         return {
             "version": 1,
@@ -96,6 +101,30 @@ class NativePermission:
 
 
 @dataclass(frozen=True)
+class NativeQuestion(NativePermission):
+    # Question strings and option labels are exact native wire keys, not intent rules.
+    questions: tuple[tuple[str, tuple[str, ...], bool], ...] = ()
+
+    def validate_content(self, content: Any) -> dict[str, Any]:
+        content = _validate_question_content(content)
+        fields = {key: (options, multiple) for key, options, multiple in self.questions}
+        for key, values in content["answers"].items():
+            field = fields.get(key)
+            if field is None or any(value not in field[0] for value in values) or (
+                not field[1] and len(values) != 1
+            ):
+                raise ValueError("Native question answer is not offered")
+        return content
+
+    def response(self, option_id: str) -> dict[str, Any]:
+        if len(self.questions) != 1 or self.questions[0][2]:
+            raise ValueError("Answer this question through Main")
+        content = self.validate_content({"answers": {self.questions[0][0]: [option_id]}})
+        return {"version": 1, "requestId": self.request_id,
+                "requestFingerprint": self.fingerprint, "action": "accept", "content": content}
+
+
+@dataclass(frozen=True)
 class WorkItem:
     work_ref: str
     title: str
@@ -103,7 +132,7 @@ class WorkItem:
     status_summary: str
     updated_at: str
     actions: tuple[str, ...]
-    pending_native_input: Optional[NativePermission] = None
+    pending_native_input: Optional[NativePermission | NativeQuestion] = None
 
 
 @dataclass(frozen=True)
@@ -159,7 +188,7 @@ def _parse_work_item(raw: Any) -> Optional[WorkItem]:
             if action in ALLOWED_ACTIONS and action not in actions:
                 actions.append(action)
     raw_pending = raw.get("pendingNativeInput")
-    pending = _parse_native_permission(raw_pending)
+    pending = _parse_native_permission(raw_pending) or _parse_native_question(raw_pending)
     if raw_pending is not None:
         actions = [action for action in actions if action == "stop"]
     return WorkItem(
@@ -216,11 +245,79 @@ def _validate_native_response(raw: Any) -> dict[str, Any]:
     if any(not isinstance(raw.get(key), str) or not raw[key] or len(raw[key]) > 160 for key in ("requestId", "requestFingerprint")):
         raise ValueError("Native input identity is invalid")
     content = raw.get("content")
+    if isinstance(content, dict) and "answers" in content:
+        _validate_question_content(content)
+        return json.loads(json.dumps(raw))
     if not isinstance(content, dict) or set(content) != {"optionId"}:
         raise ValueError("Native input option is invalid")
     if not isinstance(content["optionId"], str) or not content["optionId"] or len(content["optionId"]) > 160:
         raise ValueError("Native input option is invalid")
     return json.loads(json.dumps(raw))
+
+
+def _validate_question_content(content: Any) -> dict[str, Any]:
+    if not isinstance(content, dict) or not {"answers"} <= set(content) <= {"answers", "annotations"}:
+        raise ValueError("Native question content is invalid")
+    answers = content["answers"]
+    if not isinstance(answers, dict) or not 1 <= len(answers) <= 16:
+        raise ValueError("Native question answers are invalid")
+    for key, values in answers.items():
+        if not isinstance(key, str) or not key or len(key) > 8000 or not isinstance(values, list) or not 1 <= len(values) <= 17:
+            raise ValueError("Native question answer is invalid")
+        if any(not isinstance(value, str) or not value or len(value) > 160 for value in values) or len(set(values)) != len(values):
+            raise ValueError("Native question choices are invalid")
+    annotations = content.get("annotations", {})
+    if not isinstance(annotations, dict) or len(annotations) > 16:
+        raise ValueError("Native question notes are invalid")
+    for key, annotation in annotations.items():
+        if key not in answers or "Other" not in answers[key] or not isinstance(annotation, dict) or set(annotation) != {"notes"}:
+            raise ValueError("Native question notes do not match an answer")
+        notes = annotation["notes"]
+        if not isinstance(notes, str) or not notes.strip() or len(notes) > 8000:
+            raise ValueError("Native question notes are invalid")
+    if len(json.dumps(content, ensure_ascii=False).encode()) > 65536:
+        raise ValueError("Native question response is too large")
+    return json.loads(json.dumps(content))
+
+
+def _parse_native_question(raw: Any) -> Optional[NativeQuestion]:
+    if not isinstance(raw, dict) or raw.get("version") != 1 or raw.get("kind") != "question" or raw.get("mode") != "form":
+        return None
+    identity = [raw.get(key) for key in ("requestId", "requestFingerprint", "runId", "attemptId")]
+    if any(not isinstance(value, str) or not value or len(value) > 160 for value in identity):
+        return None
+    try:
+        expiry = datetime.fromisoformat(str(raw.get("expiresAt") or "").replace("Z", "+00:00"))
+        if expiry.tzinfo is None or not math.isfinite(expiry.timestamp()) or expiry.timestamp() <= time.time():
+            return None
+        schema = raw["requestedSchema"]
+        if schema.get("type") != "object" or schema.get("required") != ["answers"] or schema.get("additionalProperties") is not False:
+            return None
+        properties = schema["properties"]
+        answers, annotations = properties["answers"], properties["annotations"]
+        if answers.get("type") != "object" or answers.get("additionalProperties") is not False or answers.get("minProperties") != 1 or answers.get("maxProperties") != 16:
+            return None
+        if annotations.get("type") != "object" or annotations.get("additionalProperties") is not False:
+            return None
+        fields, note_fields = answers["properties"], annotations["properties"]
+        if not isinstance(fields, dict) or not 1 <= len(fields) <= 16 or set(note_fields) != set(fields):
+            return None
+        questions = []
+        for key, field in fields.items():
+            labels = field["items"]["enum"]
+            if not isinstance(key, str) or not key or len(key) > 8000 or field.get("type") != "array" or field.get("uniqueItems") is not True or field.get("minItems") != 1 or field["items"].get("type") != "string":
+                return None
+            if not isinstance(labels, list) or not 1 <= len(labels) <= 17 or any(not isinstance(value, str) or not value or len(value) > 160 for value in labels) or len(set(labels)) != len(labels) or "Other" not in labels or field.get("maxItems") not in {1, len(labels)}:
+                return None
+            note = note_fields[key]
+            if note.get("type") != "object" or note.get("additionalProperties") is not False or note.get("required") != ["notes"] or note.get("properties", {}).get("notes") != {"type": "string", "minLength": 1, "maxLength": 8000}:
+                return None
+            questions.append((key, tuple(labels), field["maxItems"] != 1))
+        options = tuple((label, label) for label in questions[0][1]) if len(questions) == 1 and not questions[0][2] else ()
+        return NativeQuestion(*identity, _safe_text(raw.get("message"), limit=8000), expiry.timestamp(), options,
+                              _safe_text(raw.get("sessionId"), limit=160), tuple(questions))
+    except (KeyError, TypeError, AttributeError, ValueError, OverflowError, OSError):
+        return None
 
 
 def parse_snapshot(
@@ -593,6 +690,7 @@ class CallbackTarget:
     work_ref: str
     action: str
     native_input: Optional[dict[str, Any]] = None
+    native_prompt_text: Optional[str] = None
 
 
 @dataclass(frozen=True)
@@ -698,6 +796,7 @@ class CallbackCapabilityStore:
                 ("completed_at", "REAL"),
                 ("instruction", "TEXT"),
                 ("native_input", "TEXT"),
+                ("native_prompt_text", "TEXT"),
                 ("message_thread_id", "TEXT NOT NULL DEFAULT ''"),
             ):
                 if name not in existing_columns:
@@ -741,6 +840,7 @@ class CallbackCapabilityStore:
         targets: Iterable[tuple[str, str]],
         message_thread_id: str = "",
         native_input: Optional[dict[str, Any]] = None,
+        native_prompt_text: Optional[str] = None,
         expires_at: Optional[float] = None,
         now: Optional[float] = None,
     ) -> tuple[CallbackTarget, ...]:
@@ -753,6 +853,10 @@ class CallbackCapabilityStore:
                 return ()
         normalized_topic = _safe_text(str(message_thread_id or ""), limit=64)
         native_body = _validate_native_response(native_input) if native_input is not None else None
+        if native_prompt_text is not None:
+            if (native_body is None or not isinstance(native_prompt_text, str)
+                    or not native_prompt_text.strip() or len(native_prompt_text) > 4096):
+                raise ValueError("Native prompt presentation is invalid")
         issued: list[CallbackTarget] = []
         with self._connect() as connection:
             for work_ref, action in targets:
@@ -768,13 +872,14 @@ class CallbackCapabilityStore:
                 connection.execute(
                     """
                     INSERT INTO telegram_work_callbacks
-                      (token, telegram_user_id, chat_id, work_ref, action, expires_at, message_thread_id, native_input)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                      (token, telegram_user_id, chat_id, work_ref, action, expires_at, message_thread_id, native_input, native_prompt_text)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (token, user_id, normalized_chat_id, normalized_ref, normalized_action, expiry, normalized_topic,
-                     json.dumps(native_body, sort_keys=True) if native_body is not None else None),
+                     json.dumps(native_body, sort_keys=True) if native_body is not None else None,
+                     native_prompt_text),
                 )
-                issued.append(CallbackTarget(token, normalized_ref, normalized_action, native_body))
+                issued.append(CallbackTarget(token, normalized_ref, normalized_action, native_body, native_prompt_text))
             connection.execute(
                 """
                 DELETE FROM telegram_work_callbacks
@@ -919,7 +1024,7 @@ class CallbackCapabilityStore:
             connection.execute("BEGIN IMMEDIATE")
             row = connection.execute(
                 """
-                SELECT token, work_ref, action, action_state, operation_id, lease_until, native_input
+                SELECT token, work_ref, action, action_state, operation_id, lease_until, native_input, native_prompt_text
                 FROM telegram_work_callbacks
                 WHERE token = ? AND telegram_user_id = ? AND chat_id = ?
                   AND prompt_message_id IS NULL AND message_thread_id = ?
@@ -949,7 +1054,8 @@ class CallbackCapabilityStore:
             )
         return ActionReservation(
             CallbackTarget(row["token"], row["work_ref"], row["action"],
-                _validate_native_response(json.loads(row["native_input"])) if row["native_input"] else None),
+                _validate_native_response(json.loads(row["native_input"])) if row["native_input"] else None,
+                row["native_prompt_text"]),
             operation_id,
             replay,
         )

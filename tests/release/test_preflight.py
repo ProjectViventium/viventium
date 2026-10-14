@@ -315,7 +315,7 @@ def test_public_edge_cgnat_details_ignores_matching_public_ip(monkeypatch) -> No
 
 def test_ffmpeg_runtime_ready_rejects_present_broken_binary(monkeypatch) -> None:
     module = load_preflight_module()
-    monkeypatch.setattr(module, "command_exists", lambda command: command == "ffmpeg")
+    monkeypatch.setattr(module, "command_exists", lambda command: command in {"ffmpeg", "ffprobe"})
     monkeypatch.setattr(
         module,
         "run_checked",
@@ -332,7 +332,7 @@ def test_ffmpeg_runtime_ready_rejects_present_broken_binary(monkeypatch) -> None
 
 def test_ffmpeg_runtime_ready_accepts_successful_probe(monkeypatch) -> None:
     module = load_preflight_module()
-    monkeypatch.setattr(module, "command_exists", lambda command: command == "ffmpeg")
+    monkeypatch.setattr(module, "command_exists", lambda command: command in {"ffmpeg", "ffprobe"})
     monkeypatch.setattr(
         module,
         "run_checked",
@@ -345,6 +345,16 @@ def test_ffmpeg_runtime_ready_accepts_successful_probe(monkeypatch) -> None:
     )
 
     assert module.ffmpeg_runtime_ready() is True
+
+
+def test_ffmpeg_runtime_ready_rejects_missing_or_broken_ffprobe(monkeypatch) -> None:
+    module = load_preflight_module()
+    monkeypatch.setattr(module, "command_exists", lambda command: command == "ffmpeg")
+    assert module.ffmpeg_runtime_ready() is False
+    monkeypatch.setattr(module, "command_exists", lambda command: command in {"ffmpeg", "ffprobe"})
+    monkeypatch.setattr(module, "run_checked", lambda args, timeout_seconds=None:
+                        subprocess.CompletedProcess(args, 0 if args[0] == "ffmpeg" else 1))
+    assert module.ffmpeg_runtime_ready() is False
 
 
 def test_command_runtime_ready_rejects_present_broken_binary(monkeypatch) -> None:

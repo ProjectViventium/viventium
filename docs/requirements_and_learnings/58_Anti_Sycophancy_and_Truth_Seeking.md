@@ -218,6 +218,12 @@ create another orchestration framework.
    OpenAI `tool_calls`. All current Main handoffs are zero-input and read shared history; an
    input-bearing legacy transfer can coexist but remains outside this bridge.
    LibreChat remains the component that executes the graph transfer.
+   Agent Builder's ordinary Duplicate Agent operation rebinds only the source agent's typed
+   self references to the new agent ID, including scalar/array handoff endpoints and legacy
+   participant lists. Other agents, edge metadata, tools, models and presentation policy stay
+   intact. A copied primary must keep the same consultant return paths to its own new identity;
+   duplication must not disable primary-final validation or change the original agent. Copies
+   made before this repair must be recreated or corrected through normal Agent Builder controls.
 6. **One Red Team.** The same Red Team definition and instructions remain an automatic background
    cortex and now also have an optional foreground handoff role. No duplicate agent exists.
 7. **Prompt Workbench owns the tiny decision policy.** Main has a short rule describing when

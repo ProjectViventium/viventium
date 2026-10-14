@@ -9828,6 +9828,8 @@ resolve_telegram_codex_dir() {
 
 ffmpeg_is_usable() {
   command -v ffmpeg >/dev/null 2>&1 || return 1
+  command -v ffprobe >/dev/null 2>&1 || return 1
+  ffprobe -v error -version >/dev/null 2>&1 || return 1
   ffmpeg \
     -hide_banner \
     -loglevel error \

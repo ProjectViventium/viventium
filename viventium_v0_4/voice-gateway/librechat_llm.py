@@ -557,7 +557,12 @@ class _VoiceTtsDeltaBuffer:
 
     def _mark_emitted(self, text: str) -> str:
         repaired = self._repair_boundary(text)
-        self._last_emitted_text += repaired
+        # Boundary checks need only the last nonspace character and whether the
+        # output ends in whitespace. Do not recopy completed speech at each word.
+        boundary = self._last_emitted_text + repaired
+        self._last_emitted_text = boundary.rstrip()[-1:]
+        if boundary[-1:].isspace():
+            self._last_emitted_text += boundary[-1:]
         return repaired
 
     def _prepare_output(self, text: str) -> str:
@@ -885,6 +890,26 @@ def _stream_delta_audio_is_skipped(event: dict[str, Any]) -> bool:
     return _final_response_audio_is_skipped({"responseMessage": delta})
 
 
+_NATIVE_INPUT_OFFER_EXTRA = "viventium_native_input_offer"
+
+def _native_input_offer(value: Any) -> Optional[dict[str, Any]]:
+    if (not isinstance(value, dict) or set(value) != {"version", "requestKey", "streamId"}
+            or type(value.get("version")) is not int or value["version"] != 1
+            or not isinstance(value.get("requestKey"), str) or not re.fullmatch(r"[a-f0-9]{64}", value["requestKey"])
+            or not _bounded_string(value.get("streamId"), maximum=160, required=True)):
+        return None
+    return value
+
+
+def _native_input_signature(event: dict[str, Any]) -> tuple[Any, ...]:
+    request = (event.get("needsInput") or {}).get("nativeInputRequest")
+    owner = event.get("owner") or {}
+    if event.get("state") != "needs_input" or not isinstance(request, dict):
+        return ()
+    return (event.get("taskId"), event.get("callSessionId"), event.get("streamId"), owner.get("kind"), owner.get("id"),
+            request.get("requestId"), request.get("requestFingerprint"), request.get("runId"), request.get("attemptId"), request.get("expiresAt"),
+            (event.get("needsInput") or {}).get("prompt"))
+
 _PUBLIC_PART_COMPLETION_EXTRA = "viventium_public_part_complete"
 
 
@@ -948,7 +973,7 @@ def _content_audio_segments(content: Any, *, default_skipped: bool) -> list[tupl
                 start, end = item.get("start"), item.get("end")
                 disposition = item.get("disposition")
                 if (type(start) is not int or type(end) is not int or
-                    start < cursor or end <= start or end * 2 > len(encoded) or
+                    start != cursor or end <= start or end * 2 > len(encoded) or
                     not isinstance(disposition, dict) or
                     set(disposition) != {"version", "audio", "required", "valid", "source"} or
                     type(disposition.get("version")) is not int or disposition["version"] != 1):
@@ -963,13 +988,11 @@ def _content_audio_segments(content: Any, *, default_skipped: bool) -> list[tupl
                          disposition.get("required") is True and disposition.get("valid") is False)))
                 if not (model or silent_fallback):
                     raise ValueError("invalid delivery choice")
-                if start > cursor:
-                    annotated.append((encoded[cursor * 2:start * 2].decode("utf-16-le"), default_skipped))
                 annotated.append((encoded[start * 2:end * 2].decode("utf-16-le"),
                                   disposition["audio"] == "skip"))
                 cursor = end
             if cursor * 2 < len(encoded):
-                annotated.append((encoded[cursor * 2:].decode("utf-16-le"), default_skipped))
+                raise ValueError("incomplete delivery range coverage")
         except (ValueError, UnicodeError):
             segments.append((text, True))
         else:
@@ -1252,6 +1275,7 @@ class _TaskEventCursor:
     latest_sequence: int
     updated_at: float
     terminal: bool = False
+    native_input_signature: tuple[Any, ...] = ()
 
 
 class _VoiceTaskEventGate:
@@ -1312,6 +1336,7 @@ class _VoiceTaskEventGate:
 
         # Install the barrier before returning control to any publisher/speech handler.
         cursor.latest_sequence = sequence
+        cursor.native_input_signature = _native_input_signature(event)
         cursor.updated_at = now
         if state in _VOICE_TASK_SUPPRESSING_STATES:
             self._install_suppression(task_id, now)
@@ -1335,6 +1360,12 @@ class _VoiceTaskEventGate:
             return False
         self._prune(self._clock())
         return normalized in self._suppression_tombstones
+
+    def is_current_native_input(self, event: dict[str, Any]) -> bool:
+        signature = _native_input_signature(event)
+        cursor = self._by_task.get(str(event.get("taskId") or ""))
+        return bool(signature and cursor and cursor.native_input_signature == signature
+                    and not self.is_suppressed(str(event.get("taskId") or "")))
 
     def _prune(self, now: float) -> None:
         expired = [
@@ -1486,9 +1517,9 @@ def _extract_voice_task_event(
     needs_input = task_event.get("needsInput")
     if needs_input is not None and (
         not isinstance(needs_input, dict)
-        or set(needs_input) - {"prompt", "inputType", "choices"}
+        or set(needs_input) - {"prompt", "inputType", "choices", "questionForm", "nativeInputRequest", "operationTitle"}
         or not _bounded_string(needs_input.get("prompt"), maximum=8000, required=True)
-        or needs_input.get("inputType") not in {"text", "choice", "confirm"}
+        or needs_input.get("inputType") not in {"text", "choice", "confirm", "native_question"}
     ):
         return None
     if needs_input is not None and "choices" in needs_input:
@@ -1499,6 +1530,49 @@ def _extract_voice_task_event(
                        or not _bounded_string(choice.get("label"), maximum=160, required=True)
                        for choice in choices)):
             return None
+    if needs_input is not None and "nativeInputRequest" in needs_input:
+        request = needs_input["nativeInputRequest"]
+        if (not isinstance(request, dict) or set(request) != {"version", "kind", "requestId", "requestFingerprint", "runId", "attemptId", "expiresAt"}
+                or request.get("version") != 1 or request.get("kind") not in {"question", "permission"}
+                or not _bounded_string(request.get("requestId"), maximum=512, required=True)
+                or not _bounded_string(request.get("requestFingerprint"), maximum=64, required=True)
+                or not re.fullmatch(r"[a-f0-9]{64}", request["requestFingerprint"])
+                or not _bounded_string(request.get("runId"), maximum=160, required=True)
+                or not _bounded_string(request.get("attemptId"), maximum=160, required=True)
+                or not _bounded_string(request.get("expiresAt"), maximum=80, required=True)):
+            return None
+        try:
+            datetime.fromisoformat(request["expiresAt"].replace("Z", "+00:00"))
+        except (TypeError, ValueError):
+            return None
+    if needs_input is not None and "operationTitle" in needs_input:
+        if (not _bounded_string(needs_input["operationTitle"], maximum=8000, required=True)
+                or needs_input.get("inputType") != "choice"
+                or not isinstance(needs_input.get("nativeInputRequest"), dict)
+                or needs_input["nativeInputRequest"].get("kind") != "permission"):
+            return None
+    if needs_input is not None and needs_input.get("inputType") == "native_question":
+        form = needs_input.get("questionForm")
+        questions = form.get("questions") if isinstance(form, dict) else None
+        if (not isinstance(form, dict) or set(form) != {"questions"}
+                or not isinstance(questions, list) or not 1 <= len(questions) <= 16):
+            return None
+        keys = set()
+        for question in questions:
+            if (not isinstance(question, dict) or set(question) != {"key", "label", "multiSelect", "options"}
+                    or not _bounded_string(question.get("key"), maximum=8000, required=True)
+                    or not _bounded_string(question.get("label"), maximum=8000, required=True)
+                    or not isinstance(question.get("multiSelect"), bool) or question["key"] in keys):
+                return None
+            keys.add(question["key"])
+            options = question.get("options")
+            if (not isinstance(options, list) or not 1 <= len(options) <= 17
+                    or any(not isinstance(option, dict) or set(option) != {"value", "label"}
+                           or not _bounded_string(option.get("value"), maximum=160, required=True)
+                           or not _bounded_string(option.get("label"), maximum=160, required=True) for option in options)
+                    or len({option["value"] for option in options}) != len(options)
+                    or not any(option["value"] == "Other" for option in options)):
+                return None
     error = task_event.get("error")
     if error is not None and (
         not isinstance(error, dict)
@@ -2552,6 +2626,37 @@ class LibreChatLLM(llm.LLM):
     def is_task_output_suppressed(self, task_id: str) -> bool:
         return self._task_event_gate.is_suppressed(task_id)
 
+
+    async def claim_native_input_speech_offer(self, event: dict[str, Any], stream_id: str, session: Any) -> Optional[dict[str, Any]]:
+        owner = event.get("owner") or {}
+        needs = event.get("needsInput") or {}
+        request = needs.get("nativeInputRequest")
+        if (not self._task_event_gate.is_current_native_input(event)
+                or event.get("streamId") != stream_id or owner.get("id") != stream_id
+                or owner.get("kind") not in {"generation_job", "remote_generation"}
+                or not isinstance(request, dict) or not self.is_participant_connected()):
+            return None
+        try:
+            expires = datetime.fromisoformat(request["expiresAt"].replace("Z", "+00:00")).timestamp()
+            if expires <= time.time():
+                return None
+            headers = {"Content-Type": "application/json", "X-VIVENTIUM-CALL-SESSION": self._auth.call_session_id,
+                "X-VIVENTIUM-CALL-SECRET": self._auth.call_secret, "X-VIVENTIUM-JOB-ID": self._auth.job_id,
+                "X-VIVENTIUM-WORKER-ID": self._auth.worker_id}
+            body = {"streamId": stream_id, "prompt": needs["prompt"], "nativeInputRequest": request}
+            async with session.post(f"{self._origin}/api/viventium/voice/tasks/{quote(event['taskId'], safe='')}/native-input/speech-offer", headers=headers, json=body) as response:
+                if response.status != 200:
+                    return None
+                proof = await response.json()
+            boundary = _native_input_offer({"version": proof.get("version"), "requestKey": proof.get("requestKey"), "streamId": stream_id})
+            if (not boundary or proof.get("outcome") != "offered_unknown" or proof.get("nativeInputRequest") != request
+                    or not self._task_event_gate.is_current_native_input(event) or not self.is_participant_connected()
+                    or expires <= time.time()):
+                return None
+            return boundary
+        except (Exception, asyncio.CancelledError):
+            # An uncertain offer is never replayed. The durable task claim remains unknown.
+            return None
 
     async def _relay_task_event_once(self, task_event: dict[str, Any]) -> bool:
         validated = _extract_voice_task_event(
@@ -4417,6 +4522,15 @@ class _LibreChatLLMStream(llm.LLMStream):
                                             presentation=self._presentation,
                                         )
                                     await self._llm_impl._relay_task_event_once(task_event)
+                                    if (event_task_id == task_id and not _output_is_suppressed()
+                                            and self._llm_impl.is_participant_connected()):
+                                        offer = await self._llm_impl.claim_native_input_speech_offer(task_event, stream_id, session)
+                                        if (offer and not _output_is_suppressed() and self._llm_impl.is_participant_connected()
+                                                and self._llm_impl._task_event_gate.is_current_native_input(task_event)):
+                                            # Auxiliary native question has its own durable unknown offer, not provider completion provenance.
+                                            # emit_chat_delta bypasses disconnected replay and raw provider resume/history accounting.
+                                            emit_chat_delta(task_event["needsInput"]["prompt"])
+                                            self._event_ch.send_nowait(ChatChunk(id=self._request_id, delta=ChoiceDelta(extra={_NATIVE_INPUT_OFFER_EXTRA: offer})))
                                     if task_event["owner"]["kind"] == "glasshive_run":
                                         saw_glasshive_tool_call = True
                                     if (

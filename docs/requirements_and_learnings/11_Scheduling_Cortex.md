@@ -264,6 +264,11 @@ diagnostic IDs.
 The scheduler is a local runtime loop, so it must handle host sleep, restart, and long pauses
 without silently dropping user-facing reminders.
 
+Both the installed native entrypoint and standalone MCP use a one-second default due-task
+poll interval. An explicit `SCHEDULER_POLL_INTERVAL_S` remains authoritative. The existing
+indexed due-task query and dispatch claim own admission; Main and its model configuration
+remain unchanged.
+
 The launcher must treat the Scheduling Cortex MCP as a supervised local sidecar, not a one-shot
 optional startup. Startup success requires a real `/health` probe, and a lightweight watchdog must
 restart the MCP if the process exits while LibreChat remains running.
@@ -494,12 +499,38 @@ Rules:
 - Ordinary chat must not inspect periphery. On-demand/deep-review use follows list then read, and
   stale/legacy/failed-quality material is treated as historical uncertainty.
 - Explicit Workbench schedules with `executor="glasshive_host"` take the compiled
-  `gpt-5.6-sol` / `xhigh` host-worker tuple ahead of stale persisted Workbench metadata. This policy
+  profile/model/effort tuple ahead of stale persisted Workbench metadata, including the compiled
+  Claude fallback effort. Claude supports `default`, `low`, `medium`, `high`, `xhigh`, and `max`;
+  a legal `high` configuration must not fall back to a stale persisted `default`. Without a
+  compiled effort, an explicit supported stored effort remains valid. This policy
   does not apply to `executor="viventium_agent"`, which always inherits Main from Agent Builder.
 
 ### Telegram Channel
 
 - Scheduled Telegram delivery should reuse the canonical scheduler-generated final/follow-up text.
+- Automated failure/action-required and unconfirmed-delivery notices carry the typed presentation
+  kind `status`. They remain plain chat notices and retain their failure/delivery evidence; they
+  never invoke TTS. Model-authored conversational output, including an answer to a user's status
+  question, keeps kind `conversation` and the existing audio preference. This classification comes
+  from the owning event path, never from words, provider labels, or schedule names. Status kind is
+  bound into the delivery payload identity.
+- Conversational presentation resolves the current owner-scoped `resolveUserVoiceRoute` and audio
+  preferences through the existing authenticated Telegram identity route. Cached address metadata
+  does not own Speaking preferences. An unavailable route keeps the canonical text with an honest
+  speech-unavailable receipt, including when the task has no cached Telegram address. The mapping
+  response preserves authorized identity/preferences with a typed unavailable Speaking result.
+  Mapping/authentication failures remain distinct. Typed status resolves only its address and needs
+  no speech-route lookup.
+- Scheduled speech uses the same Telegram TTS engine, text preparation and configured fallback as
+  ordinary Telegram replies. The shared media owner produces supported MP3/M4A, finalizes actual
+  complete WAV PCM and measures duration before send. The delivery lease covers bounded synthesis,
+  packaging and transport. Conversion failure remains a plain-text fallback; uncertain transport
+  remains delivery-unknown without a second send.
+- Delivery identity binds its canonical destination, text and typed presentation kind. Current
+  Speaking preferences and lookup availability choose its presentation and remain in delivery
+  detail; they cannot turn an unchanged effect into a payload conflict. A confirmed or unknown
+  terminal receipt is immutable: preference changes cannot downgrade, reclaim or resend it.
+  Genuine canonical payload conflicts and expired ambiguous claims still fail closed.
 - Do not start a second agent run through the Telegram chat route just for scheduled tasks.
 - Passive schedules must not emit scheduler-synthesized keepalive, status, "no change," or next-run
   announcements. If the canonical scheduled result is `{NTA}` or empty, Telegram delivery stays
@@ -510,6 +541,12 @@ Rules:
 - Scheduled Telegram delivery must classify transport/runtime fallback separately from
   model-generated content. If a model or background cortex guesses at a live fact, the correct fix is
   the scheduled prompt/source-of-truth truthfulness contract, not a Telegram text filter.
+- Follow-up polling can finish grace when its owner-scoped state proves a schema-1 quiet terminal
+  decision (`skipped`, `suppressed`, or `empty`) for the exact originating message and conversation,
+  all typed Cortex parts are complete, and the insight ledger has zero pending or claimed deliveries.
+  A nonempty follow-up is returned first. Missing, malformed, stale, active, error, or unsettled state
+  keeps the configured grace and timeout so late Steer/callback output remains available. This uses
+  the existing persisted decision and delivery ledger, not a text or schedule-name heuristic.
 - Scheduler follow-up polling must pass the originating `scheduleId` into the LibreChat cortex-state
   endpoint. The cortex fallback helper uses that structured schedule context to suppress the generic
   "couldn't finish" text for scheduled runs instead of sending it to Telegram.

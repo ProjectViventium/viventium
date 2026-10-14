@@ -8793,3 +8793,19 @@ def test_prompt_workbench_redacts_custom_private_roots_and_ledger_paths(
     }
     assert str(private_root) not in json.dumps(result)
     assert (private_root / "sync-ledger.json").is_file()
+
+
+def test_native_queen_input_schema_is_visible_as_an_exact_public_workbench_owner() -> None:
+    rows = prompt_service.related_config_for_prompt("main.tools")
+    row = next(item for item in rows if item["id"] == "main-native-work-input")
+    assert row["selector"] == "ACTIVE_WORK_ACTION_JSON_SCHEMA"
+    assert row["status"] == "source"
+    assert row["selector"] in (REPO_ROOT / row["path"]).read_text(encoding="utf-8")
+    assert prompt_service._related_config_row("bad-native-owner", {
+        "source": "native.current_work_input_contract", "path": "docs/README.md",
+        "selector": "ACTIVE_WORK_ACTION_JSON_SCHEMA",
+    }) is None
+    assert prompt_service._related_config_row("bad-native-selector", {
+        "source": "native.current_work_input_contract", "path": row["path"],
+        "selector": "missingSyntheticAccessor",
+    }) is None

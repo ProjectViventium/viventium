@@ -19,7 +19,7 @@ def main() -> None:
     os.umask(0o077)
     storage = ScheduleStorage(StorageConfig(db_path=os.environ["SCHEDULING_DB_PATH"]))
     scheduler = SchedulerEngine(storage,
-        int(os.getenv("SCHEDULER_POLL_INTERVAL_S", "30")),
+        int(os.getenv("SCHEDULER_POLL_INTERVAL_S", "1")),
         int(os.getenv("SCHEDULER_MISFIRE_GRACE_S", "900")),
         int(os.getenv("SCHEDULER_RETRY_DELAY_S", "300")),
         int(os.getenv("SCHEDULER_CATCH_UP_MAX_LATE_S", "43200")))

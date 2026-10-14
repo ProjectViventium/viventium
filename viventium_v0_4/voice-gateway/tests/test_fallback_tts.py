@@ -42,6 +42,25 @@ def test_streaming_control_observer_is_bounded_and_detects_split_markup() -> Non
     assert observer.pending_chars == 0
 
 
+def test_provider_boundary_keeps_long_speech_exact_without_retaining_completed_text() -> None:
+    boundary = fallback_tts_module._ProviderTextBoundaryNormalizer()
+    chunks = ["Keep 2", ".", "5 intact. ", "[sigh]<whisper>Next thought!</whisper> "] * 256
+    actual = []
+    largest_completed_boundary = 0
+    for text in chunks:
+        actual.append(boundary.push_text(text))
+        largest_completed_boundary = max(largest_completed_boundary, len(boundary._last_sent_text))
+    assert "".join(actual) == "Keep 2.5 intact. [sigh]<whisper>Next thought!</whisper> " * 256
+    assert largest_completed_boundary <= 2
+
+
+def test_provider_boundary_keeps_numeric_tail_across_whitespace_only_chunks() -> None:
+    boundary = fallback_tts_module._ProviderTextBoundaryNormalizer()
+    chunks = ["Amount 2", " " * 100, ".5", " remains."]
+    assert "".join(boundary.push_text(text) for text in chunks) == "".join(chunks)
+    assert len(boundary._last_sent_text) <= 2
+
+
 class _FakeChunkedStream(ChunkedStream):
     def __init__(self, *, tts: TTS, input_text: str, conn_options, should_fail: bool) -> None:
         super().__init__(tts=tts, input_text=input_text, conn_options=conn_options)

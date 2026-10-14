@@ -31,6 +31,9 @@ not select the main Viventium Telegram bridge's model.
 - Background follow-ups must preserve the same formatting rules as the main response.
 - Telegram must mirror LibreChat UX for new features, including scheduled prompts and background
   follow-ups.
+- Saved channel messages remain readable in Web: canonical text is shown when structured text is
+  absent, including user captions stored beside image parts. Existing structured text stays
+  authoritative; rendering does not rewrite stored history or expose internal messages.
 - Telegram replies must send `ReplyContextV1` as a bounded typed descriptor. Quoted text and
   extracted quoted-document evidence are untrusted reference data and must never be concatenated
   into the new user-authored message. Core resolves assistant ownership from the authenticated
@@ -240,6 +243,22 @@ messages, but they do not create duplicate conversation records or background tu
 transport splitting still applies independently. If audio is delivered, the clean logical answer
 is synthesized once and attached once, to the final bubble; no fake typing delays are added.
 
+Native xPerfect public parts may carry model-owned audio choices as complete UTF-16
+`deliveryDispositionRanges` on the canonical final `responseMessage.content` text parts.
+Telegram retains every text part for display and history; TTS receives only the validated
+`eligible` spans. The final message's audio decision is derived from those spans, so a later
+spoken continuation cannot make an earlier text-only part audible. Range gaps, overlaps,
+split Unicode surrogate pairs, invalid authority or missing text-part coverage suppress audio
+while preserving text. Existing responses without ranges keep their delivery behavior, and
+the standalone `{SKIP_VOICE}` control still suppresses the entire optional audio reply.
+
+Phase B and its late Telegram dispatcher retain those same canonical content parts through
+persistence and the existing `telegramDeliveryControls`. The callback receives `audioContent`
+plus the SHA-256 of its exact saved text. A changed text, content mismatch or incomplete range
+cannot make a read-first part audible. The existing delivery ledger, claim, source-order fence
+and presentation acknowledgement stay authoritative; normal text still delivers if audio
+metadata is invalid. Promoting a forced reply onto an empty parent preserves the same ranges.
+
 `Smart voice for text` is the user-facing preference label for the existing
 `ALWAYS_VOICE_RESPONSE` setting. Voice-note input still follows the ordinary voice-reply toggle;
 `{SKIP_VOICE}` only suppresses an otherwise optional output attachment selected for the current
@@ -344,6 +363,30 @@ Prompt-layer ownership and the runtime-vs-prompt boundary are also recorded in
   playground. The LibreChat Telegram route resolves `resolveUserVoiceRoute(...)` for the linked
   user and returns that route to the bot; the bot must treat Cartesia variants as voice IDs
   (Megan/Lyra), not as Sonic model names. Cartesia model selection is Sonic-3-only.
+- Scheduled conversational delivery resolves the linked owner's current Speaking route and audio
+  preferences immediately before presentation. Cached Telegram identity is only an address; it
+  cannot preserve an older provider, voice or preference. An owned callback without a current
+  stream route also resolves the current route before speech. Unavailable route authority keeps
+  the canonical text and reports speech unavailability rather than silently selecting another route.
+  Once its authorized Telegram mapping is resolved, unavailable Speaking cannot remove that
+  address or its audio preferences: even an uncached schedule can deliver canonical text. Missing
+  mapping and authentication failures remain distinct. Typed status resolves only its address.
+- The scheduler and bot reuse the same Telegram speech engine, provider controls, text preparation
+  and configured fallback. The scheduler imports that engine as a library without loading bot
+  users, model clients or call clients. Scheduled delivery receipts retain the requested and actual route,
+  fallback and failure classification.
+- Telegram `sendAudio` carries supported MP3 or M4A with its actual filename, content type and
+  measured duration. Buffered WAV speech is finalized from complete PCM, including a single
+  streaming-header chunk, before conversion with the existing FFmpeg tools. Multiple chunks keep
+  the complete speech. Whole-second Telegram metadata derives from that measured duration.
+  Failed conversion falls back to canonical text before transport; an uncertain send never causes
+  an automatic second presentation.
+- Media prerequisites check both FFmpeg and FFprobe through the existing package owner before
+  Telegram starts. FFprobe must be runnable for duration checks; a working FFmpeg alone is insufficient.
+- Buffered local speech carries the presentation's same monotonic deadline into the existing MLX
+  Future wait. Expiry cancels only that request's queued work; a running generation discards its
+  result at its next yield. The stable single MLX executor and model cache are preserved. A timed-out
+  presentation cannot send late speech or start another synthesis after its budget expires.
 - Telegram voice output preferences must stay aligned before and after generation:
   - `VOICE_RESPONSES_ENABLED=false` disables Telegram audio replies.
   - Telegram always remains a text-mode LibreChat surface. A voice note sends
@@ -580,6 +623,14 @@ Prompt-layer ownership and the runtime-vs-prompt boundary are also recorded in
   terminal replay, and Telegram error event. The bridge uses the same typed presentation as FINAL
   and sends one non-spoken error notice. Legacy untyped callers retain their existing transport
   signature. Unknown internal diagnostics are not sent as user-facing error text.
+- Answering a current native worker question or permission from its chat buttons keeps that
+  question in chat history and removes its answered buttons after the durable acknowledgement.
+  Its original typed prompt is retained in the existing scoped capability row, so an uncertain
+  action followed by a successful retry restores the question rather than leaving a retry notice.
+  That presentation text never enters the native answer or authorization payload. Native buttons
+  explicitly opened in Active work retain that view; recovered messages retain their chat topic.
+  It must not replace the question with the account's full Active work roster. Active work remains
+  available when explicitly opened; uncertain or rejected actions retain their existing recovery.
 - Provider authentication failures must surface as reconnect guidance on Telegram. They must not be
   collapsed into a generic connection error that implies Telegram or GlassHive transport is broken.
   Primary provider rate limits before visible assistant text must first pass through the main-agent
@@ -678,11 +729,31 @@ so the bridge must not claim the file was absent or resend it automatically. Fai
 not expose raw errors, private download addresses or credentials.
 
 Inbound Telegram message attachments must follow the same shared message-file contract as the web
-UI. If the active model/provider supports a file through LibreChat's native "Upload to Provider"
+UI. SVG source submitted as text uses the existing literal UTF-8 extraction path, with no
+SVG execution, document rendering, or forced OCR. Structured MIME suffixes such as `+xml` are valid
+admission syntax; binary parsing remains limited to declared extraction formats. Configured MIME
+patterns retain their regex contract, so a literal SVG suffix uses an escaped, anchored pattern.
+Provider uploads still require the declared provider or native-workspace capability; text admission
+does not grant unsupported provider image formats. Text-source attachments use normal file presentation
+even when the original MIME names an image; reload must not fetch their temporary source as an image. If the active model/provider supports a file through LibreChat's native "Upload to Provider"
 path, the bridge must preserve the normal raw message attachment so downstream client code can send
 it provider-natively. Providers that declare both native tools and workspace binding receive admitted
 files through the existing signed, owner-scoped workspace source bundle. The upload owner preserves
-the exact bytes; the model decides how to inspect them. This includes regular audio/video attachments
+the exact bytes; the model decides how to inspect them. Native image uploads keep their original
+MIME, filename, source dimensions and bytes in the durable upload store. Metadata inspection does
+not perform a discarded resize. Main's vision input uses the existing bounded
+image encoder and a supported PNG frame; that transport view does not replace the source file. The image caller
+passes the existing resolved Agent endpoint separately from its normalized transport provider.
+Frame capability selection uses the same provider-first, resolved-endpoint fallback as native
+conversation admission; both declared capabilities must remain strictly true. The image format
+endpoint and ordinary provider conversion stay unchanged.
+Web previews of durable local images use the authenticated file-download API and validate the
+returned file identity and MIME. They render only as an image, never inline SVG markup. Download
+keeps the original bytes; denied or mismatched responses do not fall back to public paths.
+Ordinary provider image normalization remains unchanged. The normal image-message upload route
+resolves the current declared capabilities once and uses this same native original-file owner
+when both capabilities are true. Internal preview/conversion calls and ordinary provider image
+uploads keep their existing conversion path. This includes regular audio/video attachments
 and does not force a separate speech provider or replace the file with a transcript.
 The model chooses whether to use the declared native host capability `transcribe_audio`. Its
 catalog lists signed attachment IDs from the current input and the selected conversation branch.
@@ -778,6 +849,11 @@ processing error; the caption must not continue alone.
 ### Fix pattern
 
 - parse attachment events from the LibreChat stream
+- ordinary Main final text and proactive follow-ups cover only canonical download grants and exact
+  selected aliases on verified Files for the authenticated Core owner/message; render these as
+  authored labels while keeping ordinary source links clickable. Ordinary Main uses the public
+  final Message identity; private native admission metadata stays outside the channel. Stream
+  previews remain unverified; missing or foreign identity never covers a link
 - download bytes through the gateway
 - send images as albums when appropriate
 - send non-image files as documents
@@ -876,4 +952,8 @@ account identifiers.
 Main answers, proactive worker answers, attachments and real errors keep their existing delivery
 contracts. When a user asks about a notice, model-authored explanatory or quoted text remains
 ordinary conversational content and may be spoken. No keyword/emoji filter suppresses it.
+An accepted native completion with no text or files and a valid, required model delivery
+disposition of `skip` is a quiet result. Telegram must not label it malformed or request a retry.
+Explicit errors, incomplete native responses, missing or invalid disposition, and unframed empty
+responses keep their error path. A spoken skip does not suppress a nonempty text-only answer.
 See `20_Memory_System.md` and Telegram voice acceptance case `TGVOICE-009`.

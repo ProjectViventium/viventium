@@ -233,7 +233,7 @@ def ollama_cli_runtime_ready() -> bool:
 
 def ffmpeg_runtime_ready() -> bool:
     refresh_brew_paths()
-    if not command_exists("ffmpeg"):
+    if not command_exists("ffmpeg") or not command_exists("ffprobe"):
         return False
     completed = run_checked(
         [
@@ -253,7 +253,10 @@ def ffmpeg_runtime_ready() -> bool:
         ],
         timeout_seconds=5.0,
     )
-    return completed.returncode == 0
+    if completed.returncode != 0:
+        return False
+    probe = run_checked(["ffprobe", "-v", "error", "-version"], timeout_seconds=5.0)
+    return probe.returncode == 0
 
 
 def mongod_runtime_ready() -> bool:
@@ -1366,8 +1369,8 @@ def build_preflight_items(config: dict[str, Any]) -> list[PreflightItem]:
                 label="ffmpeg",
                 category="telegram media",
                 reason=(
-                    "Telegram voice notes and video notes need a runnable ffmpeg so local "
-                    "transcription and video-audio extraction work on a clean Mac"
+                    "Telegram media needs runnable ffmpeg and ffprobe for local transcription, "
+                    "audio conversion, duration checks and video-audio extraction"
                 ),
                 status="ok" if ffmpeg_ready else "missing",
                 install_kind="brew_formula" if not ffmpeg_ready else "none",

@@ -433,6 +433,84 @@ def test_extract_final_error_from_error_content_part():
     assert extract_final_error(payload) == "Access denied"
 
 
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "native_status,audio,valid,required,source,text,error,quiet",
+    [
+        ("completed", "skip", True, True, "model", "", False, True),
+        ("pending", "skip", True, True, "model", "", False, False),
+        (None, "skip", True, True, "model", "", False, False),
+        ("completed", "eligible", True, True, "model", "", False, False),
+        ("completed", "skip", False, True, "model", "", False, False),
+        ("completed", "skip", True, False, "model", "", False, False),
+        ("completed", "skip", True, True, "fallback", "", False, False),
+        ("completed", "skip", True, True, "model", "", True, False),
+        ("completed", "skip", True, True, "model", "A text-only answer.", False, False),
+    ],
+)
+async def test_stream_completed_native_quiet_is_not_malformed(
+    monkeypatch, native_status, audio, valid, required, source, text, error, quiet,
+):
+    bridge = _make_bridge()
+    response = {
+        "messageId": "native-quiet-message",
+        "text": text,
+        "content": [{"type": "text", "text": text}],
+        "metadata": {"viventium": {"deliveryDisposition": {
+            "version": 1, "audio": audio, "valid": valid,
+            "required": required, "source": source,
+        }}},
+    }
+    if native_status is not None:
+        response["nativeResponse"] = {"status": native_status}
+    if error:
+        response.update(error=True, errorMessage="Provider rejected the request.")
+    payload = {"final": True, "responseMessage": response}
+
+    async def events(*, chunk_iter):
+        yield payload
+
+    class FakeResponse:
+        async def __aenter__(self):
+            return self
+        async def __aexit__(self, *args):
+            return False
+        def raise_for_status(self):
+            return None
+        def aiter_bytes(self):
+            async def chunks():
+                if False:
+                    yield b""
+            return chunks()
+
+    class FakeClient(FakeResponse):
+        def __init__(self, *args, **kwargs):
+            pass
+        def stream(self, *args, **kwargs):
+            return FakeResponse()
+
+    import TelegramVivBot.utils.librechat_bridge as module
+    monkeypatch.setattr(module, "iter_sse_json_events", events)
+    monkeypatch.setattr(module.httpx, "AsyncClient", FakeClient)
+    chunks = [chunk async for chunk in bridge._stream_response("native-quiet", "555")]
+    if quiet:
+        assert not any(isinstance(chunk, str) for chunk in chunks)
+        assert chunks == [{
+            "type": "delivery_disposition",
+            "delivery_disposition": response["metadata"]["viventium"]["deliveryDisposition"],
+            "required": True, "present": True,
+        }]
+    elif text:
+        assert text in chunks
+    elif error:
+        assert any(isinstance(chunk, dict) and chunk.get("type") == "bridge_error"
+                   for chunk in chunks)
+    else:
+        assert any(isinstance(chunk, str) and "No response received" in chunk
+                   for chunk in chunks)
+
+
 def test_empty_response_message_default(monkeypatch):
     monkeypatch.delenv("VIVENTIUM_TELEGRAM_EMPTY_RESPONSE_MESSAGE", raising=False)
     assert _empty_response_message() == "No response received. Please retry."
@@ -1857,6 +1935,8 @@ async def test_ask_stream_async_caches_voice_route_from_chat_start_for_all_deliv
     [
         ({"text": "Corrected total.", "presentationClaimToken": "claim-1", "presentationGeneration": 2}, False),
         ({"text": "Corrected total.", "cortexPresentation": {"claimToken": "claim-1"}}, False),
+        ({"text": "Native result.", "followUpSource": "durable_terminal_callback"}, False),
+        ({"text": "Native question.", "followUpSource": "durable_work_callback"}, False),
         ({"text": "Follow-up without a ledger identity."}, True),
     ],
 )
@@ -1929,6 +2009,7 @@ async def test_insight_listener_leaves_ledger_followups_to_durable_dispatcher(
     assert (len(live_sends) == 1) is expect_live_send
 
 
+@pytest.mark.asyncio
 async def test_insight_listener_treats_missing_completed_stream_as_benign(monkeypatch):
     _clear_telegram_followup_window_env(monkeypatch)
     monkeypatch.setenv("VIVENTIUM_TELEGRAM_FOLLOWUP_GRACE_S", "30")
@@ -4131,7 +4212,8 @@ async def test_poll_for_followup_sends_followup():
     assert "Follow up text" in messages[0][1] or "Follow" in messages[0][1]
 
 
-def test_poll_for_followup_leaves_ledger_backed_followup_to_durable_dispatcher():
+@pytest.mark.parametrize("source", [None, "durable_terminal_callback", "durable_work_callback"])
+def test_poll_for_followup_leaves_ledger_backed_followup_to_durable_dispatcher(source):
     """S0215: a ledger-backed follow-up sent from the poll path was refused and retracted."""
 
     async def scenario():
@@ -4155,8 +4237,8 @@ def test_poll_for_followup_leaves_ledger_backed_followup_to_durable_dispatcher()
         bridge.glasshive_timeout_s = 0.2
         state = {
             "cortexParts": [{"type": "cortex_insight", "status": "complete", "insight": "Done"}],
-            "followUp": {"text": "Correct total is 337."},
-            "insightDeliveries": [
+            "followUp": {"text": "Correct total is 337.", "followUpSource": source},
+            "insightDeliveries": [] if source else [
                 {
                     "deliveryId": "cidl_ledger",
                     "status": "pending",
@@ -5689,17 +5771,19 @@ async def test_order_fenced_followup_suppresses_mismatched_logical_revision():
         enforce_order_fence=True,
     )
     assert sent == []
+    assert not bridge._has_followup_sent(stream_id)
 
 
 @pytest.mark.asyncio
-async def test_order_fenced_followup_records_removal_when_commit_ack_is_stale():
+@pytest.mark.parametrize("terminal_ack", ["conflict", "stale_revision", "stale_source_order", "not_found"])
+async def test_order_fenced_followup_records_removal_when_commit_ack_is_stale(terminal_ack):
     bridge = _make_bridge()
     stream_id = "stream-commit-ack-stale"
     _bind_poll_delivery_authority(bridge, stream_id=stream_id)
     sent = []
     retractions = []
     acknowledgements = []
-    statuses = ["stale_revision", "recorded"]
+    statuses = [terminal_ack, "recorded"]
 
     async def on_message(chat_id, text, **_kwargs):
         sent.append((chat_id, text))
@@ -5728,6 +5812,12 @@ async def test_order_fenced_followup_records_removal_when_commit_ack_is_stale():
         "committed",
         "partial_removed",
     ]
+    assert bridge._has_followup_sent(stream_id)
+    assert not await bridge._send_followup_text_once(
+        "909", "Late result.", stream_id=stream_id, enforce_order_fence=True,
+    )
+    assert len(sent) == 1
+    assert len(acknowledgements) == 2
 
 
 @pytest.mark.asyncio
@@ -6497,6 +6587,107 @@ def test_extract_delivery_disposition_validates_the_versioned_final_metadata_con
     }
 
 
+@pytest.mark.parametrize("silent_first", [False, True])
+def test_extract_native_audio_ranges_keeps_unicode_text_and_only_eligible_audio(silent_first):
+    common = {"version": 1, "required": True, "valid": True, "source": "model"}
+    text = "Quiet 🧠.\nSpoken answer."
+    boundary = len("Quiet 🧠.\n".encode("utf-16-le")) // 2
+    ranges = [
+        {"start": 0, "end": boundary, "disposition": {**common, "audio": "skip" if silent_first else "eligible"}},
+        {"start": boundary, "end": len(text.encode("utf-16-le")) // 2,
+         "disposition": {**common, "audio": "eligible" if silent_first else "skip"}},
+    ]
+    payload = {"final": True, "responseMessage": {"content": [{"type": "text", "text": {"value": text},
+        "deliveryDispositionRanges": ranges}]}}
+    extracted = extract_delivery_disposition(payload)
+    assert extracted["audio_text"] == ("Spoken answer." if silent_first else "Quiet 🧠.\n")
+    assert extracted["delivery_disposition"] == {**common, "audio": "eligible"}
+    assert payload["responseMessage"]["content"][0]["text"]["value"] == text
+    assert extract_final_response_text(payload) == text
+
+
+@pytest.mark.parametrize("invalid", ["gap", "incomplete", "overlap", "surrogate", "wrong-source", "wrong-version", "uncovered-part", "empty"])
+def test_native_audio_ranges_fail_closed_without_losing_text(invalid):
+    import copy
+    common = {"version": 1, "audio": "eligible", "required": True, "valid": True, "source": "model"}
+    text = "A🧠B"
+    ranges = [{"start": 0, "end": 4, "disposition": common}]
+    if invalid == "gap": ranges[0]["start"] = 1
+    if invalid == "incomplete": ranges[0]["end"] = 3
+    if invalid == "overlap": ranges.append({"start": 3, "end": 4, "disposition": common})
+    if invalid == "surrogate": ranges = [{"start": 0, "end": 2, "disposition": common}, {"start": 2, "end": 4, "disposition": common}]
+    if invalid == "wrong-source": common["source"] = "transport"
+    if invalid == "wrong-version": common["version"] = 2
+    if invalid == "empty": ranges = []
+    content = [{"type": "text", "text": text, "deliveryDispositionRanges": ranges}]
+    if invalid == "uncovered-part": content.append({"type": "text", "text": "Still visible."})
+    payload = {"final": True, "responseMessage": {"content": content}}
+    retained = copy.deepcopy(payload)
+    extracted = extract_delivery_disposition(payload)
+    assert extracted["audio_text"] == ""
+    assert extracted["required"] is True
+    assert extracted["delivery_disposition"] is None
+    assert payload == retained
+
+
+def test_native_silent_ranges_derive_skip_from_model_authority():
+    common = {"version": 1, "audio": "skip", "required": True, "valid": True, "source": "model"}
+    extracted = extract_delivery_disposition({"final": True, "responseMessage": {"content": [
+        {"type": "text", "text": "Visible text.", "deliveryDispositionRanges": [
+            {"start": 0, "end": 13, "disposition": common}]}]}})
+    assert extracted["audio_text"] == ""
+    assert extracted["delivery_disposition"] == common
+
+
+@pytest.mark.parametrize("failure", [None, "hash", "content", "coverage", "legacy-skip", "typed-skip", "required-missing", "legacy-absent"])
+def test_native_callback_ranges_keep_text_and_speak_only_exact_bound_audio(monkeypatch, failure):
+    import asyncio
+    import hashlib
+    from TelegramVivBot.utils.voice import extract_followup_audio_text
+    text = "Read this 🧠.\nUseful result."
+    boundary = len("Read this 🧠.\n".encode("utf-16-le")) // 2
+    common = {"version": 1, "required": True, "valid": True, "source": "model"}
+    controls = {"sourceTextSha256": hashlib.sha256(text.encode()).hexdigest(), "audioContent": [
+        {"type": "text", "text": text, "deliveryDispositionRanges": [
+            {"start": 0, "end": boundary, "disposition": {**common, "audio": "skip"}},
+            {"start": boundary, "end": len(text.encode("utf-16-le")) // 2,
+             "disposition": {**common, "audio": "eligible"}}]}]}
+    if failure == "hash": controls["sourceTextSha256"] = "f" * 64
+    if failure == "content": controls["audioContent"][0]["text"] = "Changed content."
+    if failure == "coverage": controls["audioContent"][0]["deliveryDispositionRanges"][-1]["end"] -= 1
+    if failure == "legacy-skip": controls["skipVoice"] = True
+    if failure == "typed-skip": controls = {"deliveryDisposition": {**common, "audio": "skip"}}
+    if failure == "required-missing": controls = {"deliveryDisposition": {
+        **common, "audio": "skip", "valid": False, "source": "required_missing"}}
+    if failure == "legacy-absent": controls = {}
+    assert extract_followup_audio_text(text, controls) == (
+        "Useful result." if failure in (None, "legacy-skip") else
+        None if failure in ("typed-skip", "required-missing", "legacy-absent") else "")
+    synthesized = []
+    delivered = []
+    async def synthesize(value, *_args, **_kwargs):
+        synthesized.append(value)
+        return b"synthetic-media"
+    async def callback(chat_id, value, **kwargs):
+        delivered.append((value, kwargs.get("voice_audio")))
+        return True
+    fake_tts = types.ModuleType("utils.tts")
+    fake_tts.synthesize_speech = synthesize
+    fake_voice = types.ModuleType("utils.voice")
+    fake_voice.should_send_voice_reply = lambda **_kwargs: True
+    monkeypatch.setitem(sys.modules, "utils.tts", fake_tts)
+    monkeypatch.setitem(sys.modules, "utils.voice", fake_voice)
+    fake_config = types.ModuleType("config")
+    fake_config.Users = types.SimpleNamespace(get_config=lambda *_args: True)
+    monkeypatch.setitem(sys.modules, "config", fake_config)
+    bridge = _make_bridge()
+    bridge.set_on_message_callback(callback)
+    assert asyncio.run(bridge._send_followup_text("505", text, delivery_controls=controls)) is True
+    assert "Read this 🧠." in delivered[0][0]
+    assert "Useful result." in delivered[0][0]
+    assert synthesized == (["Useful result."] if failure is None else [text] if failure == "legacy-absent" else [])
+
+
 @pytest.mark.parametrize(
     ("candidate", "required", "expected_required"),
     [
@@ -6887,7 +7078,7 @@ async def test_ack_delivery_commits_exact_durable_effect_identity(monkeypatch):
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("event", ["run.needs_input", "run.blocked"])
+@pytest.mark.parametrize("event", ["run.needs_input", "run.blocked", "checkpoint.ready", "takeover.requested"])
 async def test_glasshive_nonterminal_attention_delivery_uses_its_atomic_claim(event):
     bridge = _make_bridge()
     messages = []
@@ -6927,7 +7118,9 @@ async def test_glasshive_nonterminal_attention_delivery_uses_its_atomic_claim(ev
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("current_request", [True, False])
-async def test_native_permission_attention_rechecks_owner_work_and_carries_signed_topic(monkeypatch, current_request):
+@pytest.mark.parametrize("event", ["run.needs_input", "run.blocked", "checkpoint.ready", "takeover.requested"])
+@pytest.mark.parametrize("kind", ["permission", "question"])
+async def test_native_permission_attention_rechecks_owner_work_and_carries_signed_topic(monkeypatch, current_request, event, kind):
     from TelegramVivBot.utils import orchestration
     from TelegramVivBot.utils import librechat_bridge as bridge_module
     bridge = _make_bridge()
@@ -6939,6 +7132,22 @@ async def test_native_permission_attention_rechecks_owner_work_and_carries_signe
         "message": "Allow the requested operation?", "requestedSchema": {"type": "object",
         "required": ["optionId"], "properties": {"optionId": {"type": "string",
         "enum": ["allow_once", "reject_once"], "enumNames": ["Allow once", "Reject once"]}}}}
+    if kind == "question":
+        permission.update(kind="question", message="Which colour should I use?")
+        key = "Which colour?\nKeep exact spacing "
+        permission["requestedSchema"] = {
+            "type": "object", "required": ["answers"], "additionalProperties": False,
+            "properties": {
+                "answers": {"type": "object", "additionalProperties": False,
+                    "minProperties": 1, "maxProperties": 16, "properties": {
+                        key: {"type": "array", "uniqueItems": True, "minItems": 1,
+                            "maxItems": 1, "items": {"type": "string", "enum": ["Blue", "Other"]}}}},
+                "annotations": {"type": "object", "additionalProperties": False,
+                    "properties": {key: {"type": "object", "additionalProperties": False,
+                        "required": ["notes"], "properties": {"notes": {
+                            "type": "string", "minLength": 1, "maxLength": 8000}}}}},
+            },
+        }
     if not current_request:
         permission["requestId"] = "replacement"
     snapshot = orchestration.parse_snapshot({"available": True, "mode": "parallel"},
@@ -6963,7 +7172,7 @@ async def test_native_permission_attention_rechecks_owner_work_and_carries_signe
     bridge._mark_glasshive_delivery_status = mark
     delivery = {"deliveryId": "attention-1", "claimId": "claim-1", "telegramChatId": "404",
         "telegramUserId": "owner-1", "telegramMessageThreadId": "7", "workRef": "work-1",
-        "runId": "run-1", "event": "run.needs_input", "text": "Native question",
+        "runId": "run-1", "event": event, "text": "Native question",
         "nativeInputBinding": binding, "terminalCallbackResultKey": "", "workerCompletionPresentation": None}
     assert await bridge._deliver_glasshive_delivery(delivery) is True
     assert observed == ["owner-1"]
@@ -6971,7 +7180,9 @@ async def test_native_permission_attention_rechecks_owner_work_and_carries_signe
         assert sent[0][0:2] == (404, permission["message"])
         assert sent[0][2]["message_thread_id"] == 7
         assert sent[0][2]["telegram_user_id"] == "owner-1"
-        assert sent[0][2]["native_work_item"].pending_native_input.options[1][0] == "reject_once"
+        expected = "reject_once" if kind == "permission" else "Blue"
+        options = sent[0][2]["native_work_item"].pending_native_input.options
+        assert expected in {value for value, _ in options}
         assert marked[0][0] == "sent"
     else:
         assert sent == []
@@ -8220,3 +8431,222 @@ async def test_streamed_text_equality_does_not_suppress_new_followup_file_carrie
     await bridge._poll_for_followup(stream_id=stream_id, chat_id="404")
     assert len(delivered) == 1 and delivered[0]["attachments"] == attachments
     assert statuses == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('available',[True,False])
+async def test_owned_callback_without_fresh_stream_resolves_current_speaking_route(monkeypatch,available):
+    bridge=_make_bridge(); seen=[]; delivered=[]
+    bridge._cache_voice_route({'tts':{'provider':'cartesia','variant':'old'}},'123')
+    current={'tts':{'provider':'xai','variant':'Eve','source':'saved'}}
+    async def route(**kwargs):
+        assert kwargs['telegram_user_id']=='owner' and kwargs['telegram_chat_id']=='123'
+        if not available: raise TimeoutError()
+        return current
+    monkeypatch.setattr(bridge,'get_voice_route',route)
+    async def callback(_chat,_text,**kwargs): delivered.append(kwargs.get('voice_audio')); return ['91']
+    bridge.set_on_message_callback(callback)
+    async def synthesize(_text,_convo,*,voice_route=None): seen.append(voice_route);return b'native-media'
+    monkeypatch.setitem(sys.modules,'config',types.SimpleNamespace(Users=types.SimpleNamespace(get_config=lambda *_:True)))
+    monkeypatch.setitem(sys.modules,'utils',types.ModuleType('utils'))
+    voice=types.ModuleType('utils.voice');voice.should_send_voice_reply=lambda **_:True
+    tts=types.ModuleType('utils.tts');tts.synthesize_speech=synthesize
+    monkeypatch.setitem(sys.modules,'utils.voice',voice);monkeypatch.setitem(sys.modules,'utils.tts',tts)
+    await bridge._deliver_callback(123,'Useful answer.',telegram_user_id='owner')
+    assert seen == ([current] if available else [])
+    assert delivered == ([b'native-media'] if available else [None])
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("terminal_ack", ["conflict", "stale_revision", "stale_source_order", "not_found"])
+async def test_sent_cortex_followup_terminal_ack_is_handled_without_claiming_acceptance(terminal_ack):
+    bridge = _make_bridge()
+    sends, acks, retractions = [], [], []
+    stream_id = "stream-cortex-terminal-ack"
+    async def send(chat_id, text, **kwargs):
+        sends.append((chat_id, text))
+        return {"message_ids": ["9020"]}
+    async def acknowledge(*args, **kwargs):
+        acks.append((args, kwargs))
+        return terminal_ack
+    async def retract(chat_id, message_id):
+        retractions.append((chat_id, message_id))
+    bridge.set_on_message_callback(send)
+    bridge.set_on_retraction_callback(retract)
+    bridge.ack_delivery_status = acknowledge
+    delivery = {"logicalTurnId": "turn-1", "logicalTurnRevision": 1,
+        "cortexPresentation": {"ownerId": "owner-1", "messageId": "cortex-1",
+            "parentMessageId": "main-1", "revision": 1, "generation": 1,
+            "claimToken": "claim-1", "presentationLeaseToken": "lease-1", "deliveryIds": ["delivery-1"],
+            "deliveryReceipts": [{"deliveryId": "delivery-1", "graphResultHash": "a" * 64}]}}
+    for _ in range(2):
+        assert not await bridge._send_followup_text_once(
+            "909", "Useful result.", stream_id=stream_id, cortex_delivery=delivery,
+        )
+    assert bridge._has_followup_sent(stream_id)
+    assert len(sends) == 1
+    assert len(acks) == 1
+    assert retractions == [(909, "9020")]
+    assert bridge._cortex_ack_store.pending_count() == 0
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("use_selected_alias", [False, True])
+async def test_worker_selected_file_grant_renders_label_and_uploads_exact_owned_file(use_selected_alias):
+    bridge = _make_bridge()
+    delivered = []
+    grant = "https://artifacts.example.test/v1/link-refs/ghr_1234567890abcdef"
+    file = {"user": "owner", "file_id": "native_" + "a" * 64,
+        "filename": "evidence.png", "filepath": "/uploads/owner/evidence.png", "type": "image/png",
+        "nativeOutputFile": {"version": 1, "status": "available", "messageId": "answer", "downloadUrl": grant}}
+    selected = "https://artifacts.example.test/v1/link-refs/selected-capture" if use_selected_alias else grant
+    if use_selected_alias:
+        file["nativeOutputFile"]["selectedReferences"] = [selected]
+    async def callback(chat_id, text, **kwargs):
+        await kwargs["before_side_effect"]()
+        delivered.append((text, kwargs.get("attachments")))
+        return {"message_ids": ["9001"], "delivery_unknown": False}
+    bridge.set_on_message_callback(callback)
+    bridge._authorize_glasshive_delivery = _fake_glasshive_dispatch_permit
+    bridge._renew_glasshive_delivery = _fake_glasshive_dispatch_permit_renewal
+    async def mark(*args, **kwargs): return True
+    bridge._mark_glasshive_delivery_status = mark
+    source = f"Selected: ![Evidence]({selected})\n[Source](https://docs.example.test)."
+    assert await bridge._deliver_glasshive_delivery({"deliveryId": "native-selected", "claimId": "claim",
+        "telegramChatId": "404", "userId": "owner", "callbackMessageId": "answer",
+        "event": "main.followup", "text": source, "attachments": [file]}) is True
+    assert delivered[0][0] == 'Selected: Evidence\n<a href="https://docs.example.test">Source</a>.'
+    assert delivered[0][1] == [file]
+    assert source == f"Selected: ![Evidence]({selected})\n[Source](https://docs.example.test)."
+
+
+@pytest.mark.parametrize("selected_references", [[], [
+    "https://artifacts.example.test/v1/link-refs/selected-capture",
+    "https://artifacts.example.test/v1/link-refs/selected-original",
+]])
+def test_only_exact_verified_owner_and_message_file_grants_cover_markdown_links(selected_references):
+    from TelegramVivBot.utils.librechat_bridge import _verified_attachment_grants
+    grant = "https://artifacts.example.test/v1/link-refs/ghr_1234567890abcdef"
+    file = {"user": "owner", "file_id": "native_" + "a" * 64,
+        "filename": "evidence.png", "filepath": "/uploads/owner/evidence.png",
+        "nativeOutputFile": {"version": 1, "status": "available", "messageId": "answer", "downloadUrl": grant}}
+    file["nativeOutputFile"]["selectedReferences"] = selected_references
+    grants = _verified_attachment_grants([file], ("owner", "answer"))
+    assert grants == frozenset({grant, *selected_references})
+    for reference in [grant, *selected_references]:
+        assert render_telegram_markdown(f"[Selected]({reference})", covered_file_grants=grants) == "Selected"
+        assert '<a href=' in render_telegram_markdown(f"[Adjacent]({reference}?other=1)", covered_file_grants=grants)
+    for identity in [None, ("other", "answer"), ("owner", "other")]:
+        assert _verified_attachment_grants([file], identity) == frozenset()
+    for broken in [{**file, "file_id": "ordinary"}, {**file, "filepath": ""},
+            {**file, "nativeOutputFile": {**file["nativeOutputFile"], "status": "unavailable"}}]:
+        assert _verified_attachment_grants([broken], ("owner", "answer")) == frozenset()
+
+
+@pytest.mark.parametrize("references", ["https://ordinary.example.test", {}, [None, 42, {}, ""]])
+def test_malformed_selected_aliases_do_not_cover_ordinary_links(references):
+    from TelegramVivBot.utils.librechat_bridge import _verified_attachment_grants
+    file = {"user": "owner", "file_id": "native_" + "a" * 64,
+        "filename": "evidence.png", "filepath": "/uploads/owner/evidence.png",
+        "nativeOutputFile": {"version": 1, "status": "available", "messageId": "answer",
+                             "selectedReferences": references}}
+    assert _verified_attachment_grants([file], ("owner", "answer")) == frozenset()
+
+
+@pytest.mark.parametrize("case", ["verified", "not-final", "missing-response", "missing-owner", "missing-message", "unfinished", "error", "user-created"])
+def test_final_native_file_identity_uses_the_core_public_response_scope(case):
+    from TelegramVivBot.utils.librechat_bridge import _native_file_identity_from_final
+    # The native producer's visible() projection strips private admission metadata.
+    response = {"messageId": "answer", "user": "owner", "unfinished": False,
+                "error": False, "isCreatedByUser": False}
+    payload = {"final": True, "responseMessage": response}
+    if case == "not-final":
+        payload["final"] = False
+    elif case == "missing-response":
+        payload.pop("responseMessage")
+    elif case == "missing-owner":
+        response.pop("user")
+    elif case == "missing-message":
+        response.pop("messageId")
+    elif case == "unfinished":
+        response["unfinished"] = True
+    elif case == "error":
+        response["error"] = True
+    elif case == "user-created":
+        response["isCreatedByUser"] = True
+    assert "nativeResponse" not in response
+    assert _native_file_identity_from_final(payload) == (
+        ("owner", "answer") if case == "verified" else None
+    )
+
+
+@pytest.mark.asyncio
+async def test_stream_response_final_attachment_carries_authenticated_native_file_identity(monkeypatch):
+    bridge = _make_bridge()
+
+    payloads = [
+        {
+            "final": True,
+            "responseMessage": {
+                "messageId": "answer", "user": "owner", "unfinished": False,
+                "error": False, "isCreatedByUser": False,
+                "attachments": [
+                    {"file_id": "file-1", "filename": "x.png", "filepath": "/images/u/x.png"}
+                ],
+                "content": [],
+            },
+        }
+    ]
+
+    async def fake_iter_sse_json_events(*, chunk_iter):
+        _ = chunk_iter
+        for payload in payloads:
+            yield payload
+
+    class _FakeResponse:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            _ = exc_type, exc, tb
+            return False
+
+        def raise_for_status(self):
+            return None
+
+        def aiter_bytes(self):
+            async def _gen():
+                if False:
+                    yield b""
+
+            return _gen()
+
+    class _FakeClient:
+        def __init__(self, *args, **kwargs):
+            _ = args, kwargs
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            _ = exc_type, exc, tb
+            return False
+
+        def stream(self, *args, **kwargs):
+            _ = args, kwargs
+            return _FakeResponse()
+
+    import TelegramVivBot.utils.librechat_bridge as bridge_module
+
+    monkeypatch.setattr(bridge_module, "iter_sse_json_events", fake_iter_sse_json_events)
+    monkeypatch.setattr(bridge_module.httpx, "AsyncClient", _FakeClient)
+
+    chunks = [chunk async for chunk in bridge._stream_response("stream-attach-final", "111")]
+
+    assert chunks == [
+        {
+            "type": "attachment",
+            "native_file_identity": ("owner", "answer"),
+            "attachment": {"file_id": "file-1", "filename": "x.png", "filepath": "/images/u/x.png"},
+        }
+    ]

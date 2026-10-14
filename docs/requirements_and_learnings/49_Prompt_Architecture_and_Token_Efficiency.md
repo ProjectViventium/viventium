@@ -40,6 +40,33 @@ ClaudeViv review conclusion:
 
 ## Implementation Log
 
+### 2026-10-14 Present Necessary Owner Input
+
+The registered Phase B user prompt distinguishes a promise or mention of choices from a question actually presented in the owner conversation. Presentation and answers must apply to the current accepted work and request. An answer or completed artifact from another work does not prove this need fulfilled without an applicable binding. Relevant current-work history, standing preferences and explicit permission remain usable. Already presented questions and needs resolved by the current conversation remain silent. A completed worker turn alone does not fulfill the accepted goal. This is model-owned judgment over existing evidence; it adds no runtime question detection, forced callback delivery or native approval authority.
+
+The existing `phase_b_followup` case family covers the promise boundary, an already presented question, an answered question, another necessary accepted input and an optional generic question. Old/proposed exact configured Voice and Main models and real delivery remain separate evidence gates.
+
+### 2026-10-13 Durable Nonterminal Follow-Up Evidence
+
+The registered Phase B user prompt covers both `durable_terminal_callback` and
+`durable_work_callback`. A completed native turn does not prove that the accepted goal is fulfilled.
+A `run.needs_input` callback is an unresolved nonterminal wait; a pre-invocation blocker does not
+prove that the worker started the task. Main judges the accepted goal, supplied report and current
+conversation, and presents a still-needed question or owner action once. Plain evidence creates no
+native form or approval authority. Generic optional questions and stale, superseded or resolved
+needs still return `{NTA}`. An unrelated later turn alone does not resolve an accepted mission need.
+
+This is a clarification of the existing system prompt's accepted-mission rule. Exact-model old/new
+Voice cases in the existing `phase_b_followup` bank distinguish the clarification from a demonstrated
+behavior failure. Source, rendered bundle, live lineage and real delivery evidence remain separate.
+
+### Current-Call Telemetry Registration
+
+Current-call identity and delivery context is a declared `surface_prompt` telemetry layer
+(`current_call`). Observing it must not mark parallel-work readiness as unknown on later Voice
+or text turns. Truly undeclared layer names remain unknown. This registration changes telemetry
+classification only; it does not change prompt content or weaken readiness checks.
+
 ### 2026-09-06 Delivery Constraints At The Follow-Up Boundary
 
 The source-owned Phase B prompt keeps useful evidence subordinate to the user's timing, conditions,
@@ -213,6 +240,12 @@ uses existing prompt owners rather than expanding Main into a tool manual:
 - Main's Prompt Workbench contract gets only the short decision policy for when an Outside World
   Reality Check is warranted and when Reality's returned evidence warrants optional Red Team
   challenge. It must not mechanically consult on every turn or route from runtime keywords.
+- `main.tools` owns explicit limits on execution and consultation. A request for Main to act
+  within its own declared capabilities, or to omit handoffs, limits foreground consultation and new
+  delegation. A missing capability is a blocker, not permission to change the executor. Background
+  cortex policies remain unchanged. This is model behavior: unchanged tool metadata or prompt
+  delivery does not prove compliance. Compare the same inputs on the exact configured route with
+  the full old and proposed authority, then exercise the affected user path.
 - Reality Check owns its own evidence/source/no-assumption instructions and tool-use rules. It is a
   new GlassHive Agent Builder agent, separate from the existing Deep Research cortex.
 - Red Team owns one execution prompt reused by its background and foreground roles. Do not fork or
@@ -1830,3 +1863,24 @@ fail closed. Standalone execution gains no hidden inline fallback.
 If the declared tail does not match, retain the original authority, omit this advisory fact,
 and record only a boolean skip. The native launch receipt checks the complete registered
 composition and rejects any changed authority, fact, or tail.
+
+### Accepted published files and new output capture
+
+`worker.conversation_file_delivery` distinguishes an accepted current owner-bound published file
+from a new or modified local output. Main may select the supplied signed link for unchanged
+delivery; the existing callback carrier imports and verifies that file for the authored destination.
+No delivery-only download, copy, reconstruction or publication is required. Descriptor metadata
+proves identity, not uninspected content. New or modified outputs still need normal native capture
+and selection. Managed composition uses the registered source; standalone component defaults
+remain independent. Exact-model old/proposed and real delivery gates remain separate from source
+lineage tests. No runtime route, origin rewrite or content inspection bypass is added.
+
+### Native history carrier and foreground maintenance
+
+A valid reviewed conversation prefix plus every newer source row may use the existing native
+body carrier when the completion serializer proves the tail fits with the reviewed capsule
+and all reserved peer context. Row count alone must not trigger foreground summary growth.
+Unknown capacity, unhydrated media, mixed or missing native capabilities, or genuine
+overflow keep exact-source reconciliation. A stale prefix is never reused; whole source
+may travel only after its exact fit proof. This does not truncate stored history
+or waive authority, source coverage, review, cancellation, or carrier bounds.

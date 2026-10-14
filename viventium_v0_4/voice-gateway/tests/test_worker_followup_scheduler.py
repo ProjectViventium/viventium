@@ -333,6 +333,43 @@ class TestCortexFollowupScheduler(unittest.IsolatedAsyncioTestCase):
                         abandoned.assert_awaited_once_with("gateway_initialization_failed")
                 await scheduler.close()
 
+    async def test_nonterminal_main_attention_survives_later_turn_through_owned_delivery(self):
+        session = _DummySession(); scheduler = self._build_scheduler(session=session)
+        claim, text = self._install_pending_worker_delivery(scheduler)
+        delivery = claim.return_value
+        delivery["workerCompletionPresentation"]["bindings"] = [{
+            "kind": "nonterminal_attention", "originRef": "origin-a", "workRef": "work-a",
+            "workerId": "worker-a", "runId": "run-a", "callbackRef": "callback_sha256:" + "a" * 64,
+            "event": "run.needs_input", "workTerminal": False, "evidenceId": "ghe_" + "b" * 32,
+        }]
+        self.assertIsNotNone(scheduler._validate_glasshive_worker_presentation(delivery, text))
+        scheduler._seq = 5  # A later unrelated turn has completed.
+        scheduler.set_task_stream_connected(True)
+        llm = self._callwide_llm(scheduler)
+        with mock.patch.object(worker.aiohttp, "ClientSession", _FakeClientSession):
+            event = {**self._callwide_event(), **self._pending_worker_delivery_event(type="snapshot"),
+                     "eventId": "nonterminal-attention", "sequence": 6}
+            self.assertTrue(await llm._relay_task_event_once(event))
+            await asyncio.gather(*tuple(scheduler._cortex_wake_tasks))
+            await asyncio.sleep(0)
+            self.assertFalse(await llm._relay_task_event_once(event))
+        self.assertEqual([call["text"] for call in session.say_calls], [text])
+        claim.assert_awaited_once()
+        scheduler._authorize_glasshive_delivery.assert_awaited_once()
+        await scheduler.close()
+
+    async def test_nonterminal_attention_rejects_fabricated_terminal_authority(self):
+        session = _DummySession(); scheduler = self._build_scheduler(session=session)
+        claim, text = self._install_pending_worker_delivery(scheduler)
+        delivery = claim.return_value
+        binding = {"kind": "nonterminal_attention", "originRef": "origin-a", "workRef": "work-a",
+                   "workerId": "worker-a", "runId": "run-a", "callbackRef": "callback_sha256:" + "a" * 64,
+                   "event": "run.needs_input", "workTerminal": False, "evidenceId": "ghe_" + "b" * 32}
+        for change in ({"workTerminal": True}, {"event": "run.completed"}, {"attemptNumber": 1},
+                       {"resultKey": "ghtr_" + "a" * 64}, {"evidenceId": "invalid"}):
+            delivery["workerCompletionPresentation"]["bindings"] = [{**binding, **change}]
+            self.assertIsNone(scheduler._validate_glasshive_worker_presentation(delivery, text))
+
     async def test_pending_worker_delivery_source_snapshot_claims_main_text_once(self):
         session = _DummySession(); scheduler = self._build_scheduler(session=session)
         claim, text = self._install_pending_worker_delivery(scheduler)
@@ -356,6 +393,30 @@ class TestCortexFollowupScheduler(unittest.IsolatedAsyncioTestCase):
         scheduler._fetch_glasshive.assert_not_awaited()
         scheduler._authorize_glasshive_delivery.assert_awaited_once()
         scheduler._renew_glasshive_delivery_permit.assert_awaited_once()
+        scheduler._maintain_glasshive_speech_permit.assert_awaited_once()
+        await scheduler.close()
+
+    async def test_pending_native_question_uses_exact_delivery_wake_once_with_actual_question(self):
+        session = _DummySession(); scheduler = self._build_scheduler(session=session)
+        claim, _ = self._install_pending_worker_delivery(scheduler)
+        delivery = claim.return_value
+        del delivery["workerCompletionPresentation"]
+        delivery.update(event="run.needs_input", text="Permit this operation?",
+            fullText="Permit this operation?", voiceRequestId="question-turn",
+            nativeInputBinding={"version": 1, "requestId": "question-one",
+                "requestFingerprint": "b" * 64, "runId": "run-one", "attemptId": "attempt-one",
+                "sessionId": "session-one", "expiresAt": "2099-01-01T00:00:00.000Z"})
+        scheduler.set_task_stream_connected(True)
+        llm = self._callwide_llm(scheduler)
+        event = {**self._callwide_event(), **self._pending_worker_delivery_event(type="snapshot"),
+            "eventId": "pending-native-question", "sequence": 5}
+        with mock.patch.object(worker.aiohttp, "ClientSession", _FakeClientSession):
+            self.assertTrue(await llm._relay_task_event_once(event))
+            await asyncio.gather(*tuple(scheduler._cortex_wake_tasks))
+            await asyncio.sleep(0)
+            self.assertFalse(await llm._relay_task_event_once(event))
+        self.assertEqual([call["text"] for call in session.say_calls], ["Permit this operation?"])
+        scheduler._authorize_glasshive_delivery.assert_awaited_once()
         scheduler._maintain_glasshive_speech_permit.assert_awaited_once()
         await scheduler.close()
 
@@ -2804,6 +2865,26 @@ class TestCortexFollowupScheduler(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(refreshed, renewed)
         self.assertTrue(released)
         self.assertTrue(settled)
+
+    async def test_exact_pending_question_accepts_identical_future_native_expiry_cap_only(self):
+        scheduler = self._build_scheduler(session=_DummySession())
+        expiry = datetime.now(timezone.utc) + timedelta(seconds=30)
+        initial = _dispatch_permit(delivery_id="question", claim_id="question-claim", expires_in_s=30)
+        initial["expiresAt"] = expiry.isoformat()
+        delivery = {"deliveryId": "question", "claimId": "question-claim", "event": "run.needs_input",
+            "runId": "question-run", "nativeInputBinding": {"version": 1, "runId": "question-run",
+                "expiresAt": expiry.isoformat()}}
+        self.assertEqual(scheduler._validate_glasshive_dispatch_permit(initial, delivery, previous=initial), initial)
+        for changed in ({**delivery, "event": "run.completed"},
+                        {**delivery, "runId": "other-run"},
+                        {**delivery, "nativeInputBinding": {"version": 1, "runId": "question-run",
+                            "expiresAt": (expiry + timedelta(seconds=1)).isoformat()}}):
+            self.assertIsNone(scheduler._validate_glasshive_dispatch_permit(initial, changed, previous=initial))
+        reduced = {**initial, "expiresAt": (expiry - timedelta(seconds=1)).isoformat()}
+        self.assertIsNone(scheduler._validate_glasshive_dispatch_permit(reduced, delivery, previous=initial))
+        changed = {**initial, "resultDigest": "sha256:" + "e" * 64}
+        self.assertIsNone(scheduler._validate_glasshive_dispatch_permit(changed, delivery, previous=initial))
+        await scheduler.close()
 
     async def test_coalesced_worker_completion_calls_exact_settlement_only_after_audio(self) -> None:
         session = _DummySession()

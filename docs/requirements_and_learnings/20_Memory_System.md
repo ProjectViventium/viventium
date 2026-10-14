@@ -840,9 +840,15 @@ The April 13, 2026 remote QA pass added another concrete continuity boundary:
 
 - A completed model/provider call does not prove that durable memory changed. The storage layer can
   still reject the proposed full-key replacement because it exceeds a key or global token budget.
-- A model-correctable budget rejection may receive one bounded correction attempt when no operation
-  from the rejected batch was applied. The retry must use structured policy data, preserve unrelated
-  facts, and keep the configured token limits unchanged.
+- Before the first durable mutation, validate the complete ordered proposal's structure and policy
+  with the existing preparation, budget checks and shared runtime-state transitions on a clone.
+  Later malformed operations or known budget excess must not partly apply earlier operations.
+  Execution retains per-mutation authority, revisions and storage acknowledgement checks; preflight
+  does not make several database writes atomic.
+- A model-correctable structural, key, operational-noise or budget rejection may receive one bounded
+  correction attempt when no operation from the rejected batch was applied. The retry must use
+  structured policy data, preserve unrelated facts, and keep the configured token limits unchanged.
+  Storage conflicts, unknown mutation outcomes and provider failures do not enter this policy retry.
 - Never retry a rejected batch after any operation in that batch applied; doing so could replay a
   partial write against stale revisions.
 - Only the final attempt's memory artifact may reach the user-visible stream. If the correction is
@@ -1489,3 +1495,16 @@ recovery, Core receipt persistence and independent worker delivery retain their 
 ordinary model-authored reply, including an explanation or quotation of a memory notice requested
 by the user, remains conversational text and may be spoken. Runtime uses the structured receipt
 lane, never a phrase or emoji filter. See Telegram voice case `TGVOICE-009` for affected acceptance.
+
+### Native Main presentation and saved-memory preparation
+
+A completed native answer captures its existing saved-memory writer before request cleanup. It
+prepares no graph-evidence lookup before the final response is presented. The same accepted-
+presentation callback used by external adapters starts that captured writer after server or adapter
+acceptance, once, without waiting for memory preparation or inference. A prepared writer is pending,
+not an accepted or successful memory save. Failed or removed presentation does not start it.
+
+The writer still reads the exact complete native graph evidence and retains source, owner, answer,
+configuration, admission and cancellation fences. Anchor-only tool metadata is not a substitute for
+complete graph evidence. Unavailable evidence remains a typed failure; saving is never claimed from
+an unverified cache. User-requested save failures remain visible through the existing truthful receipt.

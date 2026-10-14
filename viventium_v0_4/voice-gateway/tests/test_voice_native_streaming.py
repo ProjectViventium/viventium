@@ -118,7 +118,7 @@ def test_real_worker_initial_and_selected_callback_use_the_unwrapped_renderer():
     direct = SimpleNamespace(capabilities=SimpleNamespace(streaming=True))
     namespace.update(llm_impl=llm, capabilities=capabilities,
                      primary_voice_provider="synthetic", primary_tts_impl=direct,
-                     call_session_id="synthetic-call", turn_detection=None, primary_tts_ready=True,
+                     call_session_id="synthetic-call", turn_detection="vad", primary_tts_ready=True,
                      env=SimpleNamespace(
                          stt_provider="pywhispercpp", tts_provider="xai", tts_provider_fallback="",
                          stt_model="synthetic-stt", assemblyai_stt_model="synthetic-stt",
@@ -322,6 +322,25 @@ def test_native_candidate_checks_are_bounded_on_a_large_single_delta():
     with patch("librechat_llm.safe_voice_tts_prefix_end", wraps=safe_voice_tts_prefix_end) as guard:
         assert buffer.feed(text) == []
     assert guard.call_count <= 50
+
+
+@pytest.mark.parametrize("native", [True, False])
+@pytest.mark.parametrize("controls", [True, False])
+def test_long_speech_keeps_exact_output_with_bounded_completed_boundary(native, controls):
+    # Completed speech must not accumulate in the live normalization state. Pending
+    # syntax still belongs to its existing buffer and is not shortened by this guard.
+    phrase = "[sigh]<whisper>Keep 2.5 intact.</whisper> Next thought! "
+    source = phrase * 256
+    expected = source if controls else "Keep 2.5 intact. Next thought! " * 256
+    buffer = _buffer(native=native, controls=controls)
+    output = []
+    largest_completed_boundary = 0
+    for offset in range(0, len(source), 7):
+        output.extend(buffer.feed(source[offset:offset + 7]))
+        largest_completed_boundary = max(largest_completed_boundary, len(buffer._last_emitted_text))
+    output.extend(buffer.finalize())
+    assert "".join(output) == expected
+    assert max(largest_completed_boundary, len(buffer._last_emitted_text)) <= 2
 
 
 @pytest.mark.parametrize("text,audio,supersede", [
@@ -623,3 +642,12 @@ def test_pinned_xai_pushes_share_one_segment_until_end_input():
         assert sum(packet["type"] == "text.done" for packet in packets) == 1
         assert "".join(packet["delta"] for packet in packets if packet["type"] == "text.delta") == "Hello there."
     asyncio.run(run())
+
+
+def test_native_incomplete_ranges_never_use_legacy_audio_default():
+    from librechat_llm import _content_audio_segments
+    choice = {'version': 1, 'audio': 'eligible', 'source': 'model', 'valid': True, 'required': True}
+    for ranges in ([{'start': 1, 'end': 4, 'disposition': choice}],
+                   [{'start': 0, 'end': 3, 'disposition': choice}]):
+        part = {'type': 'text', 'text': 'abcd', 'deliveryDispositionRanges': ranges}
+        assert _content_audio_segments([part], default_skipped=False) == [('abcd', True)]

@@ -475,5 +475,39 @@ class TestMlxChatterboxCancellation(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(future.cancelled())
 
 
+class TestBufferedSpeechDeadline(unittest.TestCase):
+    def test_expired_or_invalid_budget_does_not_submit_native_work(self):
+        import math
+        import time
+        from mlx_chatterbox_tts import synthesize_wav_bytes
+        for deadline in (time.monotonic()-1, -1, math.nan, math.inf):
+            with self.subTest(deadline=deadline), mock.patch('mlx_chatterbox_tts._submit_mlx_work') as submit:
+                with self.assertRaises((TimeoutError,ValueError)):
+                    synthesize_wav_bytes('Useful answer.',config=MlxChatterboxConfig(),deadline=deadline)
+                submit.assert_not_called()
+
+    def test_expiry_cancels_only_own_queued_future_and_preserves_executor(self):
+        import time
+        from mlx_chatterbox_tts import synthesize_wav_bytes
+        release=threading.Event();submitted=[]
+        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+            blocker=executor.submit(release.wait)
+            def submit(function):
+                future=executor.submit(function);submitted.append(future);return future
+            try:
+                with mock.patch('mlx_chatterbox_tts._submit_mlx_work',side_effect=submit):
+                    with self.assertRaises(TimeoutError):
+                        synthesize_wav_bytes('Useful answer.',config=MlxChatterboxConfig(),
+                                             deadline=time.monotonic()+0.01)
+                unrelated=executor.submit(lambda:'other request preserved')
+                self.assertTrue(submitted[0].cancelled())
+                self.assertFalse(unrelated.cancelled())
+                release.set()
+                self.assertEqual(unrelated.result(timeout=1),'other request preserved')
+                blocker.result(timeout=1)
+            finally:
+                release.set()
+
+
 if __name__ == "__main__":
     unittest.main()

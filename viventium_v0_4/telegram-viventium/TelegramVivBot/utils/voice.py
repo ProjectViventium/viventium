@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+import hashlib
 from typing import Any, Optional
 
 try:
@@ -114,6 +115,85 @@ def resolve_delivery_audio_gate(
     if required:
         return False, "required_invalid"
     return True, "legacy"
+
+
+def extract_ranged_audio_text(content: Any) -> tuple[bool, bool, str]:
+    """Read canonical model-owned UTF-16 ranges without changing displayed text.
+
+    Return presence, validity and eligible text. Once ranges are present, every
+    text part needs complete, ordered coverage. Missing coverage stays silent.
+    """
+    if not isinstance(content, list):
+        return False, False, ""
+    parts = [part for part in content if isinstance(part, dict) and part.get("type") == "text"]
+    present = any("deliveryDispositionRanges" in part for part in parts)
+    if not present:
+        return False, False, ""
+    eligible = []
+    try:
+        for part in parts:
+            text = part.get("text")
+            if isinstance(text, dict):
+                text = text.get("value")
+            if not isinstance(text, str):
+                raise ValueError("invalid ranged text")
+            if not text:
+                continue
+            ranges = part.get("deliveryDispositionRanges")
+            if not isinstance(ranges, list) or (text and not ranges):
+                raise ValueError("missing delivery ranges")
+            encoded = text.encode("utf-16-le")
+            cursor = 0
+            for item in ranges:
+                if not isinstance(item, dict) or set(item) != {"start", "end", "disposition"}:
+                    raise ValueError("invalid delivery range")
+                start, end = item.get("start"), item.get("end")
+                disposition = normalize_delivery_disposition(item.get("disposition"))
+                if (type(start) is not int or type(end) is not int or start != cursor
+                        or end <= start or end * 2 > len(encoded)
+                        or disposition is None or disposition["required"] is not True
+                        or disposition["source"] != "model"):
+                    raise ValueError("invalid delivery choice")
+                segment = encoded[start * 2:end * 2].decode("utf-16-le")
+                if disposition["audio"] == "eligible":
+                    eligible.append(segment)
+                cursor = end
+            if cursor * 2 != len(encoded):
+                raise ValueError("incomplete delivery range coverage")
+    except (ValueError, UnicodeError):
+        return True, False, ""
+    return True, True, "".join(eligible)
+
+
+def extract_followup_audio_text(text: str, controls: Any) -> Optional[str]:
+    """Bind retained native ranges to this exact persisted callback text."""
+    if controls is None:
+        return None
+    if not isinstance(controls, dict):
+        return ""
+    if "audioContent" not in controls:
+        return "" if "sourceTextSha256" in controls else None
+    source_hash = controls.get("sourceTextSha256")
+    if (not isinstance(source_hash, str)
+            or hashlib.sha256(text.encode("utf-8")).hexdigest() != source_hash):
+        return ""
+    content = controls["audioContent"]
+    if not isinstance(content, list):
+        return ""
+    source = []
+    for part in content:
+        if not isinstance(part, dict) or part.get("type") != "text":
+            return ""
+        value = part.get("text")
+        if isinstance(value, dict):
+            value = value.get("value")
+        if not isinstance(value, str):
+            return ""
+        source.append(value)
+    if "".join(source) != text:
+        return ""
+    present, valid, eligible = extract_ranged_audio_text(content)
+    return eligible if present and valid else ""
 
 
 # === VIVENTIUM START ===
