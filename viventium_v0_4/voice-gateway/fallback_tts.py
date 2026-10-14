@@ -264,7 +264,13 @@ class _ProviderTextBoundaryNormalizer:
             self.last_decision = self.last_decision or "orphan_punctuation_not_forwarded"
             return ""
 
-        self._last_sent_text += cleaned
+        # Retain the boundary needed for decimals and spacing, not every word
+        # already forwarded to the provider. Whitespace-only chunks keep the
+        # preceding nonspace character for the next numeric continuation.
+        boundary = self._last_sent_text + cleaned
+        self._last_sent_text = boundary.rstrip()[-1:]
+        if boundary[-1:].isspace():
+            self._last_sent_text += boundary[-1:]
         return cleaned
 
     def _apply_pending_punctuation(self, text: str) -> str:

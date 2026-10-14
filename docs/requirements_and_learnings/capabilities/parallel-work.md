@@ -106,6 +106,15 @@ be recalled, and completion before its Core receipt remains an asynchronous boun
   remain distinct. A new unrelated message cannot strand an earlier completed result; useful Main
   synthesis reaches its authorized origin or existing governed continuation once.
 
+- Owner-wide work awareness preserves the original conversation, configured destination surfaces,
+  and retained result run/revision as typed delivery facts. A result delivered in another conversation
+  is not proof of delivery in the current conversation. Missing scope remains unknown; other-channel
+  work remains visible and reusable through the existing owner-scoped tools.
+- Retained result reads preserve verified output-file descriptors with the original callback and
+  result identity, as well as text and native media. A read neither reruns work nor changes delivery
+  state. Presenting a retained file in another conversation must use the existing authorized file
+  attachment path; a model statement or old delivery state is not a new delivery receipt.
+
 - **PW-028a:** A managed stop of the GlassHive runtime releases the host leases of its running
   runs with a typed `managed_shutdown` reason before it exits. The provider-liveness monitor never
   reads that silence as a stalled provider, startup reconciliation re-queues the same run with

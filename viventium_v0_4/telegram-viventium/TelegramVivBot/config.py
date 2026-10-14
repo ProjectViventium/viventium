@@ -400,71 +400,10 @@ ASSEMBLYAI_API_KEY = os.environ.get('ASSEMBLYAI_API_KEY')
 ASSEMBLYAI_BASE_URL = os.environ.get('ASSEMBLYAI_BASE_URL', 'https://api.assemblyai.com/v2')
 # === VIVENTIUM END ===
 MODEL = os.environ.get('MODEL', 'grok-4.5')
-TTS_VOICE = os.environ.get('TTS_VOICE', 'alloy')
-TTS_RESPONSE_FORMAT = os.environ.get('TTS_RESPONSE_FORMAT', 'mp3')
-TTS_PROVIDER = resolve_tts_provider(os.environ)
 # === VIVENTIUM START ===
-# Feature: Primary + fallback TTS provider selection (Cartesia primary, ElevenLabs fallback).
-# Backward compatible: if TTS_PROVIDER_PRIMARY is unset, TTS_PROVIDER is treated as the primary.
-TTS_PROVIDER_PRIMARY = (
-    os.environ.get('TTS_PROVIDER_PRIMARY', '').strip().lower() or TTS_PROVIDER
-)
-TTS_PROVIDER_FALLBACK = resolve_tts_provider_fallback(os.environ, TTS_PROVIDER_PRIMARY)
-TTS_MODEL = resolve_tts_model(
-    os.environ.get('TTS_MODEL'),
-    TTS_PROVIDER_PRIMARY or TTS_PROVIDER,
-    MODEL,
-    os.environ,
-)
-
-# Optional: allow a dedicated ElevenLabs voice id separate from OpenAI voice name.
-TTS_VOICE_ELEVENLABS = os.environ.get('TTS_VOICE_ELEVENLABS', '').strip() or TTS_VOICE
-# === VIVENTIUM END ===
-ELEVENLABS_API_KEY = os.environ.get('ELEVENLABS_API_KEY')
-ELEVENLABS_API_URL = os.environ.get('ELEVENLABS_API_URL', 'https://api.elevenlabs.io')
-# ElevenLabs Model Options:
-# - "eleven_turbo_v2_5" (recommended): Fastest, lowest latency (~75ms), cost-effective, best for real-time
-# - "eleven_multilingual_v2": Best quality, multilingual support, slower, higher cost
-# - "eleven_monolingual_v1": English only, older model
-# - "eleven_v3": Legacy model (not recommended)
-ELEVENLABS_MODEL = os.environ.get('ELEVENLABS_MODEL', 'eleven_turbo_v2_5')  # Changed default to turbo for speed/cost
-ELEVENLABS_SPEED = _get_float_env('ELEVENLABS_SPEED')
-ELEVENLABS_STABILITY = _get_float_env('ELEVENLABS_STABILITY')
-ELEVENLABS_SIMILARITY = _get_float_env('ELEVENLABS_SIMILARITY')
-ELEVENLABS_STYLE = _get_float_env('ELEVENLABS_STYLE')
-ELEVENLABS_USE_SPEAKER_BOOST = _get_bool_env('ELEVENLABS_USE_SPEAKER_BOOST')
-# === VIVENTIUM START ===
-# Feature: Cartesia TTS configuration for Telegram voice replies.
-# Aligns with voice-gateway defaults while remaining fully configurable.
-CARTESIA_API_KEY = os.environ.get('CARTESIA_API_KEY')
-VIVENTIUM_CARTESIA_API_URL = os.environ.get(
-    'VIVENTIUM_CARTESIA_API_URL', 'https://api.cartesia.ai/tts/bytes'
-)
-VIVENTIUM_CARTESIA_API_VERSION = os.environ.get('VIVENTIUM_CARTESIA_API_VERSION', '')
-VIVENTIUM_CARTESIA_MODEL_ID = os.environ.get('VIVENTIUM_CARTESIA_MODEL_ID', 'sonic-3')
-VIVENTIUM_CARTESIA_VOICE_ID = os.environ.get(
-    'VIVENTIUM_CARTESIA_VOICE_ID', 'e8e5fffb-252c-436d-b842-8879b84445b6'
-)
-VIVENTIUM_CARTESIA_SAMPLE_RATE = _get_int_env('VIVENTIUM_CARTESIA_SAMPLE_RATE', 44100)
-VIVENTIUM_CARTESIA_SPEED = _get_float_env('VIVENTIUM_CARTESIA_SPEED', 1.0)
-VIVENTIUM_CARTESIA_VOLUME = _get_float_env('VIVENTIUM_CARTESIA_VOLUME', 1.0)
-VIVENTIUM_CARTESIA_EMOTION = os.environ.get('VIVENTIUM_CARTESIA_EMOTION', 'neutral')
-VIVENTIUM_CARTESIA_LANGUAGE = os.environ.get('VIVENTIUM_CARTESIA_LANGUAGE', 'en')
-# === VIVENTIUM END ===
-
-# === VIVENTIUM START ===
-# Feature: xAI standalone TTS configuration for Telegram voice replies.
-VIVENTIUM_XAI_TTS_API_KEY = os.environ.get('VIVENTIUM_XAI_TTS_API_KEY', '').strip()
-XAI_API_KEY = VIVENTIUM_XAI_TTS_API_KEY or os.environ.get('XAI_API_KEY', '')
-VIVENTIUM_XAI_TTS_API_URL = os.environ.get('VIVENTIUM_XAI_TTS_API_URL', 'https://api.x.ai/v1/tts')
-VIVENTIUM_XAI_VOICE = os.environ.get('VIVENTIUM_XAI_VOICE', 'Sal')
-VIVENTIUM_XAI_LANGUAGE = os.environ.get('VIVENTIUM_XAI_LANGUAGE', 'en')
-VIVENTIUM_XAI_TTS_CODEC = os.environ.get('VIVENTIUM_XAI_TTS_CODEC', 'mp3')
-VIVENTIUM_XAI_TTS_SAMPLE_RATE = _get_int_env(
-    'VIVENTIUM_XAI_TTS_SAMPLE_RATE',
-    _get_int_env('VIVENTIUM_XAI_SAMPLE_RATE', 24000),
-)
-VIVENTIUM_XAI_TTS_BIT_RATE = _get_int_env('VIVENTIUM_XAI_TTS_BIT_RATE', 128000)
+# One pure settings owner also serves scheduled speech without loading bot state.
+from utils.stt_env import build_tts_settings
+globals().update(vars(build_tts_settings(os.environ)))
 # === VIVENTIUM END ===
 
 WEB_HOOK = os.environ.get('WEB_HOOK', None)

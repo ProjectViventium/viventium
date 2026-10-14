@@ -563,6 +563,8 @@ The supported flow is:
    - exports the resolved public origins back into the runtime
    - keeps the local frontend dev proxy pointed at the local LibreChat backend instead of feeding
      the public browser-facing API origin back into Vite
+   - proxies saved `/images` links to that same backend, so image previews and downloads survive
+     reload; the backend retains its configured image access checks and storage root
 4. remote access helper
    - provisions/reuses the selected remote-access provider
    - saves machine-local state in the runtime state directory

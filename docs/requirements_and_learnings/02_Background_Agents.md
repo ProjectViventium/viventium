@@ -345,9 +345,11 @@ Requirements:
   not enter that context. This does not wait for unrelated ongoing worker jobs.
 - Live context uses the native harness interjection capability, without interrupting or replaying
   Main. The Grok driver can provide it for a reviewed artifact, but product activation remains
-  gated on exact-Main authority, continuity, and response-contract acceptance. The production
-  Codex exec adapter and Anthropic adapter retain after-Main delivery; native Codex itself supports
-  Steer through App Server, whose production authority gate remains separate. A native
+  gated on exact-Main authority, continuity, and response-contract acceptance. The reviewed native adapters advertise same-turn input only for the exact admitted
+  run and supported contract. Host Claude Code uses the installed native safe-boundary hooks
+  through the existing authenticated attempt mailbox; hook delivery is queued input, not proof
+  of model consumption or usefulness. Unsupported access modes and contracts keep after-Main
+  delivery. A native
   `queued`/`pending` receipt is not proof of consumption or user
   presentation. The existing durable follow-up and model relevance/NTA decision remain responsible
   for the accepted batch on Voice, Text, and Telegram, including unsupported or too-late injection.
@@ -356,8 +358,13 @@ Requirements:
   network work. When enabled, preparation retains the exact background evidence before transport;
   current-turn and source-order checks repeat after that preparation. A newer user input or Stop
   prevents transport to the older turn.
-- Native streamed generations retain their ordered part controls. Complete repeated typed parts
-  are deduplicated before a later part can reach speech. An acknowledgement alone must never
+- Native streamed generations retain their ordered part controls. Distinct model-authored
+  generations remain distinct, including an explicitly requested repeat. Native transport identity
+  fences repeated observations; equal wording alone does not prove a replay. Every public text
+  part retains its own model-authored audio choice, including text-only parts. Existing UTF-16
+  delivery ranges carry those choices through terminal projection, saved history and channel
+  recovery. Empty silent continuation does not discard an earlier answer. Later valid public
+  content streams without waiting for its whole generation to complete. An acknowledgement alone must never
   suppress the durable follow-up. Model consumption, concise useful integration and real surface
   delivery still require acceptance evidence; source and framing checks do not prove them.
   The automatic courier requires the exact admitted delivery contract that owns this framing.
@@ -370,6 +377,11 @@ Requirements:
   scope, activated-agent one-line description, direct-action surface scope keys, result text,
   tool-call counts, timestamps, and error/degradation state. It must not carry secrets, raw logs,
   browser screenshots, local absolute paths, or private runtime artifacts.
+- Accepted worker image evidence stays private in Main synthesis input. Fetch its verified grant
+  path through the existing owner-authenticated native artifact transport; public DNS or ingress
+  must not gate a local continuation. Preserve the run identity, origin, MIME type, byte count and
+  SHA-256 checks. Load each bounded image group concurrently and retain source observation order.
+  Missing or invalid required pixels remain an explicit retryable synthesis failure.
 - Completion payloads must distinguish three terminal outcomes: visible insight, silent no-response
   success, and error. Logs should report visible insight counts, silent completion counts, and error
   counts separately so empty `{NTA}` output is not misclassified as an unexpected failure.

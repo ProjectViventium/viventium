@@ -133,6 +133,10 @@ PREDECESSOR_REQUIRED_COMPONENT_FILES = (
 CURRENT_REQUIRED_COMPONENT_FILES = (
     *PREDECESSOR_REQUIRED_COMPONENT_FILES,
     "viventium_v0_4/shared/voice/tts_provider_capabilities.json",
+    "viventium_v0_4/shared/telegram_tts.py",
+    "viventium_v0_4/shared/telegram_audio.py",
+    "viventium_v0_4/telegram-viventium/TelegramVivBot/utils/tts.py",
+    "viventium_v0_4/telegram-viventium/TelegramVivBot/utils/stt_env.py",
     "viventium_v0_4/shared/compiled_prompt_contract.py",
     "viventium_v0_4/shared/silero_vad_config.py",
     "viventium_v0_4/shared/whisper_cpp_segments.py",

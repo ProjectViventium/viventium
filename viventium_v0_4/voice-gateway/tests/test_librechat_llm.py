@@ -2875,6 +2875,16 @@ class _PublicLibreChatStreamingRunTests(unittest.TestCase):
         self.assertTrue(trace.has("tool_end"))
         self.assertIsNone(trace.first_breach({"tool_start->tool_end": 300}))
 
+    def test_native_clarification_task_event_retains_exact_keys_and_rejects_duplicate_questions(self) -> None:
+        task = _voice_task_event("native_question", 3)
+        question = {"key": "Which  size?", "label": "Which size?", "multiSelect": False,
+                    "options": [{"value": "Small", "label": "Small"}, {"value": "Other", "label": "Other"}]}
+        task["needsInput"] = {"prompt": "Choose a size.", "inputType": "native_question", "questionForm": {"questions": [question]}}
+        payload = {"event": "voice_task_event", "voiceTaskEvent": task}
+        self.assertIs(_extract_voice_task_event(payload), task)
+        task["needsInput"]["questionForm"]["questions"] = [question, question]
+        self.assertIsNone(_extract_voice_task_event(payload))
+
     def test_extracts_canonical_named_sse_task_event_without_rewriting(self) -> None:
         task_event = _voice_task_event("event_1", 3)
         payload = {"_sse_event": "voice_task_event", "voiceTaskEvent": task_event}
@@ -7323,6 +7333,40 @@ class TestVoicePresentationCoordinator(_PublicVoicePresentationCoordinatorTests)
 
 
 class TestNativeInputChoices(unittest.TestCase):
+    @staticmethod
+    def permission_detail_event():
+        task = _voice_task_event("native_detail", 1)
+        task.update(type="needs_input", state="needs_input", needsInput={
+            "prompt": "May I create the file? Allow once or Deny.", "inputType": "choice",
+            "choices": [{"value": "allow-once", "label": "Allow once"}],
+            "operationTitle": "Create synthetic.txt in the working folder.",
+            "nativeInputRequest": {"version": 1, "kind": "permission", "requestId": "permission-detail",
+                "requestFingerprint": "a" * 64, "runId": "run-detail", "attemptId": "attempt-detail",
+                "expiresAt": "2099-01-01T00:00:00.000Z"}})
+        return task
+
+    def test_permission_detail_reaches_actual_relay_without_changing_speech_prompt(self):
+        task = self.permission_detail_event()
+        self.assertIs(_extract_voice_task_event({"event": "voice_task_event", "voiceTaskEvent": task}), task)
+        observed = []
+        async def run():
+            llm = LibreChatLLM(origin="http://librechat.test",
+                auth=LibreChatAuth(call_session_id="call_1", call_secret="synthetic-secret"),
+                task_event_handler=observed.append)
+            return await llm._relay_task_event_once(task)
+        self.assertTrue(asyncio.run(run()))
+        self.assertEqual(observed, [task])
+        self.assertEqual(observed[0]["needsInput"]["prompt"], "May I create the file? Allow once or Deny.")
+
+    def test_permission_detail_rejects_unbound_nonpermission_malformed_or_oversized_values(self):
+        for changes in ({"operationTitle": "x" * 8001}, {"operationTitle": 42}, {"operationTitle": ""},
+                        {"inputType": "text"}, {"nativeInputRequest": None},
+                        {"nativeInputRequest": {**self.permission_detail_event()["needsInput"]["nativeInputRequest"], "kind": "question"}}):
+            with self.subTest(changes=list(changes)):
+                task = self.permission_detail_event()
+                task["needsInput"].update(changes)
+                self.assertIsNone(_extract_voice_task_event({"event": "voice_task_event", "voiceTaskEvent": task}))
+
     def test_preserves_valid_choices_and_rejects_malformed_choices(self):
         task = _voice_task_event("native_choice", 1)
         task.update(type="needs_input", state="needs_input", needsInput={"prompt":"Write the requested file", "inputType":"choice", "choices":[{"value":"allow-a", "label":"Allow once"}]})
@@ -8970,3 +9014,73 @@ class TestReadyReceiptWhileRemovalStalls(unittest.IsolatedAsyncioTestCase):
         for removal_error in (False,True):
             with self.subTest(removal_error=removal_error):
                 await self._ready_before_removal(removal_error=removal_error)
+
+class TestNativeQuestionSpeechOffer(unittest.TestCase):
+    def event(self, sequence=1):
+        return _voice_task_event('native-question-'+str(sequence), sequence, state='needs_input', phase='needs_input', event_type='needs_input',
+            streamId='stream_voice_1', owner={'kind':'generation_job','id':'stream_voice_1'}, needsInput={'prompt':'Choose size', 'inputType':'text',
+            'nativeInputRequest':{'version':1,'kind':'question','requestId':'q-1','requestFingerprint':'a'*64,'runId':'run-q','attemptId':'attempt-q','expiresAt':'2099-01-01T00:00:00Z'}})
+
+    def transport(self, batches):
+        class NativeSession(_FakeResumingSseSession):
+            def __init__(self):
+                super().__init__(batches); self.offered=False
+            def post(inner,url,*args,**kwargs):
+                if str(url).endswith('/native-input/speech-offer'):
+                    inner.post_calls.append((url,args,kwargs))
+                    if inner.offered: return _SequencedStatusResponse(409,{'error':'already-offered'})
+                    inner.offered=True
+                    return _FakeJsonResponse({'version':1,'outcome':'offered_unknown','requestKey':'b'*64,'nativeInputRequest':kwargs['json']['nativeInputRequest']})
+                return super().post(url,*args,**kwargs)
+        return NativeSession()
+
+    def test_native_offer_excludes_provider_resume_text_and_does_not_replay_on_reconnect(self):
+        event=self.event();snapshot=self.event(2)
+        transport=self.transport([[{'text':'Before. '},{'event':'voice_task_event','voiceTaskEvent':event}],
+            [{'sync':True,'resumeState':{'aggregatedContent':[{'type':'text','text':'Before. '}]}}, {'event':'voice_task_event','voiceTaskEvent':snapshot}, {'text':'After.'},
+             {'final':True,'responseMessage':{'content':[{'type':'text','text':'Before. After.'}]}}]])
+        chunks=asyncio.run(TestPublicPartCompletionCarrier()._run([],fake=transport))
+        self.assertEqual(''.join(chunk.delta.content or '' for chunk in chunks),'Before. Choose sizeAfter.')
+        markers=[chunk.delta.extra['viventium_native_input_offer'] for chunk in chunks if chunk.delta and 'viventium_native_input_offer' in (chunk.delta.extra or {})]
+        self.assertEqual(len(markers),1)
+
+    def test_native_offer_is_not_buffered_while_participant_disconnected(self):
+        event=self.event();transport=self.transport([[{'event':'voice_task_event','voiceTaskEvent':event},{'final':True,'responseMessage':{'content':[]}}]])
+        chunks=asyncio.run(TestPublicPartCompletionCarrier()._run([],fake=transport,connected=False,reconnect=False))
+        self.assertFalse(any('viventium_native_input_offer' in (chunk.delta.extra or {}) for chunk in chunks if chunk.delta))
+        self.assertFalse(any(str(url).endswith('/native-input/speech-offer') for url,_,_ in transport.post_calls))
+
+    def test_claim_response_does_not_offer_after_replacement_stop_or_disconnect(self):
+        async def run(change):
+            event=self.event()
+            connected=True
+            llm=LibreChatLLM(origin='http://librechat.test',auth=LibreChatAuth(call_session_id='call_1',call_secret='synthetic'),is_participant_connected=lambda:connected)
+            llm._task_event_gate.accept(event)
+            class Response(_FakeJsonResponse):
+                async def json(inner):
+                    nonlocal connected
+                    if change=='stop':
+                        llm._task_event_gate.mark_cancel_accepted(event['taskId'])
+                    elif change=='disconnect':
+                        connected=False
+                    else:
+                        next_event=self.event(2)
+                        next_event['needsInput']['nativeInputRequest']['requestFingerprint']='c'*64
+                        llm._task_event_gate.accept(next_event)
+                    return {'version':1,'outcome':'offered_unknown','requestKey':'b'*64,'nativeInputRequest':event['needsInput']['nativeInputRequest']}
+            class Session:
+                def post(inner,*args,**kwargs): return Response({})
+            self.assertIsNone(await llm.claim_native_input_speech_offer(event,'stream_voice_1',Session()))
+        for change in ['replacement','stop','disconnect']:
+            with self.subTest(change=change): asyncio.run(run(change))
+
+    def test_expired_wrong_generation_and_replaced_requests_do_not_offer(self):
+        async def run():
+            event=self.event(); transport=self.transport([])
+            llm=LibreChatLLM(origin='http://librechat.test',auth=LibreChatAuth(call_session_id='call_1',call_secret='synthetic'),is_participant_connected=lambda:True)
+            llm._task_event_gate.accept(event)
+            self.assertIsNone(await llm.claim_native_input_speech_offer(event,'foreign-stream',transport))
+            event['needsInput']['nativeInputRequest']['expiresAt']='2000-01-01T00:00:00Z';llm._task_event_gate.accept({**event,'sequence':2})
+            self.assertIsNone(await llm.claim_native_input_speech_offer(event,'stream_voice_1',transport))
+            self.assertFalse(transport.post_calls)
+        asyncio.run(run())

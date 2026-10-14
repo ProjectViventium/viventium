@@ -173,6 +173,11 @@ def _make_fake_runtime_repo_root(path: Path) -> None:
     (telegram_bot_root / "utils" / "telegram_preparation.py").write_text("SYNTHETIC = True\n", encoding="utf-8")
     for name in ("telegram_audio.py", "telegram_stt.py", "telegram_vad.py"):
         (telegram_bot_root / "utils" / name).write_text("SYNTHETIC = True\n", encoding="utf-8")
+    for name in ("tts.py", "stt_env.py"):
+        shutil.copy2(REPO_ROOT / "viventium_v0_4/telegram-viventium/TelegramVivBot/utils" / name,
+                     telegram_bot_root / "utils" / name)
+    for name in ("telegram_tts.py", "telegram_audio.py"):
+        shutil.copy2(REPO_ROOT / "viventium_v0_4/shared" / name, shared_root / name)
     (telegram_bot_root / "utils" / "singleton.py").write_text(
         "SYNTHETIC = True\n",
         encoding="utf-8",
@@ -2709,3 +2714,32 @@ def test_helper_uses_express_two_surface_health_contract() -> None:
     assert "(!self.requiresPlayground || self.playgroundReady)" in source
     assert 'values["VIVENTIUM_INSTALL_EXPERIENCE"] != "express"' in source
     assert "if runtime.requiresPlayground" in source
+
+
+def test_scheduler_speech_materialization_has_native_library_layout(tmp_path: Path) -> None:
+    # Exercise the actual installer transaction privately; no helper build or launch.
+    section = SCRIPT.read_text().split("install_scheduler_runtime_component() {", 1)[1]
+    program = section.split("<<'PY'", 1)[1].split("\nPY\n}", 1)[0]
+    support = tmp_path / "support"
+    target = support / "runtime/components/scheduling-cortex"
+    subprocess.run([sys.executable, "-", str(REPO_ROOT), str(support), str(target)],
+                   input=program, text=True, check=True, capture_output=True)
+    spec = importlib.util.spec_from_file_location(
+        "scheduler_speech_inventory", REPO_ROOT / "viventium_v0_4/shared/telegram_tts.py"
+    )
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    for relative in module.RUNTIME_SUPPORT_FILES:
+        assert (target / relative).read_bytes() == (REPO_ROOT / "viventium_v0_4" / relative).read_bytes()
+    for name in ("telegram_tts.py", "telegram_audio.py"):
+        assert (target / "shared" / name).read_bytes() == (REPO_ROOT / "viventium_v0_4/shared" / name).read_bytes()
+    assert not (target / "telegram-viventium/TelegramVivBot/bot.py").exists()
+    assert not (target / "telegram-viventium/TelegramVivBot/config.py").exists()
+    assert not (target / "telegram-viventium/TelegramVivBot/user_configs").exists()
+    subprocess.run([sys.executable, "-c", (
+        "import sys; sys.path.insert(0, 'shared'); import telegram_tts; "
+        "engine=telegram_tts._load('_viventium_telegram_speech_engine','tts.py'); "
+        "assert engine._TTS_PROVIDER_CONTRACTS; "
+        "assert not any(name in sys.modules for name in ('config','bot','livekit'))"
+    )], cwd=target, check=True, capture_output=True,
+        env={**os.environ, "PYTHONDONTWRITEBYTECODE": "1"})

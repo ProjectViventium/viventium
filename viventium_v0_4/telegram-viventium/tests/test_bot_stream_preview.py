@@ -55,6 +55,21 @@ def _isolate_source_order_cache():
     tg_bot._TELEGRAM_HELD_PRESENTATION_FENCES.clear()
 
 
+from functools import lru_cache
+
+@lru_cache(maxsize=1)
+def _valid_voice_bytes():
+    # Real synthetic media exercises actual format metadata through the bot consumer.
+    from io import BytesIO
+    import wave
+    from telegram_audio import package_telegram_audio
+    output=BytesIO()
+    with wave.open(output,'wb') as f:
+        f.setnchannels(1); f.setsampwidth(2); f.setframerate(16000)
+        f.writeframes(b"\x01\x00"*4000)
+    return package_telegram_audio(output.getvalue()).data
+
+
 class _Msg:
     def __init__(self, mid: int) -> None:
         self.message_id = mid
@@ -687,7 +702,7 @@ def test_deliver_proactive_telegram_message_keeps_text_canonical_and_voice_addit
             message_thread_id=77,
             text="**Bold** follow-up",
             parse_mode="MarkdownV2",
-            voice_audio=b"voice-bytes",
+            voice_audio=_valid_voice_bytes(),
             before_side_effect=authorize_transport,
         )
     )
@@ -704,8 +719,11 @@ def test_deliver_proactive_telegram_message_keeps_text_canonical_and_voice_addit
     assert bot.audios[0]["chat_id"] == 321
     assert bot.audios[0]["message_thread_id"] == 77
     assert bot.audios[0]["title"] == "Voice"
-    assert bot.audios[0]["audio"].getvalue() == b"voice-bytes"
+    assert bot.audios[0]["audio"].getvalue() == _valid_voice_bytes()
     assert authorizations == ["authorized", "authorized"]
+
+    assert bot.audios[0]["audio"].name == "Voice.mp3"
+    assert bot.audios[0]["duration"] == 1
 
 
 def test_deliver_proactive_telegram_message_falls_back_to_text_when_voice_send_fails():
@@ -721,7 +739,7 @@ def test_deliver_proactive_telegram_message_falls_back_to_text_when_voice_send_f
             chat_id=654,
             text="Plain follow-up",
             parse_mode=None,
-            voice_audio=b"voice-bytes",
+            voice_audio=_valid_voice_bytes(),
         )
     )
 
@@ -968,7 +986,7 @@ def test_get_viventium_response_always_voice_stays_text_mode_with_audio(monkeypa
 
     async def _fake_synthesize(_text, _convo_id, *, voice_route=None):
         _ = voice_route
-        return b"voice-bytes"
+        return _valid_voice_bytes()
 
     monkeypatch.setattr(
         tg_bot,
@@ -1158,7 +1176,7 @@ def test_get_viventium_response_applies_structured_delivery_disposition_preceden
 
     async def _fake_synthesize(tts_text, _convo_id, *, voice_route=None):
         synthesized.append((tts_text, voice_route))
-        return b"voice-bytes"
+        return _valid_voice_bytes()
 
     async def _noop_send_librechat_attachments(**_kwargs):
         return None
@@ -1208,6 +1226,48 @@ def test_get_viventium_response_applies_structured_delivery_disposition_preceden
     assert "SKIP_VOICE" not in rendered
     assert len(synthesized) == expected_audio_count
     assert len(context.bot.audios) == expected_audio_count
+
+
+@pytest.mark.parametrize("legacy_skip", [False, True])
+def test_bot_speaks_only_canonical_eligible_ranges_and_keeps_all_display_text(monkeypatch, legacy_skip):
+    from utils.librechat_bridge import extract_delivery_disposition
+    common = {"version": 1, "required": True, "valid": True, "source": "model"}
+    silent = "Read-first 🧠 text.\n"
+    eligible = "Here is the useful spoken result."
+    text = silent + eligible + ("\n{SKIP_VOICE}" if legacy_skip else "")
+    boundary = len(silent.encode("utf-16-le")) // 2
+    event = extract_delivery_disposition({"final": True, "responseMessage": {"content": [
+        {"type": "text", "text": text, "deliveryDispositionRanges": [
+            {"start": 0, "end": boundary, "disposition": {**common, "audio": "skip"}},
+            {"start": boundary, "end": len(text.encode("utf-16-le")) // 2,
+             "disposition": {**common, "audio": "eligible"}}]}]}})
+
+    class Robot:
+        async def ask_stream_async(self, *_args, **_kwargs):
+            yield text
+            yield event
+        def get_cached_voice_route(self, _key): return None
+        def reset(self, *_args, **_kwargs): pass
+
+    synthesized = []
+    async def synthesize(tts_text, _convo_id, *, voice_route=None):
+        synthesized.append(tts_text)
+        return _valid_voice_bytes()
+    async def attachments(**_kwargs): pass
+    monkeypatch.setattr(tg_bot, "Users", types.SimpleNamespace(get_config=lambda *_a, **_k: True))
+    monkeypatch.setattr(tg_bot, "send_librechat_attachments", attachments)
+    monkeypatch.setattr(tg_bot, "synthesize_speech", synthesize)
+    monkeypatch.setattr(tg_bot, "resolve_tts_selection", lambda **_k: {"provider": "xai", "source": "test", "variant": "Eve"})
+    context = _FakeContext()
+    asyncio.run(tg_bot.getViventiumResponse(update_message=_FakeUpdateMessage(), context=context,
+        title="", robot=Robot(), message="synthetic ranged delivery", chatid=111, messageid=222,
+        convo_id="chat-1", message_thread_id=None, voice_note_detected=False, files=None,
+        trace_id="test-ranged-delivery", telegram_message_id=222, telegram_update_id=333))
+    displayed = " ".join(str(item.get("text", "")) for item in context.bot.messages + context.bot.edits)
+    assert "Read-first 🧠 text." in displayed
+    assert eligible in displayed
+    assert synthesized == ([] if legacy_skip else [eligible])
+    assert len(context.bot.audios) == (0 if legacy_skip else 1)
 
 
 def test_long_response_keeps_early_skip_voice_control(monkeypatch):
@@ -1291,7 +1351,7 @@ def test_message_break_transient_edit_failure_retries_without_duplicate_or_drop(
 
     async def _fake_synthesize(_text, _convo_id, *, voice_route=None):
         _ = voice_route
-        return b"voice-bytes"
+        return _valid_voice_bytes()
 
     monkeypatch.setattr(
         tg_bot,
@@ -1412,7 +1472,7 @@ def test_long_response_keeps_early_message_break_and_safe_rendered_chunks(monkey
 
     async def _fake_synthesize(_text, _convo_id, *, voice_route=None):
         _ = voice_route
-        return b"voice-bytes"
+        return _valid_voice_bytes()
 
     monkeypatch.setattr(
         tg_bot,
@@ -1856,7 +1916,7 @@ def test_get_viventium_response_message_break_sends_two_bubbles_and_one_audio(mo
 
     async def _fake_synthesize(text, _convo_id, *, voice_route=None):
         synthesized.append(text)
-        return b"voice-bytes"
+        return _valid_voice_bytes()
 
     async def _noop_send_librechat_attachments(**_kwargs):
         return None
@@ -1992,7 +2052,7 @@ def test_get_viventium_response_voice_note_stays_text_mode_with_voice_note_input
 
     async def _fake_synthesize(_text, _convo_id, *, voice_route=None):
         _ = voice_route
-        return b"voice-bytes"
+        return _valid_voice_bytes()
 
     monkeypatch.setattr(
         tg_bot,
@@ -4188,7 +4248,7 @@ def test_n_plus_one_during_tts_audio_send_retracts_text_and_audio(monkeypatch):
             _ = args, kwargs
 
     async def _fake_synthesize(*_args, **_kwargs):
-        return b"voice-bytes"
+        return _valid_voice_bytes()
 
     async def _noop_send_librechat_attachments(**_kwargs):
         return None
@@ -4817,7 +4877,7 @@ def test_get_viventium_response_final_tts_prefers_conversation_voice_route(monke
         seen["tts_text"] = text
         seen["convo_id"] = convo_id
         seen["voice_route"] = voice_route
-        return b"voice-bytes"
+        return _valid_voice_bytes()
 
     def _fake_resolve_tts_selection(*, voice_route=None):
         seen["resolved_voice_route"] = voice_route
@@ -4861,6 +4921,9 @@ def test_get_viventium_response_final_tts_prefers_conversation_voice_route(monke
     assert seen["tts_text"] == "Hello [laughter]"
     assert len(context.bot.audios) == 1
 
+    assert context.bot.audios[0]["audio"].name == "Voice.mp3"
+    assert context.bot.audios[0]["duration"] == 1
+
 
 def test_get_viventium_response_xai_tts_does_not_split_wrapped_text(monkeypatch):
     saved_route = {
@@ -4890,7 +4953,7 @@ def test_get_viventium_response_xai_tts_does_not_split_wrapped_text(monkeypatch)
         seen["chunks"].append(text)
         seen["convo_id"] = convo_id
         seen["voice_route"] = voice_route
-        return b"voice-bytes"
+        return _valid_voice_bytes()
 
     def _fake_resolve_tts_selection(*, voice_route=None):
         seen["resolved_voice_route"] = voice_route
@@ -6373,3 +6436,61 @@ async def test_long_file_callback_cancelled_by_permit_loss_keeps_returned_file_i
     assert bot.document_count == 2
     assert renewal_count == 4
     assert statuses == [("delivery_unknown", ["9001", "9101"])]
+
+
+@pytest.mark.parametrize("case", ["verified", "foreign-owner", "foreign-message", "missing-identity", "unavailable"])
+def test_ordinary_main_final_covers_only_verified_file_grants_and_keeps_preview_links(monkeypatch, case):
+    grant = "https://artifacts.example.test/v1/link-refs/capture"
+    alias = "https://artifacts.example.test/v1/link-refs/original"
+    ordinary = "https://docs.example.test/reference"
+    adjacent = grant + "?different=1"
+    text = f"![Capture]({grant}) [Original]({alias}) [Source]({ordinary}) [Adjacent]({adjacent})"
+    attachment = {"user": "owner", "file_id": "native_" + "a" * 64,
+        "filename": "capture.png", "filepath": "/uploads/owner/capture.png",
+        "type": "image/png", "bytes": 10,
+        "nativeOutputFile": {"version": 1, "status": "available", "messageId": "answer",
+                             "downloadUrl": grant, "selectedReferences": [alias]}}
+    if case == "foreign-owner":
+        attachment["user"] = "foreign"
+    elif case == "foreign-message":
+        attachment["nativeOutputFile"]["messageId"] = "foreign"
+    elif case == "unavailable":
+        attachment["nativeOutputFile"]["status"] = "unavailable"
+    identity = None if case == "missing-identity" else ("owner", "answer")
+    context = _FakeContext()
+    delivered_attachments = []
+
+    class Robot(_FakeRobot):
+        async def ask_stream_async(self, *_args, **_kwargs):
+            yield {"type": "attachment", "attachment": attachment, "native_file_identity": identity}
+            yield {"type": "assistant_preview", "text": text}
+            await asyncio.sleep(0.03)
+            preview = "\n".join(_final_delivered_texts(context))
+            assert f'href="{grant}"' in preview
+            assert f'href="{alias}"' in preview
+            yield {"type": "assistant_preview", "text": ""}
+            yield text
+
+    async def send_attachments(**kwargs):
+        delivered_attachments.extend(kwargs["attachments"])
+        return {"message_ids": [], "delivery_unknown": False, "outcomes": {}}
+
+    monkeypatch.setattr(tg_bot, "Users", types.SimpleNamespace(get_config=lambda *_a, **_k: False))
+    monkeypatch.setattr(tg_bot, "should_send_voice_reply", lambda **_k: False)
+    monkeypatch.setattr(tg_bot, "send_librechat_attachments", send_attachments)
+    monkeypatch.setattr(tg_bot.config, "VIVENTIUM_TELEGRAM_STREAM_EDIT_INTERVAL_S", 0.01)
+    asyncio.run(tg_bot.getViventiumResponse(update_message=_FakeUpdateMessage(), context=context,
+        title="", robot=Robot(), message="Return the selected images and source.", chatid=111,
+        messageid=222, convo_id="chat-1", message_thread_id=None,
+        telegram_message_id=222, telegram_update_id=333))
+    final = "\n".join(_final_delivered_texts(context))
+    if case == "verified":
+        assert f'href="{grant}"' not in final
+        assert f'href="{alias}"' not in final
+        assert "Capture" in final and "Original" in final
+    else:
+        assert f'href="{grant}"' in final
+        assert f'href="{alias}"' in final
+    assert f'href="{ordinary}"' in final
+    assert f'href="{adjacent}"' in final
+    assert delivered_attachments == [attachment]

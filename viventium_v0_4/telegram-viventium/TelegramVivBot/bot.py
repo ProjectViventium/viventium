@@ -57,6 +57,7 @@ from config import (
 from utils.scripts import GetMesageInfo, safe_get, is_emoji
 from utils.telegram_preparation import capture_telegram_preparation, restore_telegram_preparation
 from utils.tts import resolve_tts_selection, summarize_voice_markup, synthesize_speech
+from telegram_audio import package_telegram_audio
 from utils.livekit_bridge import LiveKitBridge
 from utils.env import coerce_bool
 from local_qa_service_ack import acknowledge_local_qa_service
@@ -82,6 +83,7 @@ from utils.voice import (
 from utils.librechat_bridge import (
     TelegramLinkRequired,
     render_telegram_markdown,
+    _verified_attachment_grants,
     sanitize_telegram_display_text,
     sanitize_telegram_text,
     is_no_response_only,
@@ -2512,7 +2514,8 @@ def _parallel_work_settings_view(snapshot):
     return format_parallel_work_settings(snapshot), InlineKeyboardMarkup(rows)
 
 
-def _native_permission_buttons(item, *, telegram_user_id, chat_id, message_thread_id="", work_index=None):
+def _native_permission_buttons(item, *, telegram_user_id, chat_id, message_thread_id="", work_index=None,
+                               native_prompt_text=None):
     pending = item.pending_native_input
     if pending is None:
         return []
@@ -2523,6 +2526,7 @@ def _native_permission_buttons(item, *, telegram_user_id, chat_id, message_threa
             telegram_user_id=str(telegram_user_id), chat_id=str(chat_id),
             message_thread_id=str(message_thread_id or ""),
             targets=[(item.work_ref, "resume")], native_input=pending.response(option_id),
+            native_prompt_text=native_prompt_text,
             expires_at=pending.expires_at,
         )
         if issued:
@@ -2698,6 +2702,7 @@ async def _edit_parallel_work_view(callback_query, context, *, text, reply_marku
         return None
     return await context.bot.send_message(
         chat_id=getattr(getattr(update, "effective_chat", None), "id", None),
+        message_thread_id=getattr(callback_query.message, "message_thread_id", None),
         text=text,
         reply_markup=reply_markup,
         disable_web_page_preview=True,
@@ -2736,7 +2741,7 @@ async def _execute_parallel_work_action(
                 if current.active_state != "fresh" or pending is None or pending.request_id != body["requestId"] or pending.fingerprint != body["requestFingerprint"]:
                     raise OrchestrationError("This harness question is no longer current. Refresh Active work.")
                 try:
-                    pending.response(body["content"]["optionId"])
+                    pending.validate_content(body["content"])
                 except ValueError as exc:
                     raise OrchestrationError("This harness choice is no longer offered. Refresh Active work.") from exc
         snapshot = await client.act(
@@ -3013,8 +3018,9 @@ async def deliver_proactive_telegram_message(
 
     if voice_audio:
         try:
-            audio_stream = BytesIO(voice_audio)
-            audio_stream.name = "Voice"
+            media = await asyncio.to_thread(package_telegram_audio, voice_audio)
+            audio_stream = BytesIO(media.data)
+            audio_stream.name = media.filename
             audio_stream.seek(0)
             if before_side_effect is not None:
                 await before_side_effect()
@@ -3022,6 +3028,7 @@ async def deliver_proactive_telegram_message(
                 chat_id=chat_id,
                 audio=audio_stream,
                 title="Voice",
+                duration=media.duration,
                 **{key: value for key, value in thread_kwargs.items() if key != "reply_markup"},
             )
             _remember_message_id(sent_audio)
@@ -3828,6 +3835,7 @@ async def _getViventiumResponse(
     delivery_disposition = None
     delivery_disposition_required = False
     delivery_disposition_present = False
+    delivery_audio_text = None
     final_segments = []
     logical_turn_id = ""
     logical_turn_revision = None
@@ -3981,6 +3989,9 @@ async def _getViventiumResponse(
     async def _source_is_current_for_presentation() -> bool:
         return await source_guard.is_current()
 
+    lc_attachments: list[dict[str, Any]] = []
+    native_file_identity: Optional[tuple[str, str]] = None
+
     def _render_telegram_response(text: str, *, streaming_preview: bool = False):
         # === VIVENTIUM NOTE ===
         # Fix: Always render HTML for text display, even when input was a voice note.
@@ -3991,6 +4002,8 @@ async def _getViventiumResponse(
                 text,
                 strip_voice_markup=telegram_audio_requested,
                 streaming_preview=streaming_preview,
+                covered_file_grants=(frozenset() if streaming_preview else
+                                     _verified_attachment_grants(lc_attachments, native_file_identity)),
             ),
             "HTML",
         )
@@ -4452,7 +4465,6 @@ async def _getViventiumResponse(
         first_chunk_logged = False
         # === VIVENTIUM START ===
         # Feature: Capture LibreChat attachment events (files/images) for Telegram delivery.
-        lc_attachments: list[dict[str, Any]] = []
         bridge_error_audio_allowed = True
         # === VIVENTIUM END ===
         # Installed local-QA only: all unrelated awaits are complete and source order was recorded
@@ -4550,6 +4562,9 @@ async def _getViventiumResponse(
                             )
                         )
                         delivery_disposition_present = data.get("present") is True
+                        delivery_audio_text = None
+                        if "audio_text" in data:
+                            delivery_audio_text = data["audio_text"] if isinstance(data["audio_text"], str) else ""
                         continue
                     if data.get("type") == "input_pending":
                         return
@@ -4586,6 +4601,10 @@ async def _getViventiumResponse(
                         attachment = data.get("attachment")
                         if isinstance(attachment, dict):
                             lc_attachments.append(attachment)
+                            identity = data.get("native_file_identity")
+                            if (isinstance(identity, (tuple, list)) and len(identity) == 2
+                                    and all(isinstance(value, str) and value for value in identity)):
+                                native_file_identity = tuple(identity)
                     continue
             # === VIVENTIUM END ===
             if stop_event.is_set() and convo_id == target_convo_id and answer_messageid and answer_messageid < reset_mess_id:
@@ -4918,6 +4937,8 @@ async def _getViventiumResponse(
         delivery_disposition["audio"] if disposition_valid else "missing"
     )
     tts_avoided_chars = len(tmpresult) if disposition_skip_effective else 0
+    if delivery_audio_text is not None and not disposition_skip_effective:
+        tts_avoided_chars = max(0, len(tmpresult) - len(delivery_audio_text))
     logger.info(
         "[TG_VOICE] trace=%s gate voice_note=%s always_voice=%s voice_enabled=%s "
         "send=%s voice_decision=%s model_skip_requested=%s model_skip_effective=%s "
@@ -4991,7 +5012,9 @@ async def _getViventiumResponse(
     # === VIVENTIUM END ===
     
     if should_send_voice:
-        cleaned_voice = config.prepare_tts_text(tmpresult)
+        cleaned_voice = config.prepare_tts_text(
+            delivery_audio_text if delivery_audio_text is not None else tmpresult
+        )
         if cleaned_voice:
             try:
                 if _voice_debug_enabled():
@@ -5100,14 +5123,15 @@ async def _getViventiumResponse(
                     # Small delay to ensure audio is fully ready (prevents last 0.5s cutoff)
                     await asyncio.sleep(0.2)
                     
-                    audio_stream = BytesIO(combined_audio)
-                    is_wav_provider = "chatterbox" in tts_provider or tts_provider == "cartesia"
-                    audio_stream.name = "Voice.wav" if is_wav_provider else "Voice.mp3"
+                    media = await asyncio.to_thread(package_telegram_audio, all_audio_chunks)
+                    audio_stream = BytesIO(media.data)
+                    audio_stream.name = media.filename
                     audio_stream.seek(0)
 
                     send_kwargs = {
                         "chat_id": chatid,
                         "audio": audio_stream,
+                        "duration": media.duration,
                         "title": "Voice",  # Set title to "Voice" instead of filename
                         "caption": escape("", italic=False), # it was "Voice response" but i removed it because it was not needed
                         "parse_mode": 'MarkdownV2',
@@ -5407,12 +5431,18 @@ async def _handle_parallel_work_callback(update, context, callback_query, data):
                     telegram_user_id=user_id,
                     reservation=reservation,
                 )
-                text, markup = _active_work_view(
-                    snapshot,
-                    telegram_user_id=user_id,
-                    chat_id=chat_id,
-                    message_thread_id=topic,
-                )
+                if reservation.target.native_prompt_text is not None:
+                    # Keep the actual question in history and retire its answered controls.
+                    # Native input is conversational; the full roster is an explicit view.
+                    text = reservation.target.native_prompt_text
+                    markup = None
+                else:
+                    text, markup = _active_work_view(
+                        snapshot,
+                        telegram_user_id=user_id,
+                        chat_id=chat_id,
+                        message_thread_id=topic,
+                    )
         elif data.startswith("PW:C:"):
             parts = data.split(":", 3)
             if len(parts) != 4 or parts[2] not in {"Y", "N"}:
@@ -6126,7 +6156,8 @@ async def post_init(application: Application) -> None:
             markup = None
             if native_work_item is not None:
                 rows = _native_permission_buttons(native_work_item, telegram_user_id=telegram_user_id,
-                    chat_id=chat_id, message_thread_id=message_thread_id)
+                    chat_id=chat_id, message_thread_id=message_thread_id,
+                    native_prompt_text=_strip_telegram_markdown(sanitize_telegram_text(text)))
                 stop = _get_parallel_work_callback_store().issue_actions(
                     telegram_user_id=telegram_user_id, chat_id=str(chat_id),
                     message_thread_id=str(message_thread_id or ""), targets=[(native_work_item.work_ref, "stop")],

@@ -155,3 +155,60 @@ def resolve_tts_model(explicit_model, provider, fallback_model, env=None) -> str
         return "Sal"
 
     return str(fallback_model or "").strip()
+
+
+# === VIVENTIUM START ===
+def build_tts_settings(environment=None):
+    """Pure shared speech settings; does not load Telegram users or runtime clients."""
+    import os
+    from types import SimpleNamespace
+    env = os.environ if environment is None else environment
+    def number(name, default=None, integer=False):
+        raw = env.get(name)
+        if raw is None:
+            return default
+        try:
+            return int(float(str(raw).strip())) if integer else float(str(raw).strip())
+        except (TypeError, ValueError, OverflowError):
+            return default
+    primary = str(env.get('TTS_PROVIDER_PRIMARY') or '').strip().lower() or resolve_tts_provider(env)
+    values = {
+        'API_KEY': env.get('API_KEY') or env.get('AZURE_OPENAI_API_KEY') or env.get('xai_api_key'),
+        'BASE_URL': env.get('BASE_URL', 'https://api.x.ai/v1/chat/completions'),
+        'TTS_VOICE': env.get('TTS_VOICE', 'alloy'),
+        'TTS_RESPONSE_FORMAT': env.get('TTS_RESPONSE_FORMAT', 'mp3'),
+        'TTS_PROVIDER': resolve_tts_provider(env),
+        'TTS_PROVIDER_PRIMARY': primary,
+        'TTS_PROVIDER_FALLBACK': resolve_tts_provider_fallback(env, primary),
+        'TTS_MODEL': resolve_tts_model(env.get('TTS_MODEL'), primary, env.get('MODEL', 'grok-4.5'), env),
+        'TTS_VOICE_ELEVENLABS': str(env.get('TTS_VOICE_ELEVENLABS') or '').strip() or env.get('TTS_VOICE', 'alloy'),
+        'ELEVENLABS_API_KEY': env.get('ELEVENLABS_API_KEY'),
+        'ELEVENLABS_API_URL': env.get('ELEVENLABS_API_URL', 'https://api.elevenlabs.io'),
+        'ELEVENLABS_MODEL': env.get('ELEVENLABS_MODEL', 'eleven_turbo_v2_5'),
+        'CARTESIA_API_KEY': env.get('CARTESIA_API_KEY'),
+        'VIVENTIUM_CARTESIA_API_URL': env.get('VIVENTIUM_CARTESIA_API_URL', 'https://api.cartesia.ai/tts/bytes'),
+        'VIVENTIUM_CARTESIA_API_VERSION': env.get('VIVENTIUM_CARTESIA_API_VERSION', ''),
+        'VIVENTIUM_CARTESIA_MODEL_ID': env.get('VIVENTIUM_CARTESIA_MODEL_ID', 'sonic-3'),
+        'VIVENTIUM_CARTESIA_VOICE_ID': env.get('VIVENTIUM_CARTESIA_VOICE_ID', 'e8e5fffb-252c-436d-b842-8879b84445b6'),
+        'VIVENTIUM_CARTESIA_SAMPLE_RATE': number('VIVENTIUM_CARTESIA_SAMPLE_RATE', 44100, True),
+        'VIVENTIUM_CARTESIA_SPEED': number('VIVENTIUM_CARTESIA_SPEED', 1.0),
+        'VIVENTIUM_CARTESIA_VOLUME': number('VIVENTIUM_CARTESIA_VOLUME', 1.0),
+        'VIVENTIUM_CARTESIA_EMOTION': env.get('VIVENTIUM_CARTESIA_EMOTION', 'neutral'),
+        'VIVENTIUM_CARTESIA_LANGUAGE': env.get('VIVENTIUM_CARTESIA_LANGUAGE', 'en'),
+        'VIVENTIUM_XAI_TTS_API_KEY': str(env.get('VIVENTIUM_XAI_TTS_API_KEY') or '').strip(),
+        'VIVENTIUM_XAI_TTS_API_URL': env.get('VIVENTIUM_XAI_TTS_API_URL', 'https://api.x.ai/v1/tts'),
+        'VIVENTIUM_XAI_VOICE': env.get('VIVENTIUM_XAI_VOICE', 'Sal'),
+        'VIVENTIUM_XAI_LANGUAGE': env.get('VIVENTIUM_XAI_LANGUAGE', 'en'),
+        'VIVENTIUM_XAI_TTS_CODEC': env.get('VIVENTIUM_XAI_TTS_CODEC', 'mp3'),
+        'VIVENTIUM_XAI_TTS_SAMPLE_RATE': number('VIVENTIUM_XAI_TTS_SAMPLE_RATE', number('VIVENTIUM_XAI_SAMPLE_RATE', 24000, True), True),
+        'VIVENTIUM_XAI_TTS_BIT_RATE': number('VIVENTIUM_XAI_TTS_BIT_RATE', 128000, True),
+    }
+    values['XAI_API_KEY'] = values['VIVENTIUM_XAI_TTS_API_KEY'] or env.get('XAI_API_KEY', '')
+    for name in ('SPEED', 'STABILITY', 'SIMILARITY', 'STYLE'):
+        values['ELEVENLABS_' + name] = number('ELEVENLABS_' + name)
+    raw_boost = env.get('ELEVENLABS_USE_SPEAKER_BOOST')
+    boost = str(raw_boost).strip().lower() if raw_boost is not None else ''
+    values['ELEVENLABS_USE_SPEAKER_BOOST'] = (True if boost in ('1', 'true', 'yes', 'on') else
+        False if boost in ('0', 'false', 'no', 'off') else None)
+    return SimpleNamespace(**values)
+# === VIVENTIUM END ===

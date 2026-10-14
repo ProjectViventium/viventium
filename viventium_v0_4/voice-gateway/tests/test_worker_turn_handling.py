@@ -481,6 +481,168 @@ class TestWorkerTurnHandling(unittest.TestCase):
         self.assertEqual(applied, [])
         self.assertGreaterEqual(len(suspended), 2)
 
+    def test_terminal_task_stream_410_shuts_down_job_once_and_cannot_restore(self) -> None:
+        session = self._task_stream_audio_session()
+        gate = TaskStreamAudioAuthorityGate(session)
+        shutdown = MagicMock()
+        fetch_state = MagicMock(side_effect=AssertionError("terminal call cannot fetch"))
+        authority = CallTaskStreamSpeechAuthority(
+            call_session_id="call_1",
+            fetch_call_state=fetch_state,
+            suspend=gate.suspend,
+            terminate=gate.terminate,
+            shutdown=shutdown,
+            apply_state=lambda _state: gate.restore(),
+        )
+
+        async def run():
+            await authority.on_stream_health(_stream_health("connected"))
+            self.assertTrue(authority.mark_session_ready(_authoritative_state()))
+            await authority.on_stream_health(_stream_health("terminal", status=410))
+            await authority.on_stream_health(_stream_health("stopped"))
+            await authority.on_stream_health(_stream_health("connected"))
+            self.assertFalse(await authority.reconcile())
+            self.assertFalse(authority.mark_session_ready(_authoritative_state()))
+
+        asyncio.run(run())
+
+        shutdown.assert_called_once_with()
+        fetch_state.assert_not_called()
+        self.assertFalse(authority.authoritative)
+        self.assertFalse(authority.stream_connected)
+        self.assertTrue(gate.gated)
+        self.assertEqual(session.interrupts, [True])
+
+    def test_retryable_task_stream_gap_keeps_job_live_and_restores_owned_snapshot(self) -> None:
+        shutdown = MagicMock()
+        fetched = []
+
+        async def fetch_state():
+            fetched.append("fresh")
+            return _authoritative_state(revision=8)
+
+        authority = CallTaskStreamSpeechAuthority(
+            call_session_id="call_1",
+            fetch_call_state=fetch_state,
+            suspend=lambda: None,
+            terminate=lambda: None,
+            shutdown=shutdown,
+            apply_state=lambda _state: True,
+        )
+
+        async def run():
+            await authority.on_stream_health(_stream_health("connected"))
+            self.assertTrue(authority.mark_session_ready(_authoritative_state()))
+            await authority.on_stream_health(_stream_health("disconnected"))
+            self.assertFalse(authority.authoritative)
+            await authority.on_stream_health(_stream_health("connected"))
+            self.assertTrue(authority.authoritative)
+
+        asyncio.run(run())
+
+        shutdown.assert_not_called()
+        self.assertEqual(fetched, ["fresh"])
+
+    def test_authoritative_end_uses_same_once_only_local_job_shutdown(self) -> None:
+        terminate = MagicMock()
+        shutdown = MagicMock()
+        authority = CallTaskStreamSpeechAuthority(
+            call_session_id="call_1",
+            fetch_call_state=None,
+            suspend=lambda: None,
+            terminate=terminate,
+            shutdown=shutdown,
+            apply_state=lambda _state: True,
+        )
+
+        authority.terminate()
+        authority.terminate()
+        asyncio.run(authority.on_stream_health(_stream_health("stopped")))
+
+        terminate.assert_called_once_with()
+        shutdown.assert_called_once_with()
+        self.assertFalse(authority.authoritative)
+        self.assertFalse(authority.stream_connected)
+
+    def test_inflight_task_stream_snapshot_cannot_restore_after_terminal_end(self) -> None:
+        shutdown = MagicMock()
+        applied = []
+
+        async def run():
+            fetching = asyncio.Event()
+            release = asyncio.Event()
+
+            async def fetch_state():
+                fetching.set()
+                await release.wait()
+                return _authoritative_state(revision=8)
+
+            authority = CallTaskStreamSpeechAuthority(
+                call_session_id="call_1",
+                fetch_call_state=fetch_state,
+                suspend=lambda: None,
+                terminate=lambda: None,
+                shutdown=shutdown,
+                apply_state=applied.append,
+            )
+            await authority.on_stream_health(_stream_health("connected"))
+            self.assertTrue(authority.mark_session_ready(_authoritative_state()))
+            applied.clear()
+            restore = asyncio.create_task(authority.reconcile())
+            await fetching.wait()
+            await authority.on_stream_health(_stream_health("terminal", status=410))
+            release.set()
+
+            self.assertFalse(await restore)
+            self.assertFalse(authority.authoritative)
+            self.assertFalse(authority.stream_connected)
+            self.assertEqual(applied, [])
+
+        asyncio.run(run())
+        shutdown.assert_called_once_with()
+
+    def test_inflight_task_stream_snapshot_stays_gated_until_new_connection(self) -> None:
+        shutdown = MagicMock()
+        applied = []
+        fetched = []
+
+        async def run():
+            fetching = asyncio.Event()
+            release = asyncio.Event()
+
+            async def fetch_state():
+                fetched.append("fresh")
+                fetching.set()
+                await release.wait()
+                return _authoritative_state(revision=8)
+
+            authority = CallTaskStreamSpeechAuthority(
+                call_session_id="call_1",
+                fetch_call_state=fetch_state,
+                suspend=lambda: None,
+                terminate=lambda: None,
+                shutdown=shutdown,
+                apply_state=applied.append,
+            )
+            await authority.on_stream_health(_stream_health("connected"))
+            self.assertTrue(authority.mark_session_ready(_authoritative_state()))
+            applied.clear()
+            restore = asyncio.create_task(authority.reconcile())
+            await fetching.wait()
+            await authority.on_stream_health(_stream_health("disconnected"))
+            release.set()
+
+            self.assertFalse(await restore)
+            self.assertFalse(authority.authoritative)
+            self.assertEqual(applied, [])
+            await authority.on_stream_health(_stream_health("connected"))
+            self.assertTrue(authority.authoritative)
+            self.assertEqual(len(applied), 1)
+
+        asyncio.run(run())
+        shutdown.assert_not_called()
+        self.assertEqual(fetched, ["fresh", "fresh"])
+
     def test_task_stream_reconnect_fetches_authoritative_snapshot_before_resuming(self) -> None:
         operations = []
         allow_snapshot = asyncio.Event()
@@ -2659,6 +2821,28 @@ class TestNativePublicPartFlush(unittest.TestCase):
         self.assertEqual([str(type(c).__name__) for c in chunks], ['ChatChunk', 'FlushSentinel', 'ChatChunk', 'FlushSentinel'])
         self.assertEqual(''.join(c.delta.content or '' for c in chunks if isinstance(c, ChatChunk)), text+' Later long part.')
         self.assertTrue(all(not c.delta.extra for c in chunks if isinstance(c, ChatChunk)))
+
+    def test_native_question_flushes_unterminated_text_while_provider_is_paused(self):
+        from livekit.agents.llm import ChatChunk, ChoiceDelta
+        from livekit.agents.types import FlushSentinel
+        from worker import Agent
+        async def run():
+            reached=asyncio.Event();release=asyncio.Event()
+            async def source(*args):
+                yield ChatChunk(id='main',delta=ChoiceDelta(content='Choose size'))
+                yield ChatChunk(id='main',delta=ChoiceDelta(extra={'viventium_native_input_offer':{'version':1,'requestKey':'a'*64,'streamId':'main'}}))
+                reached.set();await release.wait()
+                yield ChatChunk(id='main',delta=ChoiceDelta(content='Later actual answer.'))
+            agent=ViventiumVoiceAgent(instructions='Synthetic');chunks=[]
+            with patch.object(Agent.default,'llm_node',source):
+                stream=agent.llm_node(None,[],None)
+                chunks.append(await anext(stream));chunks.append(await anext(stream))
+                self.assertIsInstance(chunks[1],FlushSentinel)
+                self.assertEqual(chunks[0].delta.content,'Choose size')
+                self.assertFalse(chunks[0].delta.extra)
+                release.set();chunks.extend([chunk async for chunk in stream])
+            self.assertEqual(chunks[2].delta.content,'Later actual answer.')
+        asyncio.run(run())
 
     def test_no_content_or_untyped_extra_never_invents_flush(self):
         from livekit.agents.llm import ChatChunk, ChoiceDelta

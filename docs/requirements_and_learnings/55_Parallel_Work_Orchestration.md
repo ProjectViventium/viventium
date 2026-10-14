@@ -35,6 +35,15 @@ a disabled switch must not imply that the user's saved choice was changed.
 Normal install/status summaries report local service and configuration state. Public certification
 belongs to `bin/viventium release-check`; it must not appear as a claim that local work is disabled.
 Telegram admission and Web/Voice tool discovery use the same owner-scoped operational claim.
+The native prompt integrity inventory includes every registered prompt producer at its real
+emission boundary, including Grok's native authority instructions. A known producer omitted from
+that inventory must be corrected there; unknown or unregistered producers still block admission.
+Native host readiness checks its own authorization, storage and prompt integrity without running
+disabled isolated-mode process or runtime proofs. Its host mission count remains the durable
+count; enabled isolation retains the complete process, orphan, uncertainty and terminal fences.
+Invalid Active Work arguments return the typed MCP invalid-parameters error and the public schema
+explanation. They must not become a generic broker failure; native timeouts and authorization
+failures retain their separate error paths.
 Authenticated entry observes the owner early so the existing deduplicated readiness probe can overlap
 input and agent preparation. Authoring reuses fresh ready, unready or unavailable observations without
 waiting for recovery. Unknown or stale observations can join that probe only within the existing
@@ -43,6 +52,11 @@ turn can use its recovered result. Explicit status/warm-up callers keep the boun
 Content-free stage logs retain the authoring span, probe children, status, typed reason and storage facts.
 Interactive roster refresh failures also record stage, error class and elapsed time. Cached stale
 and unavailable results retain their existing meaning and deadlines.
+The same early owner observation starts the existing owner-scoped roster refresh without awaiting it.
+Shared call creation observes the owner after a valid voice route, before contextual preparation,
+so the read can overlap connection and user speech. Text, Voice and Telegram retain the same snapshot
+cache, singleflight, deadlines and observation fences. Warming grants no tools or action authority;
+a genuinely cold or failed read still carries truthful unavailable data within the authoring budget.
 Telegram account status preserves the saved preference during an outage and reports only the owner
 claim's availability and blockers. It does not add deployment certification to that claim. Source-order
 durability, owner isolation, authorization, and capacity checks still govern every admission.
@@ -59,6 +73,52 @@ It remains attached to the same accepted response through a tool handoff and is 
 final answer. This presentation must not enter the graph's aggregated answer or saved final text.
 Only the current owner, source, revision, and native producer may update it; Stop, supersession,
 and terminal delivery retain their existing clearing and once-only final rules.
+
+Hidden consultant steps use the existing nested `agent_update` stream part with the exact
+step's response ID, content index, and agent ID. Concurrent runnable metadata cannot replace
+that identity. Standard and resumable streams share this envelope. A retained flat legacy update
+uses the client's existing missing-ID rejection; it cannot break later valid stream events.
+
+A failed hidden foreground consult returns the actual typed provider failure to its accepted caller
+through the original tool result, with error status and preserved call attribution. Only a failure
+observed at the final model-attempt boundary can use this path; a tool error with the same API code
+cannot. The same current run, thread, user, single-consult and declared-return fences apply.
+Primary, visible, parallel, unbound, unknown, security, tool and cancelled failures retain their
+existing error path. This return adds no retry, model fallback or authored consultant answer.
+
+Preparing a participant fallback does not prove a completed response. Keep that initialization
+event in scoped logs; do not turn later Main text into a participant fallback completion notice.
+A successful Main fallback still uses the existing completion receipt and disclosure.
+Recovery notices and completed Voice provider traces require the exact current Main agent, run,
+thread, and latest invocation receipt. A hidden participant fallback or prior Main invocation
+cannot claim which model completed the current Main response.
+
+Callback run-state admission, terminal result CAS, and binding confirmation use the existing
+native database transaction retry for transient conflicts. These are session-bound database
+writes before presentation or model effects. Each retry rechecks current ownership and result
+fences. Persisted surface claim CAS and its claimed trace use the same native database retry;
+they retain one claim identity and recheck current run and accepted-result fences per attempt.
+Dispatch, model output, audio, native input acknowledgements, settlement and other callback effects
+retain their existing attempt boundaries.
+Nonterminal attention callbacks pass the same transaction session to the external-work projection
+without requiring a terminal result fence. Scheduled summaries run after commit through the
+existing deferred-effect mechanism; a rolled-back projection must not notify a destination.
+
+Mission-result synthesis uses its existing Phase B idempotency identity as the native stream
+identity in both the capability request and resolved provider headers. It must not inherit an
+unrelated foreground stream. Native output files and typed rejection receipts retain that exact
+owner, conversation, agent, message and stream binding. A missing result binding remains a typed
+terminal identity conflict (HTTP 409); it must not be reattached as a transient transport outage.
+The normal producer supplies the identity. This conflict protects malformed consumers from
+repeating a request that cannot bind its result; ordinary transient provider failures keep their
+existing retry and fallback behavior.
+
+Main's authored Phase B result retains its typed selected output files. The courier verifies
+those files against the trusted dispatch source and publisher, imports available bytes through
+the existing File API, and binds them to the actual authored destination. It merges callback
+files only after byte, size and SHA proof. Missing or rejected source files remain typed failures;
+workspace links and response prose cannot invent file authority. Ordinary cortex follow-up and
+mission-result synthesis consume the same carrier without gaining new tool or approval authority.
 
 The architecture has two levels and one durable control plane:
 
@@ -136,6 +196,14 @@ If you send more input before Queen finishes:
 
 Steering A must never affect B. If the target is unclear, Queen asks which Bee.
 
+An accepted Steer keeps its reserved correction if the exact source finishes or fails while its
+interruption is being confirmed. Preserve the source result and start the correction in the same
+mission/workspace after exact release proof. Completion is not Stop. A Stop, closed workspace,
+new lifecycle generation, or changed mission attachment must not be overridden. Replaying the
+same operation returns its existing correction, not a second run. If an action was not applied,
+the UI must state that and retain the user's draft instead of reporting success and clearing it.
+
+
 ### 6. Truthful states
 
 - `Queued` never means `Running`.
@@ -175,6 +243,36 @@ serves all goals; no prompt-specific route, task-type allowlist, or special work
 - Inputs preserve the owning feature contract: text or speech, links, uploads, grouped attachments,
   documents, images, audio, video, and prior artifacts keep their exact identity, bytes, order, and
   owner scope wherever that distinction matters.
+  A new mission may explicitly select prior attachments by exact `fileIds`. Core resolves each ID
+  against the authenticated owner's selected conversation branch and current File records at launch.
+  The 64-file mission bound applies after exact selection, so unselected recent history cannot hide
+  an explicitly selected older original. Ordinary Main upload projection retains its existing bound.
+  New native grants conditionally advertise and require an exact `fileIds` choice when the same
+  bounded Main attachment projection contains noncurrent owned historical files. The schema lists
+  only those IDs. An omitted advertised choice returns `file_selection_required` before launch;
+  `[]` adds no history. Current-only turns and legacy grants/server calls retain omission defaults.
+  Attachment choices resolve during catalog discovery and delegation, not unrelated tool calls.
+  A failed choice read omits only delegation with `delegation_file_choices_unavailable`; actual
+  delegation returns that typed failure before effects. Other granted tools remain available.
+  Advertised choices are a bounded model-visible catalog, not a new mission-wide ancestry limit:
+  legacy exact selection still resolves an older selected-branch ID before applying the mission bound.
+  Missing, deleted, foreign, or other-branch selections reject the launch. Current source uploads
+  keep their normal source selection and order. Exact file selection cannot bypass rapid-input
+  source ordinals; unselected current siblings and historical files do not cross the boundary.
+  Selected files use the existing signed upload projection for original bytes or their declared
+  extracted-text input. A filename or a copied text snippet does not grant access to an original file.
+  Historical file selection preserves the existing source-local `media_group_index` separately
+  from the model's selected-file order. A canonical File's source-message binding supplies the
+  position when it matches that exact attachment in the owned selected branch. Otherwise the
+  earliest occurrence in that branch supplies the source-local position; an owned reattached
+  File is not denied solely because its creation message is elsewhere. Existing ownership,
+  deletion and selected-branch checks still own access. Valid original descriptor group metadata
+  replaces a bare duplicate's fallback within the same source message; the first valid explicit
+  position wins conflicting duplicates. When metadata is absent or invalid, the persisted source
+  array position supplies it. Repeated references and separate message groups are not globally
+  renumbered. Current display metadata cannot replace historical source proof. Existing packets
+  and files are not reordered or backfilled; xPerfect receives selected IDs and preserved source
+  positions through the existing upload courier.
 - Outputs preserve the owning feature contract: text, citations and source detail, structured
   results, and generated or edited files/media/artifacts return once through Queen. They remain
   visible and downloadable from the origin surface and Active Work. If a surface cannot render an
@@ -712,7 +810,13 @@ Parallel Work extends rather than replaces the existing logical-turn revision co
   stale-while-revalidate cache, targets local p95 below 50 ms, and has a hard 100 ms cold wait. A
   timeout emits a compact `unavailable` capsule whenever effective Parallel mode or the trusted
   known-work hint requires awareness, rather than delaying Main or implying an empty roster. The
-  focused/known-empty path emits no capsule and performs no roster query. Deployment rollback
+  caller deadline does not cancel the shared owner-scoped read: it retains the bounded interactive
+  transport budget and may populate the current cache after the caller returns. Committed native
+  delegation and work-control mutations invalidate and warm that same cache without waiting.
+  An accepted current native callback warms it after a committed owner-scoped state transition;
+  historical callbacks, unchanged replays and failed or aborted writes do not trigger warming.
+  Invalidation, generation and observation fences reject superseded reads; stale or unavailable
+  facts grant no action authority. The focused/known-empty path emits no capsule and performs no roster query. Deployment rollback
   always forces effective mode to focused while retaining unavailable/active-work awareness.
 - The capsule is capped at 16 KiB. It prioritizes `needs_input`, `stopping`, and recently changed
   work, carries an explicit overflow count, and always points to `active_work_list` for the complete
@@ -740,7 +844,40 @@ Parallel Work extends rather than replaces the existing logical-turn revision co
   reference resolution. Core also resolves references selected from current verified mission
   evidence before display sanitization. Unknown or stale references do not grant image access.
   Recovery reuses the durable per-run invocation scope, not a later worker configuration or active
-  session. No automatic screenshot gallery,
+  session. Phase B retains the run/tool/content identity of explicitly selected accepted image
+  references or exact current accepted download/open grants and binds them back to the accepted
+  owner/run/callback evidence before using the existing verified File import. Code examples and
+  escaped literal brackets do not select attachments. Callback attempt, result revision and digest
+  remain fenced. The import uses
+  the owner-authenticated artifact transport and the existing byte, MIME, hash and delivery limits;
+  it does not require public ingress. Web selected links and images open the exact owner/message
+  File through its authenticated download route. Telegram covers the canonical download grant and
+  exact selected aliases from the same verified owner/message File receipt. It renders them as
+  their authored labels and uploads the verified attachment through the existing file delivery;
+  ordinary source links remain links. The ordinary Main final renderer receives the authenticated
+  Core public final Message owner/message identity with final attachment receipts and reuses the
+  same grant verifier; private native admission metadata remains outside the channel. Stream
+  previews remain unverified; absent or foreign identity cannot cover a link. Ordinary accepted
+  Main may also select a retained grant from an earlier completed native Main reply. Core verifies
+  that reply's owner/conversation, immutable native candidate and original file envelope, available
+  File receipt and canonical stored File fingerprint. The old selected URL is attribution; the
+  owned File supplies access after a temporary native grant expires. Core re-imports the stored bytes into
+  the new reply through the existing MIME/hash/size limits. Original request/run/attempt/publisher
+  identity remains source provenance; only the destination message changes. It rechecks the original
+  completed source and Files in the current publication transaction and composes existing callback
+  fences. Old attachment claims alone, foreign sources, missing Files and ordinary links grant no
+  attachment access. The old reply remains unchanged. Foreground Main, ordinary Phase B, mission
+  synthesis and empty-primary recovery share this import and source-publication guard. Ordinary accepted
+  Main replies use the same selection/import
+  boundary for retained evidence in the current owner/conversation, even when the provider emits no
+  current file envelope. The original callback owner/run/attempt, accepted operation generation,
+  result revision and digest must still match. File I/O stays outside transaction retries; the
+  original accepted operation is fenced again inside final Main publication. Only actually selected
+  original references travel on verified imported File receipts and resolve to their canonical
+  download grant before display. Canonical native candidate bytes stay exact. Declared Web assistant
+  presentation also consumes the existing messaging controls; user messages, code/quoted literal
+  examples, Markdown and ordinary sources remain unchanged. Unknown artifact references fail
+  synthesis, and unavailable file receipts preserve the useful reply and existing delivery notices. No automatic screenshot gallery,
   second attachment ledger or extra model is introduced. Missing or changed image bytes remain a
   synthesis failure eligible for existing recovery, never a successful image delivery. Deterministic
   projection checks and actual image selection/render/reload are separate acceptance gates.
@@ -789,8 +926,15 @@ Parallel Work extends rather than replaces the existing logical-turn revision co
   Native built-ins are a separate adapter capability: zero host tools alone does not prove that
   synthesis did not repeat work. Exact-model acceptance checks the native-call audit as well as the
   final text. Mixed header casing must never preserve bearer authority. It uses a distinct native session lane while
-  retaining the canonical Main continuity identity and the exact request-pinned
-  `MainContextSnapshotV1`. A missing or unbindable snapshot fails before provider invocation. Phase B
+  excluding Main's request-local turn-context header by case-insensitive name; its own follow-up
+  instructions and context remain authoritative. This also prevents an oversized Main continuity
+  carrier from rejecting an otherwise valid Phase B request. The lane preserves
+  the canonical Main continuity identity and the exact request-pinned
+  `MainContextSnapshotV1`. Across server and external presentation authority, Phase B reads Main tool evidence
+  through the existing bounded persisted-publication readiness primitive. Native generation alone
+  does not prove that the canonical parent is committed; exact source, owner and terminal-status
+  guards remain in force. This avoids turning a brief publication race into a durable retry.
+  A missing or unbindable snapshot fails before provider invocation. Phase B
   must never rotate, replace, interrupt, or terminate Main's active native session. The provider
   rejects any authority-changing session replacement while the old worker owns nonterminal work and
   returns the typed `conversation_session_authority_conflict` class without changing provider health.
@@ -869,13 +1013,25 @@ destinations and current account mapping, then creates one idempotent delivery r
 - GlassHive outbox success means `http_accepted`, not user delivery.
 - Core separately records callback persistence, target resolution, target enqueue, surface delivery,
   and acknowledgement. A terminal HTTP acceptance with zero resolvable targets alerts.
-- Each terminal card is immediate. Useful terminal prose from the same account is coalesced for at
-  most two seconds before Main authors it; callbacks remain individually durable and replayable.
+- Each terminal Active Work entry updates immediately. Useful terminal prose is coalesced for at
+  most two seconds within the same owner and origin conversation before Main authors it. An
+  independent conversation must not wait behind another conversation's synthesis or provider retry.
+  Groups sharing one conversation retain their existing ordering and immutable membership. Retained
+  blank, null and missing conversation IDs share the owner's fallback lane. Callbacks remain
+  individually durable and replayable.
 - Web chat, shared history and selected-branch exports show persisted callback and Main follow-up
   messages beside overlapping user turns through the existing scheduler branch projection. Their
   original parents remain unchanged. Additive results appear once, do not select another ordinary
   conversation branch, and cannot take ownership of the next chat input. An explicitly selected
-  older user continuation remains navigable; unselected user continuations remain hidden.
+  older user continuation remains navigable; unselected user continuations remain hidden. On a
+  fresh history load without an explicit selection, the existing branch controls choose the branch
+  with the latest ordinary descendant activity, preserving original sibling order and parents.
+  An older source with a recent continuation takes precedence over slightly newer incomplete roots.
+  Autonomous delivery and assistant descendants alone do not change that default; a later ordinary
+  user continuation does. Manual branch choices remain authoritative across remounts and updates
+  with the same choices. A new sibling from submission or regeneration retains the native newest-
+  sibling selection, including optimistic responses that do not yet have persisted timestamps.
+  Chat, shared history and selected-branch export use the same selection.
 - Every mission binding carries the server-owned Main agent identity from the authenticated launch
   request. Legacy bindings that predate that field recover it from the compiled Main-agent setting.
   Background synthesis rebuilds the ordinary authenticated request shape from the persisted user
@@ -923,7 +1079,7 @@ destinations and current account mapping, then creates one idempotent delivery r
   when a native broker call has no legacy tool-content marker. Unchanged work does not repeatedly
   refresh messages; stale or unavailable snapshots are not treated as fresh delivery evidence.
   A new foreground stream cancels in-flight message reads and retains a post-stream catch-up.
-- For terminal callback adjudication, a current durable `run.completed` or `run.failed` event is the
+- For terminal callback adjudication, a current durable terminal event (`run.completed`, `run.failed`, `run.cancelled` or `run.interrupted`) is the
   authoritative lifecycle source. Older conversational claims about a missing artifact, failure, or
   in-progress state are supporting context and cannot override that current terminal truth.
 - Provider authorization is checked after the exact run-scoped grant is minted but before the run
@@ -964,6 +1120,13 @@ destinations and current account mapping, then creates one idempotent delivery r
   authoritative. A declared long mission with no progress earns no extension; stale typed progress
   follows the attention transition. Malformed declarations fail closed. Runtime never infers
   liveness from prompt words and never silently changes provider or model.
+  A current native question or permission awaiting its owner suspends the inactivity watchdog
+  and ordinary maximum-duration reaper only while its exact run, attempt, session, request
+  fingerprint and native expiry remain valid. The same native request read owns this decision;
+  generic attention cannot suspend it. An answered, replaced, expired or absent request restores
+  ordinary liveness handling without extending its authority or changing a timeout.
+  Waiting rows do not consume the watchdog's ordinary check budget: its existing anchor/run
+  order continues to later candidates within the same fenced transaction.
 - A schedule occurrence that launches required external work enters `waiting_external` and keeps
   renewing its scheduler occurrence lease until every required mission is terminal. A short worker
   compute/run lease may be released independently when that worker is not executing. Acknowledgement
@@ -1131,6 +1294,10 @@ speaking persona or private Feeling store.
 Media-group ordering and source-to-file identity are preserved. Recall and upload resolution are
 owner-scoped in local and enterprise modes. The courier supplies factual context and available
 capabilities but never invents a plan, provider, artifact, success criterion, or claimed tool use.
+Fresh delegation packets select each owned upload by its stable file reference. Filenames remain
+display metadata in the unchanged upload records; equal filenames cannot merge or substitute files.
+A selected upload without a stable reference fails before dispatch. Existing mission follow-up and
+Steer retain their separate authenticated upload-ID, revision, hash and size receipt path.
 Prompt policy treats “also do X” as another objective only when Main judges it independently
 completable; ambiguous controls such as “stop that” require one focused disambiguation rather than
 guessing an active target.
@@ -1184,6 +1351,19 @@ authenticate back to Core to revalidate the same live mission, owner, connected 
 scope, and approval state. Re-mint cannot expand scope. Revocation, missing approval, policy change,
 or refresh failure moves work to `needs_input`. The authorization horizon remains 24 hours; later
 continuation requires explicit authorized Resume.
+An active authorization already bound to the exact owner/work can renew after its finite horizon
+expires even if native preflight blocked before Core recorded an expiry marker. Resume revalidates
+the same connected scope and updates only the horizon under an exact identity/scope/deadline fence.
+A retry after renewal but before native Resume acceptance reuses that fresh renewal without extending
+it again. A future first grant, malformed deadline, foreign scope or raced binding cannot use this
+recovery; Core-marked near-expiry renewal keeps its existing behavior. A previously renewed scope
+with fewer than sixty seconds left can renew under explicit Resume; sixty seconds or more reuses
+that horizon, matching admission's existing boundary.
+Horizon renewal requires a server-attested owner control or a complete current interactive human
+source whose original input receipt is verified. Model-selected Resume, a channel label, scheduler
+or callback context alone cannot renew it and retains typed authorization attention. The existing
+current-human attestation supports explicit spoken or typed owner continuation; model judgment owns
+its meaning, while runtime verifies source identity, currentness and receipt integrity.
 
 ## Rollout and completion gates
 
@@ -1537,6 +1717,11 @@ onto an empty parent removes the old delivery acknowledgement and advances its r
 and periodic recovery replay the outbox and ledger under the same owner; current native Main
 recovery and its pending/prepared exclusions remain separate.
 
+A persisted Cortex child wakes Voice only after its hydrated public task and existing internal
+owner binding agree on task, owner, call and conversation. Public task data does not expose owner
+identity. If Mongo retries a delivery transaction, the returned claim or settlement is the final
+committed callback result; an aborted attempt cannot supply its claim generation or lease fence.
+
 Web presentation requires an actual subscriber transport acknowledgement with matching job,
 message, delivery digest, claim and presentation lease. Redis chunk persistence alone is not
 presentation: the current resume aggregator does not consume Cortex follow-up events. Keep the
@@ -1629,6 +1814,28 @@ operation and response digest can reconcile an uncertain acknowledgement; native
 prevents a new expired approval. Question expiry or replacement does not remove an existing exact-run
 Stop capability.
 
+Native attention callbacks carry request identity only, not the full form or canonical question.
+Web, Telegram and Voice obtain that form and text through the existing owner-scoped current-work
+read. Web chat shows the canonical native question or permission in the existing callback row only
+after that read confirms its exact run, attempt, session, request, fingerprint and expiry. A typed presentation marker makes that row visible; generic lifecycle/status rows
+remain internal. The question stays in history after expiry or an answer, and a later request or
+status cannot replace it. Exact callback replay keeps the same row. Presentation grants no consent;
+existing current native input controls and authenticated human-answer actions own acknowledgement.
+
+Pending native questions use the existing durable Voice delivery task and dispatch permit. The
+presentation binds the exact owner, call, message, work, run, attempt, native session, request,
+fingerprint and expiry. Main's call presenter speaks the actual question once; internal waiting
+status is not speech. A bound native question or permission retains the same sanitized actionable
+text in its internal canonical callback message and delivery row. Presentation validates both
+against the current owner-scoped request; blank lifecycle projections cannot replace that text. The underlying worker remains waiting for the owner's actual offered choice.
+A still-pending pre-upgrade request can refresh its existing message and delivery with that same
+current question before a permit is issued; it must not lose the question or create a second queue.
+Answered, replaced, expired or terminated requests cannot obtain or renew speech authority. Main
+being busy, finished or on another turn does not discard an accepted pending worker question.
+This presentation grants no operation permission; existing native owner input controls remain the
+consent authority. Protocol and causal tests support implementation; real audible acceptance remains
+a separate candidate-bound gate.
+
 PW-039: **Stop** targets only the exact Bee, preserves its workspace/history, and stays `stopping` until process-tree termination is proved. If termination cannot be proved, keep `stopping` and expose `stop_failed` only as a typed action/attention error detail, never as a public WorkState or terminal result.
 PW-040: **Retry/Continue** starts a new run in the same mission/workspace.
 PW-041: **Dismiss** hides an acknowledged terminal card without deleting history. Terminate/archive is a separate operator action.
@@ -1657,7 +1864,7 @@ PW-063: Results remain visible/downloadable on the origin surface and Active Wor
 PW-064: Never describe a file that was not created, call a dead link delivered, duplicate a bubble/artifact, or expose another owner’s artifact.
 PW-065: Fallback preserves the same mission, workspace, controls, files, authorized tools, authority ceiling, and required result ability. If it cannot, show blocked/unavailable.
 PW-066: Authorization is minted at execution admission, revalidated without expansion, and becomes `needs_input` when revoked/expired/approval is missing.
-PW-067: Long-running authority lasts at most 24 hours; continuing beyond that needs a user-authorized resume.
+PW-067: Long-running authority lasts at most 24 hours; continuing beyond that needs a user-authorized resume. Runtime verifies the authenticated owner control or the complete current original human input receipt; Main, broker and scheduler actions without that provenance cannot extend it.
 PW-068: Delegation is atomic and idempotent. The trusted key uses tenant, account, source event, objective ordinal, and exact goal digest.
 PW-069: Same exact digest replay returns the same mission. Changed content under the same key fails closed. Distinct similar asks remain distinct; do not semantically dedupe them.
 PW-070: Core persists trusted origin/delivery binding before dispatch. Disconnect before commit creates no mission; after commit reconciles exactly one.
@@ -1705,3 +1912,429 @@ PW-111: A recoverable structured bridge/provider condition remains pending and s
 PW-112: Telegram text, callbacks, voice, settings, captioned/uncaptioned attachments, and Active Work handlers remain nonblocking while Core preserves source order and idempotency.
 PW-113: Native lifecycle projection uses actual run/session capability fields and ordered provider events—session started; child started/updated/stopped; team message. Codex streams `exec --json` and persists `thread.started` immediately. Claude exposes child truth only after the worker-local background/Agent View or process-owned stream-json probe passes; otherwise capability is false. Stream root output live, tee it to logs, and parse without inventing child truth.
 <!-- VIVENTIUM-STABLE-REQUIREMENT-DECLARATIONS:END -->
+
+
+## Approved simple Queen and worker orchestration
+
+Conversation orchestration grants retain the exact admitted request once in their signed,
+grant-scoped resource record. Delegation and work-action descriptors reference that same body.
+Hydration verifies the resource hash, grant identity, expiry and conversation authority before
+resolving allowed references. Legacy inline resources remain valid; missing, ambiguous or foreign
+references fail closed. The existing resource byte limit still applies. Source events, history,
+files, memory, Feelings and surface authority are preserved rather than clipped to fit.
+
+A successful current-turn grant records one hash-only creation event. Its grant hash uses the same
+SHA-256 format as broker request observations and joins to hashed signed message and conversation
+scope. This distinguishes an issued grant with no observed broker arrival without logging tokens,
+request content or raw identities. Diagnostic failures do not change capability responses.
+
+
+**Design decision (2026-10-10):** xPerfect owns harness and agentic management. Viventium is the
+user-input, cognitive-context and channel boundary. It calls the native xPerfect Queen/worker
+capabilities and presents their results; it must not create a second worker manager, intent router
+or orchestration framework. Native xPerfect must support this pattern without Viventium or
+LibreChat. This sharpens PW-004/005/006; it does not move channel delivery receipts or product
+Feelings out of their current owners.
+
+```mermaid
+flowchart TD
+  Input[User input: text, speech, files, history] --> Courier[Viventium: ordered input and authorized cognitive context]
+  Courier --> Queen[xPerfect Queen: one Main, model-owned judgment]
+  Queen --> Answer[Conversational output]
+  Queen --> A[xPerfect durable worker A]
+  Queen --> B[xPerfect durable worker B]
+  A --> Results[xPerfect results, failures and needed input]
+  B --> Results
+  Results --> Queen
+  Courier --> Cortex[Configured cognition in parallel]
+  Cortex --> Batch[One finite completed useful cohort]
+  Batch --> Queen
+  Answer --> Presenter[Viventium: one presenter and durable receipt per item]
+  Presenter --> Channels[Text / Telegram / Voice]
+  Results --> Status[Active Work and operator logs]
+```
+
+The batch-to-Queen edge uses the existing exact active native context capability when supported.
+Otherwise the same Queen receives a durable after-Main follow-up. Transport acknowledgement is
+not proof of model consumption. Codex uses its existing app-server route when the installed native
+schema probe supports exact-turn steering. Other exact admitted native routes may accept input
+at a verified safe boundary when their declared capability allows it. Unsupported, disabled or
+restricted contracts retain durable after-Main delivery. A queued acknowledgement is not proof
+of consumption. Grok live consumption remains subject to its artifact and authority gates.
+
+### Observable behavior
+
+- Main decides answer, delegate, Message, Steer or a truly needed question in its normal inference.
+  Host code does not classify phrases or invent the worker's plan.
+- A and B are independent accepted work. Main can answer C promptly. More related input revises
+  only an unfinished Main presentation; it does not erase accepted workers or replay their effects.
+- Activation and configured Cortices run alongside Main. Combine the finite activated cohort's
+  useful completed results, excluding silent or canceled results. Unrelated workers are never a
+  global response barrier.
+- Worker failure/input is evidence for the native Queen. Native input/approval questions keep their
+  existing exact run/request courier and controls; the host does not add another decision round.
+  Ask the actual needed question in the origin channel.
+  A worker may also end its native turn with a plain necessary question or blocker. That completed
+  turn does not prove the accepted objective is complete or that the question reached the user.
+  Queen judges the accepted goal, exact supplied report and current conversation, and surfaces an
+  unresolved input, approval, failure or blocker requiring the user's action once. Generic optional
+  Cortex questions, redundant or already-resolved evidence retain `{NTA}`. A plain report creates no
+  native form or approval authority; an owner answer can continue the same durable worker through
+  its ordinary Message action. Phase B must not silence necessary mission input merely because
+  the report is question-only. Its registered prompts own this judgment; runtime carries typed
+  provenance and never detects questions from words. Ordinary Phase B requires its registered
+  system and user prompts from the compiled bundle. Missing or invalid entries fail generation;
+  accepted mission evidence remains recoverable instead of being silently consumed as `{NTA}`.
+  With an admitted native audio contract, a completed empty assistant response with valid model
+  skip controls is also an explicit authored silence decision. Core retains that typed decision
+  through normal synthesis and the accepted-evidence fence; it creates no message, task or speech.
+  Arbitrary empty text, missing controls, tool transfers and failed generation are not silence.
+  Non-audio native requests do not admit that skip contract and retain their existing `{NTA}` path.
+  Internal lifecycle and memory receipts remain in Active Work/logs and never enter conversational
+  text or speech. Native input/approval forms retain their real authority and required reachable
+  controls; routine work URLs are optional.
+- Each Main-authored output has a distinct immutable delivery identity. One speaker can send an
+  immediate reply and a useful later result. Polling and dispatchers must not compete to present
+  the same item, and a terminal acknowledgement conflict must not repeat transport or TTS.
+
+### Coherent source repair sequence
+
+1. Keep original prompts and the approved private comparison byte-exact outside the public repo.
+2. Repair native canonical upload projection and retained signed-file aliases; preserve owner,
+   bytes, order and trust checks. Align optional action files and native link guidance at producers.
+3. Repair callback/Main identity and delivery ownership together: never adopt a Main response row;
+   never replace settled receipt content; use the existing single durable presenter.
+4. Trace native result/input handling and keep host changes to courier/presentation duties. Prove
+   useful failure/input reaches Queen before retiring raw status conversation.
+5. Review the coherent source delta, build/load once, and check the changed contracts and actual
+   affected channels. Source implementation, loaded candidate, provider consumption and user
+   acceptance are distinct states. No parity or latency claim follows from this design alone.
+
+The approved comparison records intended behavior and evidenced defects. It is not a loaded repair
+or an acceptance report. Candidate-bound QA reports own actual results.
+
+### Native ownership implementation boundary
+
+xPerfect must support Queen and worker execution independently. The existing native Coordinator
+uses the same work actions and admission policy as other xPerfect consumers. Its result turn must
+not wait for unrelated helpers; shared native account/capacity admission still applies. Message,
+Queue and Dismiss must forward native work identity to the existing action service. Viventium
+must not add a second goal ledger, manager, routing rubric or harness transport to obtain this
+behavior. Its configured Main session already runs inside xPerfect; host tools provide declared,
+owner-bound capabilities and channel transport.
+
+Native result identity and native control identity are distinct. A queued follow-up can be the
+latest result while an earlier run remains paused or active. Controls and required-input replies
+must target the exact owned native control run; result history must retain each accepted effect.
+The existing native action receipt owns replay, admission and recovery. Stop intent fences new
+work, but visible cancellation requires native termination evidence. Viventium forwards these
+typed identities and truthful outcomes without resolving another worker lifecycle itself.
+
+If an owner repeats the same Resume operation after a later run failure, Core preserves the
+original native action body and operation key. Only a typed native digest conflict may trigger
+read-only recovery with the persisted prior capability descriptor. The native owner returns a
+completed or failed cached receipt only when owner, work, action, key and the full original
+request digest match. Recovery does not reserve an action, renew a horizon or invoke runtime.
+Missing, pending, foreign or changed receipts remain denied. Current owner and Call authority
+checks still apply; happy actions use their existing single action request. A later renewal that
+changes the stored descriptor cannot manufacture the previous receipt.
+
+The Sol adapter can use the existing Codex app-server route for native midstream interjection when
+the installed schema probe passes. Its exact turn and consumption receipts remain required; an
+unsupported artifact retains the existing after-Main path. Anthropic exec retains after-Main delivery.
+Grok interjection requires exact native run/session authority and consumption proof; an enqueue
+acknowledgement is not consumption. Capability support and one observed case do not certify every channel.
+
+A native generation-completed notification may precede another native tool call. It cannot
+require that intermediate public narration to be the final host result. Native tool boundaries
+retire that buffer; the final result still requires its declared envelope and delivery controls.
+Unstructured intermediate narration does not gain speech or final-result authority.
+
+### Nonterminal blockers return through Queen
+
+An authenticated `run.needs_input` callback without a valid bound native question or
+permission returns to the existing Main adjudication lane as nonterminal work evidence.
+The worker's literal status remains internal. Queen decides whether the accepted work
+needs a useful question or explanation and authors that response through the configured
+native Main. Generic status does not acquire speech authority.
+
+An open Call receives this authored blocker through the existing durable work delivery
+task, including after another conversation turn. Its typed nonterminal binding contains
+the exact owner-scoped evidence, origin, work, worker, run and callback identity. It does
+not invent a runtime attempt, terminal result or operation permission. The current work
+must still need input when evidence is accepted, the response is committed, and speech is
+claimed, permitted and renewed. Only the newest accepted nonterminal evidence on that
+same owner, origin and run may receive new presentation authority. The signed optional
+`callback_created_at` carries the actual immutable native outbox creation time; Core retains
+it as `callbackCreatedAt` with microsecond precision. That clock, then the existing stable
+evidence ID, orders clocked attention. Retry arrival time cannot make old A replace newer B.
+The refreshed `callback_ts` remains a transport freshness clock and cannot establish event
+order. Legacy missing creation clocks remain missing: first acceptance is the qualified
+fallback only among unclocked evidence, and cannot displace a clocked blocker. No old rows
+are backfilled. A previously accepted unclocked blocker and an unseen older clocked
+callback have unknown native order: preferring the available clock does not prove
+retroactive chronology. Legacy evidence and current work visibility remain retained;
+that mixed legacy case needs separate qualification. Equal native clocks use stable
+evidence identity, not transport arrival; this is a deterministic tie rule, not a claim
+of distinct native event chronology.
+Resumed or superseded work cannot speak a stale blocker. An exact already-issued permit may still settle its
+immutable response and historical evidence receipt after the owner resumes; this records
+delivery once and grants no fresh claim, permit or speech.
+The same Main response has one immutable delivery identity; the ordinary Cortex reader
+and wake exclude both durable mission kinds. End excludes audio and keeps linked text.
+Bound native questions and permissions retain their existing response courier. A future
+binding-less attention producer must return through Main before user presentation.
+Deterministic tests support this contract; real Call and channel proof is a separate gate.
+
+### Native clarification response courier
+
+A genuine native clarification request follows the existing `needs_input` callback,
+current owner request read, Main presentation and native resume/content action.
+It does not create a second manager or a new queue. The courier carries exact native
+question keys, answer label arrays and bounded `Other` notes. Native permission
+choices remain distinct. The Main agent may use its existing intelligence to relate
+the user's answer to the current typed question; runtime does not classify intent
+or map prompt keywords. Unsupported or expired requests cannot be presented as an
+accepted response. Voice task forms and text forms share the same exact native
+response and acknowledgement identity. Real provider and channel acceptance must
+be reported independently from deterministic protocol tests.
+
+The existing Queen `active_work_action` carries bounded native clarification answers
+or an offered permission choice. Main reads the current typed request with
+`active_work_list` and relates the current owner's answer to its exact native options.
+For natural permission answers, only a native option whose typed kind is `allow_once`
+or `reject_once` is eligible. The host attests the original authenticated human input,
+its exact current source segment and authoring revision. A server-owned receipt is
+stamped before preparation and retained on the original owner message by first-insert
+semantics; client metadata cannot create, replace or erase it. Merges and recovery
+preserve that receipt and do not backfill legacy input from a later generation clock.
+The native owner requires this original input to follow the exact current request event
+in the same run, attempt and native session, then uses the existing signed body,
+mailbox response and acknowledgement. Missing or ambiguous source identity, chronology,
+expiry or offered choice rejects natural permission answers. Background callbacks,
+schedulers and assistant-authored input cannot grant permission. Direct owner forms
+keep all native choices and their existing consent boundary. No runtime intent parser,
+new manager, forced delegation or broad-session approval is introduced. The existing
+Prompt Workbench exposes the code-owned action schema as a related source of `main.tools`.
+
+Foreground native questions use the same authenticated Main speech stream and an
+atomic exact-request offer in the existing VoiceTask row. A fresh native owner
+read after the claim prevents an answered remote question from gaining speech
+authority through a stale task snapshot. This is an at-most-once offer with an
+unknown audible outcome, not a separate callback message or manager. Background
+question delivery retains its existing durable callback authority and native
+consent boundary.
+
+
+Accepted callback output-file descriptors retain their normalized SHA-256, canonical signed download
+URL and owner/origin/work/run/attempt/callback/result revision and digest identity in Main's terminal
+evidence. The existing authored-message import revalidates those descriptors for the actual destination;
+Main chooses whether to reuse them. The existing evidence cap remains bounded. This adds no resolver,
+copy routine or model instruction and does not prove that Main will choose the published file.
+
+### Assigned task and recovery evidence
+
+Main owns the delegation call. Its worker instruction assigns the independently completable work
+that remains; immutable selected source segments retain the original wording and constraints.
+The existing delegation field description and `main.tools` source expose this distinction in
+Prompt Workbench. They do not rewrite the model-authored task at runtime or select its plan.
+Waiting, resumed or retried claims require a current authoritative work read and any claimed
+control action receipt. Waiting for a person requires a current unresolved native input request;
+failed or ended work cannot be presented as waiting. A user request or an intended action alone
+does not establish that state. Exact-model comparison and
+real affected-path acceptance remain required before claiming a behavior improvement.
+
+Native tool schemas expose the existing request constraints: a native answer uses Resume without
+an instruction; a result read requires a work or run identity and no pagination. Active and history
+rosters do not accept result identities. The broker returns a fixed, public argument explanation
+for the native-answer conflict without returning the supplied text or changing permission checks.
+This aligns the declared tool with its validator; model latency and successful answers still need
+affected real-path evidence.
+
+The existing ephemeral Active Work capsule also retains a current native input form from a fresh,
+owner-scoped snapshot when the work needs input. It uses the existing validated request binding,
+exact question keys and choices, or permission option IDs with their native consent kinds. The
+whole optional form must fit after basic work rows within the existing 16 KiB limit. An omitted,
+expired, malformed or stale form leaves the basic work state and an explicit omission flag; it is
+never a partial schema or an implied approval. The same projection reaches Voice and text without
+another fetch. Existing current-request, owner and original human-input checks still own actions.
+Rows without a native input request do not claim that a form was omitted. Both the inline
+capsule and compact roster retain the existing typed attention kind and code, so an
+authorization pause remains distinguishable from a native question. These facts grant no
+action or renewal authority.
+The existing package formatter and Core dynamic capsule share this native form projector; both
+retain their current common work fields and admit whole forms only after basic row budgeting.
+Core renders that ephemeral roster as directly readable JSON in the existing untrusted-data
+envelope. Angle brackets and ampersands are escaped without changing decoded wire keys or values;
+data cannot close its envelope. Mode, readiness, snapshot freshness, overflow and omission remain
+facts. Registered Main instructions and declared tool contracts own delegation and action policy;
+the dynamic courier does not repeat or add decision rules. This removes an encoding step, without
+claiming a measured model or user-path latency improvement before affected acceptance.
+
+
+### Current generation callback projection
+
+The existing owner-scoped callback association read distinguishes a historically valid run from
+the work's current run. It reuses native Active Work's existing live-run selection and returns
+the selected current run ID and state from one native store snapshot. This remains correct when
+the processor starts a continuation before its accepted action receipt updates the delegation.
+Only that verified current generation can reset inherited terminal, delivery, or adjudication
+flags in Core's existing work projection. The reset uses an exact owner/work and previous-state
+CAS before the attention fence. Callback-supplied state alone cannot reopen terminal work.
+
+A current nonterminal projection is not reset again by repeated progress or attention callbacks.
+Terminal state from the same run remains monotonic. Historical terminal callback fields and
+result evidence remain available, while older run callbacks cannot replace current run/state
+truth. Current native forms and responses still require their exact current owner/run/attempt/
+session/request binding; a projection reset grants no action or permission authority.
+
+
+### Main-authored delivery transaction recovery
+
+The authored Main message commits before its final delivery projection. Writes that share one Mongo
+session run in sequence, including silent decisions. Only the final replayable database projection
+uses the existing native transaction retry. Each attempt uses fresh row copies and revalidates the
+accepted terminal result. Existing after-commit publication runs only after a successful commit.
+A retry keeps the same authored message; it does not regenerate Main. Superseded results and fixed
+errors retain their existing rejection behavior. The existing warning records only bounded stage
+and error code, with no input text or private identifiers.
+
+
+### Controls for retained completed work
+
+The native history roster is an owner-scoped read of current retained work records. It preserves
+the existing current action mask for each record, including supported Queue and Message controls
+for completed work. Reading history does not execute, resume, or approve work. A requested
+continuation still uses the exact work reference and the existing action owner rechecks current
+state, scope, and authorization before execution. Historical result evidence does not become
+permission or proof of a new completion.
+
+The history list defers workspace file inventory and file-link creation. It retains current work
+facts, forms, controls, pagination, and the existing View link; it omits the optional artifact list
+rather than reporting an empty inventory. Existing exact work detail and View keep full workspace
+file access. The result reader keeps accepted published files and their recorded provenance.
+Active work and exact detail retain their existing artifact projection.
+
+
+### Terminal evidence during current Native Main authoring
+
+A terminal worker result uses the existing current-Main background-input courier when the same
+owner and conversation have an exact current Native Main admission and running job. Native
+interjection is evidence input; queued acknowledgement does not prove consumption or delivery.
+The durable mission record stays pending and retains its evidence, group and delivery history.
+This readiness deferral does not consume failure attempts. The committed Main replay and exact
+job settlement wake the existing scoped mission lane. Its normal relevance decision then reads
+the current saved reply and may stay silent. Idle, cancelled, failed or superseded Main runs do
+not hold result delivery. Existing durable reconciliation remains the restart fallback. Native
+questions and permission offers keep their separate immediate owner-consent courier.
+
+A single exact-author readiness recheck after claim release closes a replay-before-release race,
+including direct reconciliation flushes. It schedules the existing lane only after readiness;
+it does not poll a still-running Main. Unsupported or missing native job bindings do not defer.
+
+The host forwards typed background evidence without a provider-specific artifact pin. The native
+runtime owns the selected adapter's reviewed artifact, current authority and interjection
+capability checks. A typed unsupported result remains unsupported; it is not a queued or
+consumed acknowledgement. Reading already accepted background facts for the exact current
+Main also needs no provider artifact pin. Its owner, source, current-job, Stop and text-digest
+fences remain required, including the recheck after the read.
+
+### Accepted work survives a removed Main presentation
+
+An accepted worker's callback belongs to its durable source. Removing an unfinished Main reply
+must not strand that worker's result, failure, question or permission request. When the original
+assistant anchor is absent, the receiver may continue only if the exact trusted requested-parent
+message still exists as a user message in the authenticated owner's conversation. Missing,
+non-user, foreign-owner and foreign-conversation sources remain rejected.
+
+Mission evidence retains that trusted requested-parent ID. If the old anchor is gone, the verified
+user source becomes the follow-up's logical context parent, so later corrections and Main replies
+remain available to its relevance decision. Existing delivery-ledger pins remain stable on retry;
+the current leaf still owns actual placement. A cleanup tombstone never grants this fallback.
+
+Keep the old anchor ID for attribution; never recreate its unpublished text or use it as a new
+presentation owner. The existing current-leaf, active-generation, moved-on adjudication and
+once-only replay paths choose any new presentation. Signature, native association, owner,
+work/run/attempt, accepted-operation, result revision/digest and transaction fences remain required.
+The affected callback checks cover terminal results and failures, native questions/permissions,
+busy Main rows, invalid source identity and replay without duplicate persistence.
+
+### Compact native work reads retain every fetched record
+
+Active/history tool reads reuse the common work projector. They retain every fetched opaque
+reference, label, lifecycle state, full action mask, delivery scope, original cursor and overflow.
+Optional verbose metadata and whole native forms may be omitted with explicit facts. Result reads
+keep the complete retained goal, result and files. A valid base page above the compact target
+retains all records and exposes the native saved-full-output requirement before rows; it never
+fabricates a cursor or claims missing work is empty. Core-only pre-dispatch failures supplement
+only the first active/history page; native cursor pages do not repeat that supplement.
+
+### Native cancellation document carriers
+
+Native cancellation and recovery snapshots preserve nested Main metadata and the validated delivery
+disposition in the saved Message and its final event. The Message owner sanitizes a document carrier
+separately from Mongo update operands: immutable original-input receipts, internal admission fields,
+and private Feeling context remain excluded from the outgoing projection. Ordinary edits retain the
+existing dotted-update guard; only the exact admitted native snapshot owner restores the captured
+Main authority. A completed Stop cannot discard its canonical audio decision or flatten metadata into
+user-facing dotted field names.
+
+System snapshots carry dotted metadata through the same Native snapshot guard before Mongo applies
+it. The guard rebuilds the metadata carrier using the exact owned row, then retains canonical
+completed delivery decisions, background receipts and presentation acknowledgements. A later
+snapshot cannot replace or invent a settled audio decision through a dotted metadata field.
+After validation, a dotted-only snapshot writes only its approved original metadata paths.
+Canonical receipt paths remain owned by their existing producers. Reconstructing the validation
+carrier must not replace whole metadata or erase an unrelated concurrent sibling or receipt write.
+
+
+### Broker transport measurements
+
+Each broker MCP request records one redacted completion or premature-disconnect event with its
+allowlisted protocol method, actual HTTP status (absent on early disconnect), elapsed milliseconds,
+and the SHA-256 of the verified grant ID. Initialization, discovery, authorization rejection and
+rate limits use the same measurement. Credentials, URLs, request contents and tool arguments are
+excluded. These measurements support diagnosis; a successful historical catalogue does not prove
+the current native session is connected. Native debug logging is a scoped QA diagnostic, not an
+authorization or readiness substitute.
+
+
+### Failed fallback error provenance
+
+A native connected-tool startup timeout remains a distinct failure when the configured fallback
+also fails. The reply says that connected tools did not start in time and asks the user to retry;
+the fallback failure retains its separate diagnostic class. A failed fallback keeps the primary
+structured error in the existing error chain, including primary errors delivered as content parts.
+Native tool startup failure can use the configured fallback before visible output or durable effects;
+a failed MCP tool invocation remains non-retryable. Stop, declined input and visible partial replies
+keep the outcome of their own attempt. An ordinary account authentication failure still asks for the
+account repair it needs.
+
+### Delivery lessons: one Queen and durable worker questions
+
+Keep orchestration in xPerfect. Viventium carries authenticated inputs, context, files,
+capabilities and results through the existing Main and channel paths. Do not add a second
+mission manager, semantic routing rules or complaint-specific presentation filters.
+
+- Independent requests A and B retain independent work identities. A correction to A uses its
+  current worker and leaves B unchanged. An unrelated conversational request C remains with Main.
+- Main presents a worker's actual question once in the current conversation. Internal lifecycle
+  notices and memory bookkeeping belong in diagnostics, not conversational text or speech.
+- A promise to ask, an answer from another work item, or a retained artifact is not proof that
+  the current work's question was asked or its outcome was delivered. Preserve source ownership.
+- An owner answer resumes the exact current native request. A new answer must not recreate the
+  worker, grant unrelated consent, or make the user navigate a worker console.
+- Reuse native session readiness, durable callbacks, current-generation fences and the shared
+  speech facade. A catalog advertisement is not proof that the session's required tools resolved.
+- Keep admission receipts when a turn is interrupted. Internal memory maintenance retains its
+  own authority; a live call's tool restrictions do not become its permissions.
+
+For a publication, compare against the preserved source from the previous publication. This
+separates new development from old local differences that were already sanitized or superseded.
+Save original files before reconciliation; never replace local development with a release copy.
+A public-safe release may change fixture values and metadata without changing product behavior.
+
+Bounded real-channel evidence proves only the exercised flows. Worker Steer is not evidence
+that automatic background cortex input was consumed midstream. Source publication is not proof
+of always-on endurance, glitch-free speech, every configured alternative, or a response within
+two seconds. Keep these acceptance gaps explicit until the actual delivered path proves them.

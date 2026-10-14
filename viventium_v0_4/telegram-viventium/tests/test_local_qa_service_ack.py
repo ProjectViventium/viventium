@@ -45,7 +45,7 @@ def _isolate_local_qa_environment(monkeypatch: pytest.MonkeyPatch) -> None:
 
 def _write_helper(tmp_path: Path, body: str) -> Path:
     helper = tmp_path / "qa-ack-helper"
-    helper.write_text(f"#!{sys.executable}\n{body}\n", encoding="utf-8")
+    helper.write_text(f"#!{Path(sys.executable).resolve()}\n{body}\n", encoding="utf-8")
     helper.chmod(0o700)
     return helper
 

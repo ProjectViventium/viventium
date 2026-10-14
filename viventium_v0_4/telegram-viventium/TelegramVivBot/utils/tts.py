@@ -2,6 +2,8 @@ import asyncio
 import importlib.util
 import json
 import logging
+import math
+import time
 import os
 import re
 import sys
@@ -12,8 +14,6 @@ from typing import Any, Optional
 
 import httpx
 
-from aient.aient.core.utils import BaseAPI
-from utils.stt_env import resolve_api_whisper_config
 
 logger = logging.getLogger(__name__)
 
@@ -22,6 +22,9 @@ if str(_SHARED_PATH) not in sys.path:
     sys.path.insert(0, str(_SHARED_PATH))
 
 from delivery_controls import parse_delivery_controls
+from telegram_tts import resolve_api_whisper_config, audio_speech_endpoint
+from telegram_audio import finalize_wav_chunks, TelegramAudioError
+
 
 try:
     from no_response import strip_inline_nta
@@ -864,34 +867,10 @@ def _cartesia_segments_for_text(text: str, default_emotion: str) -> list[tuple[s
 
 
 def _merge_wav_chunks(chunks: list[bytes]) -> bytes:
-    if not chunks:
-        return b""
-    if len(chunks) == 1:
-        return chunks[0]
     try:
-        frames: list[bytes] = []
-        audio_params = None
-        for chunk in chunks:
-            with wave.open(BytesIO(chunk), "rb") as wav_file:
-                current_params = wav_file.getparams()
-                current_audio_params = current_params[:3]
-                if audio_params is None:
-                    audio_params = current_audio_params
-                elif current_audio_params != audio_params:
-                    logger.warning("Cartesia WAV segment params differ; refusing raw concatenation")
-                    raise WavMergeError("Cartesia WAV segment params differ")
-                frames.append(wav_file.readframes(wav_file.getnframes()))
-        output = BytesIO()
-        with wave.open(output, "wb") as out_file:
-            nchannels, sampwidth, framerate = audio_params
-            out_file.setnchannels(nchannels)
-            out_file.setsampwidth(sampwidth)
-            out_file.setframerate(framerate)
-            out_file.writeframes(b"".join(frames))
-        return output.getvalue()
-    except Exception:
-        logger.exception("Failed to merge Cartesia WAV chunks; refusing raw concatenation")
-        raise
+        return finalize_wav_chunks(chunks)
+    except TelegramAudioError as error:
+        raise WavMergeError(str(error)) from error
 
 
 def _tts_debug_enabled() -> bool:
@@ -1058,8 +1037,10 @@ def _build_local_chatterbox_config(*, model_id_override: Optional[str] = None):
     return config, synthesize_wav_bytes
 
 
-def resolve_tts_selection(voice_route: Optional[dict[str, Any]] = None) -> dict[str, Optional[str]]:
-    import config  # local import to avoid circular dependency
+def resolve_tts_selection(voice_route: Optional[dict[str, Any]] = None, *, settings=None) -> dict[str, Optional[str]]:
+    config = settings
+    if config is None:
+        import config  # normal bot adapter retains its user/config owner
 
     requested = _extract_voice_route_tts(voice_route)
     default_provider = _normalize_tts_provider(
@@ -1152,8 +1133,16 @@ async def synthesize_speech(
     *,
     timeout: float = 60.0,
     voice_route: Optional[dict[str, Any]] = None,
+    settings=None,
+    diagnostics: Optional[dict[str, Any]] = None,
+    deadline: Optional[float] = None,
 ) -> Optional[bytes]:
     if not text:
+        return None
+    deadline = time.monotonic() + float(timeout) if deadline is None else float(deadline)
+    if not math.isfinite(deadline) or deadline <= time.monotonic():
+        if diagnostics is not None:
+            diagnostics["error_class"] = "TimeoutError"
         return None
     # Apply the common speech-safety pass here as well as in bot.py. Proactive
     # callbacks call synthesize_speech directly with raw assistant text.
@@ -1164,44 +1153,43 @@ async def synthesize_speech(
     api_key = None
     api_url = None
 
-    try:
-        import config  # local import to avoid circular dependency
-        api_key = config.Users.get_config(convo_id, "api_key")
-        api_url = config.Users.get_config(convo_id, "api_url")
-    except Exception:
-        logger.debug("Falling back to global API credentials for TTS", exc_info=True)
-
-    from config import (
-        API_KEY as GLOBAL_API_KEY,
-        BASE_URL as GLOBAL_BASE_URL,
-        CARTESIA_API_KEY,
-        TTS_MODEL,
-        TTS_VOICE,
-        TTS_RESPONSE_FORMAT,
-        TTS_PROVIDER,
-        TTS_PROVIDER_PRIMARY,
-        TTS_PROVIDER_FALLBACK,
-        TTS_VOICE_ELEVENLABS,
-        ELEVENLABS_API_KEY,
-        ELEVENLABS_API_URL,
-        ELEVENLABS_MODEL,
-        VIVENTIUM_CARTESIA_API_URL,
-        VIVENTIUM_CARTESIA_EMOTION,
-        VIVENTIUM_CARTESIA_LANGUAGE,
-        VIVENTIUM_CARTESIA_MODEL_ID,
-        VIVENTIUM_CARTESIA_SAMPLE_RATE,
-        VIVENTIUM_CARTESIA_SPEED,
-        VIVENTIUM_CARTESIA_VOICE_ID,
-        VIVENTIUM_CARTESIA_VOLUME,
-        XAI_API_KEY,
-        VIVENTIUM_XAI_TTS_API_KEY,
-        VIVENTIUM_XAI_LANGUAGE,
-        VIVENTIUM_XAI_TTS_API_URL,
-        VIVENTIUM_XAI_TTS_BIT_RATE,
-        VIVENTIUM_XAI_TTS_CODEC,
-        VIVENTIUM_XAI_TTS_SAMPLE_RATE,
-        VIVENTIUM_XAI_VOICE,
-    )
+    config = settings
+    if config is None:
+        import config
+        try:
+            api_key = config.Users.get_config(convo_id, "api_key")
+            api_url = config.Users.get_config(convo_id, "api_url")
+        except Exception:
+            logger.debug("Falling back to global API credentials for TTS", exc_info=True)
+    GLOBAL_API_KEY = config.API_KEY
+    GLOBAL_BASE_URL = config.BASE_URL
+    CARTESIA_API_KEY = config.CARTESIA_API_KEY
+    TTS_MODEL = config.TTS_MODEL
+    TTS_VOICE = config.TTS_VOICE
+    TTS_RESPONSE_FORMAT = config.TTS_RESPONSE_FORMAT
+    TTS_PROVIDER = config.TTS_PROVIDER
+    TTS_PROVIDER_PRIMARY = config.TTS_PROVIDER_PRIMARY
+    TTS_PROVIDER_FALLBACK = config.TTS_PROVIDER_FALLBACK
+    TTS_VOICE_ELEVENLABS = config.TTS_VOICE_ELEVENLABS
+    ELEVENLABS_API_KEY = config.ELEVENLABS_API_KEY
+    ELEVENLABS_API_URL = config.ELEVENLABS_API_URL
+    ELEVENLABS_MODEL = config.ELEVENLABS_MODEL
+    VIVENTIUM_CARTESIA_API_URL = config.VIVENTIUM_CARTESIA_API_URL
+    VIVENTIUM_CARTESIA_EMOTION = config.VIVENTIUM_CARTESIA_EMOTION
+    VIVENTIUM_CARTESIA_LANGUAGE = config.VIVENTIUM_CARTESIA_LANGUAGE
+    VIVENTIUM_CARTESIA_MODEL_ID = config.VIVENTIUM_CARTESIA_MODEL_ID
+    VIVENTIUM_CARTESIA_SAMPLE_RATE = config.VIVENTIUM_CARTESIA_SAMPLE_RATE
+    VIVENTIUM_CARTESIA_SPEED = config.VIVENTIUM_CARTESIA_SPEED
+    VIVENTIUM_CARTESIA_VOICE_ID = config.VIVENTIUM_CARTESIA_VOICE_ID
+    VIVENTIUM_CARTESIA_VOLUME = config.VIVENTIUM_CARTESIA_VOLUME
+    XAI_API_KEY = config.XAI_API_KEY
+    VIVENTIUM_XAI_TTS_API_KEY = config.VIVENTIUM_XAI_TTS_API_KEY
+    VIVENTIUM_XAI_LANGUAGE = config.VIVENTIUM_XAI_LANGUAGE
+    VIVENTIUM_XAI_TTS_API_URL = config.VIVENTIUM_XAI_TTS_API_URL
+    VIVENTIUM_XAI_TTS_BIT_RATE = config.VIVENTIUM_XAI_TTS_BIT_RATE
+    VIVENTIUM_XAI_TTS_CODEC = config.VIVENTIUM_XAI_TTS_CODEC
+    VIVENTIUM_XAI_TTS_SAMPLE_RATE = config.VIVENTIUM_XAI_TTS_SAMPLE_RATE
+    VIVENTIUM_XAI_VOICE = config.VIVENTIUM_XAI_VOICE
 
     api_key, api_url = resolve_api_whisper_config(
         api_key,
@@ -1210,12 +1198,15 @@ async def synthesize_speech(
         GLOBAL_BASE_URL,
     )
 
-    resolved_selection = resolve_tts_selection(voice_route=voice_route)
+    resolved_selection = resolve_tts_selection(voice_route=voice_route, settings=config)
     provider_primary = _normalize_tts_provider(resolved_selection.get("provider"))
     provider_fallback = _normalize_tts_provider(resolved_selection.get("fallback_provider"))
     provider_chain = [provider_primary]
     if provider_fallback and provider_fallback != provider_primary:
         provider_chain.append(provider_fallback)
+
+    if diagnostics is not None:
+        diagnostics.update(requested_route=_extract_voice_route_tts(voice_route), selection=resolved_selection, attempts=[])
 
     timeout_config = httpx.Timeout(timeout)
 
@@ -1231,10 +1222,27 @@ async def synthesize_speech(
                 (variant_override or TTS_MODEL or "").strip()
                 or _DEFAULT_OPENAI_TTS_MODEL_ID
             )
+        elif provider == "cartesia":
+            provider_model_id = _CARTESIA_SONIC3_MODEL_ID
         elif provider == "elevenlabs":
             provider_model_id = ELEVENLABS_MODEL or _DEFAULT_ELEVENLABS_TTS_MODEL_ID
         elif provider == "local_chatterbox_turbo_mlx_8bit":
             provider_model_id = variant_override or _DEFAULT_LOCAL_CHATTERBOX_MODEL_ID
+
+        if diagnostics is not None:
+            diagnostics['attempts'].append({
+                'provider': provider, 'model': provider_model_id,
+                'variant': (variant_override or {
+                    'xai': VIVENTIUM_XAI_VOICE, 'cartesia': VIVENTIUM_CARTESIA_VOICE_ID,
+                    'elevenlabs': TTS_VOICE_ELEVENLABS or TTS_VOICE,
+                    'openai': TTS_VOICE, 'local_chatterbox_turbo_mlx_8bit': _DEFAULT_LOCAL_CHATTERBOX_MODEL_ID,
+                }.get(provider)), 'voice': (TTS_VOICE if provider == 'openai' else
+                    _cartesia_voice_id_from_variant(variant_override, VIVENTIUM_CARTESIA_VOICE_ID)
+                    if provider == 'cartesia' else variant_override or {
+                    'xai': VIVENTIUM_XAI_VOICE, 'cartesia': VIVENTIUM_CARTESIA_VOICE_ID,
+                    'elevenlabs': TTS_VOICE_ELEVENLABS or TTS_VOICE,
+                }.get(provider)), 'role': route_role,
+            })
 
         # === VIVENTIUM START ===
         # Feature: Strip voice control tags for non-Cartesia providers.
@@ -1283,6 +1291,7 @@ async def synthesize_speech(
                     synthesize_wav_bytes,
                     synth_text,
                     config=config_obj,
+                    deadline=deadline,
                 )
             except Exception:
                 logger.exception("Unexpected local Chatterbox TTS error")
@@ -1311,7 +1320,8 @@ async def synthesize_speech(
                 cartesia_model_id = _CARTESIA_SONIC3_MODEL_ID
 
             cartesia_api_version = (
-                os.getenv("VIVENTIUM_CARTESIA_API_VERSION", "").strip()
+                (str(getattr(config, "VIVENTIUM_CARTESIA_API_VERSION", "") or "").strip()
+                 if settings is not None else os.getenv("VIVENTIUM_CARTESIA_API_VERSION", "").strip())
                 or _CARTESIA_SONIC3_API_VERSION
             )
             cartesia_speed = _normalize_cartesia_numeric_control(
@@ -1590,7 +1600,7 @@ async def synthesize_speech(
             return None
 
         try:
-            endpoint = BaseAPI(api_url_final).audio_speech
+            endpoint = audio_speech_endpoint(api_url_final)
         except Exception as err:
             logger.warning("Failed to derive audio endpoint for TTS: %s", err)
             return None
@@ -1633,8 +1643,17 @@ async def synthesize_speech(
         return None
 
     for provider in provider_chain:
+        if time.monotonic() >= deadline:
+            if diagnostics is not None:
+                diagnostics["error_class"] = "TimeoutError"
+            return None
         voice_bytes = await _try_provider(provider)
+        if diagnostics is not None:
+            diagnostics["attempts"][-1]["outcome"] = "synthesized" if voice_bytes else "unavailable"
         if voice_bytes:
+            if diagnostics is not None:
+                diagnostics["actual_provider"] = provider
+                diagnostics["fallback_used"] = provider != (_normalize_tts_provider(diagnostics["requested_route"].get("provider")) or provider_primary)
             return voice_bytes
 
     return None

@@ -243,7 +243,7 @@ def _make_runtime_repo(root: Path) -> None:
     _write(bot / "utils" / "__init__.py", "")
     _write(bot / "utils" / "singleton.py", "SYNTHETIC = True\n")
     _write(bot / "utils" / "telegram_preparation.py", "SYNTHETIC = True\n")
-    for name in ("telegram_audio.py", "telegram_stt.py", "telegram_vad.py"):
+    for name in ("telegram_audio.py", "telegram_stt.py", "telegram_vad.py", "stt_env.py", "tts.py"):
         _write(bot / "utils" / name, "SYNTHETIC = True\n")
     _write(bot / "aient" / "aient" / "__init__.py", "")
     _write(bot / "md2tgmd" / "setup.py", "from setuptools import setup\nsetup()\n")
@@ -252,6 +252,8 @@ def _make_runtime_repo(root: Path) -> None:
     shared = root / "viventium_v0_4" / "shared"
     _write(shared / "__init__.py", "")
     _write(shared / "no_response.py", "SYNTHETIC = True\n")
+    _write(shared / "telegram_audio.py", "SYNTHETIC = True\n")
+    _write(shared / "telegram_tts.py", "SYNTHETIC = True\n")
     _write(shared / "compiled_prompt_contract.py", "SYNTHETIC = True\n")
     _write(shared / "silero_vad_config.py", "SYNTHETIC = True\n")
     _write(shared / "whisper_cpp_segments.py", "SYNTHETIC = True\n")
@@ -1463,3 +1465,16 @@ def test_current_receiver_inventory_includes_declared_new_dependencies_only(
     destinations = {relative.as_posix() for _, relative in selected}
     assert required <= destinations
     assert private.relative_to(repo).as_posix() not in destinations
+
+
+def test_telegram_component_requires_shared_speech_and_media_library() -> None:
+    module = _load_component_module()
+    selected = dict((relative.as_posix(), source) for source, relative in module._selected_sources(REPO_ROOT))
+    for relative in (
+        "viventium_v0_4/shared/telegram_tts.py",
+        "viventium_v0_4/shared/telegram_audio.py",
+        "viventium_v0_4/telegram-viventium/TelegramVivBot/utils/tts.py",
+        "viventium_v0_4/telegram-viventium/TelegramVivBot/utils/stt_env.py",
+    ):
+        assert relative in module.CURRENT_REQUIRED_COMPONENT_FILES
+        assert selected[relative].read_bytes() == (REPO_ROOT / relative).read_bytes()

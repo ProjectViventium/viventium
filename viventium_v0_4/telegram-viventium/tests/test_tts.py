@@ -541,10 +541,10 @@ async def test_synthesize_speech_uses_local_chatterbox_branch_and_preserves_mark
         lambda: (True, None),
     )
 
-    def _fake_synthesize_wav_bytes(text, *, config):
+    def _fake_synthesize_wav_bytes(text, *, config, deadline=None):
         seen["text"] = text
         seen["model_id"] = getattr(config, "model_id", None)
-        return b"wav-bytes"
+        return _test_wav_bytes(b"\x01\x00\x02\x00")
 
     monkeypatch.setattr(
         tts_module,
@@ -572,7 +572,7 @@ async def test_synthesize_speech_uses_local_chatterbox_branch_and_preserves_mark
         },
     )
 
-    assert voice_bytes == b"wav-bytes"
+    assert voice_bytes == _test_wav_bytes(b"\x01\x00\x02\x00")
     assert seen["text"] == "Hello [laugh]"
     assert seen["model_id"] == "mlx-community/chatterbox-turbo-8bit"
 
@@ -595,10 +595,10 @@ async def test_synthesize_speech_chatterbox_strips_unsupported_voice_controls(mo
         lambda: (True, None),
     )
 
-    def _fake_synthesize_wav_bytes(text, *, config):
+    def _fake_synthesize_wav_bytes(text, *, config, deadline=None):
         _ = config
         seen["text"] = text
-        return b"wav-bytes"
+        return _test_wav_bytes(b"\x01\x00\x02\x00")
 
     monkeypatch.setattr(
         tts_module,
@@ -621,7 +621,7 @@ async def test_synthesize_speech_chatterbox_strips_unsupported_voice_controls(mo
         },
     )
 
-    assert voice_bytes == b"wav-bytes"
+    assert voice_bytes == _test_wav_bytes(b"\x01\x00\x02\x00")
     assert seen["text"] == "Hi [laugh] [sigh] [gasp] secret"
     assert "[laughter]" not in seen["text"]
     assert "[clears throat]" not in seen["text"]
@@ -750,7 +750,7 @@ async def test_synthesize_speech_cartesia_uses_voice_variant_not_model_id(monkey
     )
 
     class _Response:
-        content = b"wav-bytes"
+        content = _test_wav_bytes(b"\x01\x00\x02\x00")
 
         def raise_for_status(self):
             return None
@@ -784,7 +784,7 @@ async def test_synthesize_speech_cartesia_uses_voice_variant_not_model_id(monkey
         },
     )
 
-    assert voice_bytes == b"wav-bytes"
+    assert voice_bytes == _test_wav_bytes(b"\x01\x00\x02\x00")
     assert seen["headers"]["Cartesia-Version"] == tts_module._CARTESIA_SONIC3_API_VERSION
     assert seen["payload"]["model_id"] == "sonic-3"
     assert seen["payload"]["voice"] == {"mode": "id", "id": lyra_voice_id}
@@ -971,7 +971,7 @@ async def test_synthesize_speech_cartesia_api_version_env_override_wins(monkeypa
     )
 
     class _Response:
-        content = b"wav-bytes"
+        content = _test_wav_bytes(b"\x01\x00\x02\x00")
 
         def raise_for_status(self):
             return None
@@ -994,7 +994,7 @@ async def test_synthesize_speech_cartesia_api_version_env_override_wins(monkeypa
 
     voice_bytes = await tts_module.synthesize_speech("Hello.", "conv-1")
 
-    assert voice_bytes == b"wav-bytes"
+    assert voice_bytes == _test_wav_bytes(b"\x01\x00\x02\x00")
     assert seen["headers"]["Cartesia-Version"] == "override-version"
 
 
@@ -1014,7 +1014,7 @@ async def test_synthesize_speech_cartesia_ignores_legacy_model_variant(monkeypat
     )
 
     class _Response:
-        content = b"wav-bytes"
+        content = _test_wav_bytes(b"\x01\x00\x02\x00")
 
         def raise_for_status(self):
             return None
@@ -1046,7 +1046,7 @@ async def test_synthesize_speech_cartesia_ignores_legacy_model_variant(monkeypat
         },
     )
 
-    assert voice_bytes == b"wav-bytes"
+    assert voice_bytes == _test_wav_bytes(b"\x01\x00\x02\x00")
     assert seen["payload"]["model_id"] == "sonic-3"
     assert seen["payload"]["voice"] == {"mode": "id", "id": "default-voice-id"}
 
@@ -1068,7 +1068,7 @@ async def test_synthesize_speech_cartesia_preserves_voice_markup_and_sets_emotio
     )
 
     class _Response:
-        content = b"wav-bytes"
+        content = _test_wav_bytes(b"\x01\x00\x02\x00")
 
         def raise_for_status(self):
             return None
@@ -1092,7 +1092,7 @@ async def test_synthesize_speech_cartesia_preserves_voice_markup_and_sets_emotio
 
     voice_bytes = await tts_module.synthesize_speech(raw, "conv-1")
 
-    assert voice_bytes == b"wav-bytes"
+    assert voice_bytes == _test_wav_bytes(b"\x01\x00\x02\x00")
     assert seen["payload"]["transcript"] == raw
     assert seen["payload"]["generation_config"]["emotion"] == "frustrated"
 
@@ -1115,7 +1115,7 @@ async def test_synthesize_speech_cartesia_clamps_speed_volume_from_contract(monk
     )
 
     class _Response:
-        content = b"wav-bytes"
+        content = _test_wav_bytes(b"\x01\x00\x02\x00")
 
         def raise_for_status(self):
             return None
@@ -1138,7 +1138,7 @@ async def test_synthesize_speech_cartesia_clamps_speed_volume_from_contract(monk
 
     voice_bytes = await tts_module.synthesize_speech("Hello.", "conv-1")
 
-    assert voice_bytes == b"wav-bytes"
+    assert voice_bytes == _test_wav_bytes(b"\x01\x00\x02\x00")
     assert seen["payload"]["generation_config"]["speed"] == 1.5
     assert seen["payload"]["generation_config"]["volume"] == 0.5
 
@@ -1386,3 +1386,44 @@ def test_strip_cartesia_markup_for_xai_still_strips_unpaired_square_wrapping_tag
 
 def test_xai_fallback_wrapping_vocabulary_covers_documented_tags():
     assert set(tts_module._XAI_TTS_FALLBACK_WRAPPING_TAGS) == set(tts_module._XAI_TTS_WRAPPING_TAGS)
+
+
+def test_single_placeholder_wav_finalizes_actual_pcm():
+    expected=_test_wav_bytes(b"\x01\x00\x02\x00")
+    assert tts_module._merge_wav_chunks([_placeholder_nframes_wav_bytes(b"\x01\x00\x02\x00")]) == expected
+
+
+@pytest.mark.asyncio
+async def test_explicit_library_settings_saved_voice_without_bot_import(monkeypatch):
+    import telegram_tts
+    engine=telegram_tts._load('_viventium_telegram_speech_engine','tts.py')
+    seen=[]
+    class Response:
+        content=b'synthetic-mp3-bytes'
+        def raise_for_status(self): pass
+    class Client:
+        def __init__(self,**kwargs): pass
+        async def __aenter__(self): return self
+        async def __aexit__(self,*args): pass
+        async def post(self,url,**kwargs):
+            seen.append((url,json.loads(kwargs['content'])))
+            return Response()
+    monkeypatch.setattr(engine.httpx,'AsyncClient',Client)
+    def forbidden(name,*args,**kwargs):
+        if name in ('config','bot') or 'livekit_bridge' in name:
+            raise AssertionError('side-effectful bot import')
+        return original_import(name,*args,**kwargs)
+    import builtins
+    original_import=builtins.__import__
+    monkeypatch.setattr(builtins,'__import__',forbidden)
+    diagnostics={}
+    result=await telegram_tts.synthesize_speech('**Hello.**','synthetic-user',
+        voice_route={'tts':{'provider':'xai','variant':'Eve','source':'saved'}},
+        environment={'TTS_PROVIDER_PRIMARY':'cartesia','CARTESIA_API_KEY':'synthetic-cartesia',
+                     'VIVENTIUM_XAI_TTS_API_KEY':'synthetic-xai','VIVENTIUM_XAI_VOICE':'Sal'},
+        diagnostics=diagnostics)
+    assert result==b'synthetic-mp3-bytes'
+    assert seen[0][0]=='https://api.x.ai/v1/tts'
+    assert seen[0][1]['voice_id']=='Eve' and seen[0][1]['text']=='Hello.'
+    assert diagnostics['actual_provider']=='xai' and not diagnostics['fallback_used']
+    assert diagnostics['attempts'][0]['variant']=='Eve'

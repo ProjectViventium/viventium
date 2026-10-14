@@ -520,3 +520,31 @@ class TestLateCortexWake(unittest.IsolatedAsyncioTestCase):
         for body in bodies:
             self.assertEqual(body['turnId'],'child-original-turn');self.assertEqual(body['presentationRef'],'stored-child')
             self.assertEqual(body['taskId'],'parent_task');self.assertEqual(body['streamId'],'main_stream')
+
+    async def test_late_mixed_content_uses_existing_audio_ranges_not_flat_text(self):
+        for ranges, expected in [
+            ([{'start':0,'end':7,'disposition':{'version':1,'audio':'skip','required':True,'valid':True,'source':'model'}},
+              {'start':7,'end':12,'disposition':{'version':1,'audio':'eligible','required':True,'valid':True,'source':'model'}}], ['Heard']),
+            ([], []),
+        ]:
+            session=_DummySession();scheduler=self._build_scheduler(session=session)
+            async def fetch(_self,_http,_message,**_scope):
+                return {'followUp':{'messageId':'stored-child','text':'Silent.Heard',
+                    'content':[{'type':'text','text':'Silent.Heard','deliveryDispositionRanges':ranges}]},
+                    'insights':[{'insight':'Internal must stay silent.'}]}
+            scheduler._fetch_cortex=MethodType(fetch,scheduler)
+            await scheduler.schedule('main_anchor',[], '',cortex_expected=True)
+            self.assertEqual([c['text'] for c in session.say_calls],expected)
+            await scheduler.close()
+
+    async def test_late_ranged_followup_cannot_speak_uncovered_text_part(self):
+        session=_DummySession();scheduler=self._build_scheduler(session=session)
+        async def fetch(_self,_http,_message,**_scope):
+            return {'followUp':{'messageId':'stored-child','text':'Quiet.Uncovered.', 'content':[
+                {'type':'text','text':'Quiet.','deliveryDispositionRanges':[{'start':0,'end':6,'disposition':
+                    {'version':1,'audio':'skip','required':True,'valid':True,'source':'model'}}]},
+                {'type':'text','text':'Uncovered.'}]}}
+        scheduler._fetch_cortex=MethodType(fetch,scheduler)
+        await scheduler.schedule('main_anchor',[], '',cortex_expected=True)
+        self.assertEqual(session.say_calls,[])
+        await scheduler.close()

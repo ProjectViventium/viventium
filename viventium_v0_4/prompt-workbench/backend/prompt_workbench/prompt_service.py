@@ -681,6 +681,7 @@ def _related_config_row(ref_id: str, ref: dict[str, Any]) -> dict[str, Any] | No
     elif source_kind in {
         "scheduler.shared_prompt_contract",
         "worker.compiled_prompt_contract",
+        "native.current_work_input_contract",
         "scheduler.canonical_output_contract",
         "feelings.kernel",
         "feelings.owner_settings",
@@ -697,6 +698,7 @@ def _related_config_row(ref_id: str, ref: dict[str, Any]) -> dict[str, Any] | No
             {
                 "scheduler.shared_prompt_contract": "shared scheduler prompt contract",
                 "worker.compiled_prompt_contract": "compiled worker prompt composition and standalone compatibility",
+                "native.current_work_input_contract": "native Queen current work input schema",
                 "scheduler.canonical_output_contract": "trusted scheduler canonical-output contract",
                 "feelings.kernel": "Feeling numeric state and capsule structure",
                 "feelings.owner_settings": "authenticated owner Feeling range additions",
@@ -737,7 +739,10 @@ def _config_source_path(path_name: str) -> Path | None:
     worker_root = (REPO_ROOT / "viventium_v0_4/xPerfect/runtime_phase1/src/workers_projects_runtime").resolve()
     worker_owners = {
         worker_root / name
-        for name in ("bootstrap.py", "profile_runtime.py", "conversation_provider.py")
+        for name in (
+            "bootstrap.py", "profile_runtime.py", "conversation_provider.py",
+            "agent_builder_control.py", "grok_runtime.py",
+        )
     }
     if (
         candidate.is_file()
@@ -746,6 +751,7 @@ def _config_source_path(path_name: str) -> Path | None:
             or candidate.is_relative_to(prompt_runtime_root)
             or candidate in feeling_owners
             or candidate in worker_owners
+            or candidate == (LIBRECHAT_ROOT / "packages/api/src/glasshive/conversationOrchestration.ts").resolve()
         )
     ):
         return candidate

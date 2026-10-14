@@ -104,7 +104,7 @@ def _convert_markdown_tables(text: str) -> str:
     return "\n".join(out)
 
 
-def markdown_to_html(text: str) -> str:
+def markdown_to_html(text: str, *, covered_file_grants: frozenset[str] = frozenset()) -> str:
     """Convert standard Markdown to Telegram-compatible HTML.
 
     Uses a placeholder system to protect already-converted regions from
@@ -134,6 +134,8 @@ def markdown_to_html(text: str) -> str:
 
     def _replace_link(m: re.Match) -> str:
         label = _escape_html(m.group(1))
+        if m.group(2) in covered_file_grants:
+            return _store(label)
         url = _escape_html_attr(m.group(2))
         return _store(f'<a href="{url}">{label}</a>')
 

@@ -23,6 +23,22 @@ journeys:
     degradedAndRecovery: Missing media, provider rejection, timeout, false interruption, hangup, and completed playback stay distinct. Denied, replayed, stale, wrong-owner, and wrong-revision bindings cause zero new effects and return durable typed truth.
     persistenceAndCleanup: Concurrency, crash, restart, reconnect, and candidate-to-predecessor compatibility preserve one accepted reversible provider effect, one immutable effect row, and matching delivery acknowledgement and audible or visible result. Synthetic call state is removed and raw audio retention remains zero.
     evidence: [audible observation, transcript, effect receipt, playback completion, call logs, installed artifact identity]
+  - id: native-worker-question-in-main-call
+    requirements: [PW-052, CC-049]
+    userAction: During a call, receive a genuine typed native worker input request while Main is busy or on a later turn; answer its actual offered choice.
+    surfaces: [installed Voice Call, linked chat, Active Work owner input]
+    expectedResult: Main presents the actual question and offered choices once within the bounded presentation limit; the exact native request receives only the owner's offered choice. Permissions speak the available native human purpose and consent choices; Action details retains the exact operation without adding it to speech. The worker stays waiting until that control accepts the response; no internal status is spoken.
+    degradedAndRecovery: Answered, replaced, expired, wrong-owner, wrong-call and terminated bindings admit no new speech or approval. A still-pending legacy request refreshes its existing question and delivery; lost acknowledgement retains the same operation.
+    persistenceAndCleanup: Main completion or later turns do not discard the pending question. Reconnect uses one durable delivery; interruption records an unknown audible outcome without replaying or granting consent.
+    evidence: [native request identity and offered choices, visible owner control, audible question and once-only receipt, speech trace, delivery ledger, native response acknowledgement]
+  - id: native-clarification-form
+    requirements: [PW-052, CC-049, CORE-005]
+    userAction: Receive a genuine native clarification with offered single or multiple choices and optional Other notes; answer through Main or the existing owner form.
+    surfaces: [installed Voice Call, linked chat, Active Work owner input, Telegram]
+    expectedResult: The actual question is relayed, human controls hide transport JSON, native wire question keys and labels remain exact, and the existing native owner acknowledges the answer once. Permission choices remain distinct.
+    degradedAndRecovery: Unsupported shapes, unknown or duplicate choices, invalid supplied Other notes, excess response size, stale requests and lost acknowledgement remain distinct; retained acknowledgement retries preserve the identical target and body.
+    persistenceAndCleanup: The same durable callback and task keep the current question; no second manager, extra queue or multi-step Telegram draft framework is created.
+    evidence: [actual native IPC request and response, bounded form and event tests, native acknowledgement receipt, actual configured provider elicitation, visible and audible channel acceptance]
   - id: listen-only-boundary
     requirements: [VOICE-001]
     userAction: Enable Listen-Only, speak synthetic content, switch modes, and inspect the transcript.
@@ -39,3 +55,11 @@ journeys:
     degradedAndRecovery: Same-network failure with off-network success is classified as router NAT loopback or split-DNS work, never as an application regression; missing public URL, expired session, wrong owner, media not established, and worker not joined stay distinct; remote-access status never claims off-network reachability this Mac did not observe.
     persistenceAndCleanup: The call session ends and is cleaned, raw audio retention stays zero, the linked chat keeps the transcript, and no second Call URL scheme, tunnel, certificate trick, or hosts-file workaround is introduced.
     evidence: [visible Telegram button and URL origin, bootstrap result per network class, exchange 200 then 410 on replay, worker join and transcript rows, audible reply, hangup and cleanup counts, remote-access status wording, donor cases TR-012 MPV-045 REMOTE-UC-004 REMOTE-UC-005]
+  - id: foreground-native-question-speech
+    requirements: [PW-052, CC-049, CORE-005]
+    surfaces: [installed Voice Call]
+    userAction: During an active Main generation, receive a current native question without sentence punctuation; hear it while the native provider waits.
+    expectedResult: The exact canonical question reaches TTS before provider resume, once per exact request. Stop, replacement, remote answer, expiry and disconnect deny stale speech. Auxiliary question text does not change provider response or resume accounting.
+    degradedAndRecovery: An uncertain claim or connection produces no replay; an answered or replaced native request cannot gain authority from retained task state.
+    persistenceAndCleanup: Request-specific receipt survives coalesced snapshots and process restart without claiming audible completion.
+    evidence: [current native request read, atomic VoiceTask speech offer, paused TTS flush, actual audible question, provider resume accounting]

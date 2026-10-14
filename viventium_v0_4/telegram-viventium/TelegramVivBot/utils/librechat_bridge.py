@@ -49,9 +49,9 @@ try:
 except ModuleNotFoundError:
     from TelegramVivBot.utils.telegram_chunks import split_telegram_html
 try:
-    from utils.voice import normalize_delivery_disposition
+    from utils.voice import normalize_delivery_disposition, extract_ranged_audio_text, extract_followup_audio_text, resolve_delivery_audio_gate
 except ModuleNotFoundError:
-    from TelegramVivBot.utils.voice import normalize_delivery_disposition
+    from TelegramVivBot.utils.voice import normalize_delivery_disposition, extract_ranged_audio_text, extract_followup_audio_text, resolve_delivery_audio_gate
 try:
     from utils.orchestration import OrchestrationClient, WorkItem, default_callback_store_path
 except ModuleNotFoundError:
@@ -395,7 +395,10 @@ _TERMINAL_GLASSHIVE_CALLBACK_EVENTS = {
 _CLAIM_AUTHORIZED_GLASSHIVE_ATTENTION_EVENTS = {
     "run.needs_input",
     "run.blocked",
+    "checkpoint.ready",
+    "takeover.requested",
 }
+_NATIVE_WORK_FOLLOWUP_SOURCES = frozenset({"durable_terminal_callback", "durable_work_callback"})
 # === VIVENTIUM END ===
 
 
@@ -693,15 +696,60 @@ def render_telegram_markdown(
     *,
     strip_voice_markup: bool = False,
     streaming_preview: bool = False,
+    covered_file_grants: frozenset[str] = frozenset(),
 ) -> str:
     cleaned = sanitize_telegram_text(text, streaming_preview=streaming_preview)
     if strip_voice_markup:
         cleaned = strip_voice_control_tags_for_display(cleaned)
     if not cleaned:
         return ""
-    return markdown_to_html(cleaned)
+    return markdown_to_html(cleaned, covered_file_grants=covered_file_grants)
 # === VIVENTIUM END ===
 
+
+
+def _verified_attachment_grants(
+    attachments: Optional[list[dict[str, Any]]], identity: Optional[tuple[str, str]],
+) -> frozenset[str]:
+    if not identity or not all(identity):
+        return frozenset()
+    owner_id, message_id = identity
+    grants = set()
+    for attachment in attachments or []:
+        if not isinstance(attachment, dict):
+            continue
+        receipt = attachment.get("nativeOutputFile")
+        if (not isinstance(receipt, dict) or receipt.get("version") != 1
+                or receipt.get("status") != "available" or receipt.get("messageId") != message_id
+                or attachment.get("user") != owner_id
+                or not re.fullmatch(r"native_[a-f0-9]{64}", str(attachment.get("file_id") or ""))
+                or not attachment.get("filepath") or not attachment.get("filename")):
+            continue
+        grant = receipt.get("downloadUrl")
+        if isinstance(grant, str) and grant:
+            grants.add(grant)
+        # The native File receipt also owns the exact aliases selected by Main.
+        # Cover only those aliases; unrelated citations remain normal links.
+        selected_references = receipt.get("selectedReferences")
+        if isinstance(selected_references, list):
+            grants.update(reference for reference in selected_references
+                          if isinstance(reference, str) and reference)
+    return frozenset(grants)
+
+
+def _native_file_identity_from_final(payload: dict[str, Any]) -> Optional[tuple[str, str]]:
+    """Bind File receipts to the authenticated Core public final Message identity."""
+    response = payload.get("responseMessage")
+    if (payload.get("final") is not True or not isinstance(response, dict)
+            or response.get("unfinished") is True or response.get("error") is True
+            or response.get("isCreatedByUser") is True):
+        return None
+    owner_id = response.get("user")
+    message_id = response.get("messageId")
+    if (not isinstance(owner_id, str) or not owner_id
+            or not isinstance(message_id, str) or not message_id):
+        return None
+    return owner_id, message_id
 
 def _iter_sse_events_from_text(buffer: str) -> tuple[list[dict[str, str]], str]:
     events: list[dict[str, str]] = []
@@ -931,12 +979,24 @@ def extract_delivery_disposition(
     normalized = normalize_delivery_disposition(candidate)
     if required and normalized is not None and normalized["required"] is not True:
         normalized = None
-    return {
+    result = {
         "type": "delivery_disposition",
         "delivery_disposition": normalized,
         "required": effective_required,
         "present": present,
     }
+    # Range authority belongs to Core's accepted native text content parts. Do
+    # not infer it from display text, a provider name or channel preference.
+    ranged, valid_ranges, audio_text = extract_ranged_audio_text(
+        response_message.get("content") if isinstance(response_message, dict) else None
+    )
+    if ranged:
+        result.update(required=True, present=True, audio_text=audio_text,
+            delivery_disposition=({"version": 1,
+                "audio": "eligible" if audio_text.strip() else "skip",
+                "required": True, "valid": True, "source": "model"}
+                if valid_ranges else None))
+    return result
 
 
 def _normalize_voice_route(payload: Any) -> Optional[dict[str, Any]]:
@@ -1000,7 +1060,11 @@ def extract_cortex_followup(payload: dict[str, Any]) -> Optional[str]:
 def _has_ledger_cortex_deliveries(state: Any) -> bool:
     """Whether a parent's Cortex follow-up is owned by the durable delivery ledger."""
     deliveries = state.get("insightDeliveries") if isinstance(state, dict) else None
-    return isinstance(deliveries, list) and len(deliveries) > 0
+    follow_up = state.get("followUp") if isinstance(state, dict) else None
+    source = follow_up.get("followUpSource") if isinstance(follow_up, dict) else None
+    return (isinstance(deliveries, list) and len(deliveries) > 0) or (
+        isinstance(source, str) and source in _NATIVE_WORK_FOLLOWUP_SOURCES
+    )
 
 
 def _is_ledger_cortex_followup_event(payload: Any) -> bool:
@@ -1009,8 +1073,11 @@ def _is_ledger_cortex_followup_event(payload: Any) -> bool:
     if not isinstance(data, dict):
         return False
     claim_token = data.get("presentationClaimToken")
-    return isinstance(data.get("cortexPresentation"), dict) or (
-        isinstance(claim_token, str) and bool(claim_token.strip())
+    source = data.get("followUpSource")
+    return (
+        (isinstance(source, str) and source in _NATIVE_WORK_FOLLOWUP_SOURCES)
+        or isinstance(data.get("cortexPresentation"), dict)
+        or (isinstance(claim_token, str) and bool(claim_token.strip()))
     )
 
 
@@ -2162,7 +2229,8 @@ class LibreChatBridge:
             "logicalTurnRevision",
             "cortexClaim",
         }
-        if not isinstance(payload, dict) or set(payload) != required_keys:
+        if (not isinstance(payload, dict) or not required_keys <= set(payload)
+                or not set(payload) <= required_keys | {"deliveryControls"}):
             return None
         claim = cls._validate_cortex_authority(
             payload.get("cortexClaim"),
@@ -2817,6 +2885,10 @@ class LibreChatBridge:
                 text,
                 return_receipt=True,
                 before_side_effect=renew_before_next_side_effect,
+                native_file_identity=(str(delivery.get("userId") or ""),
+                    str(delivery.get("callbackMessageId") or "")),
+                **({"delivery_controls": delivery["deliveryControls"]}
+                    if "deliveryControls" in delivery else {}),
                 **({
                     "attachments": delivery["attachments"],
                     "on_message_ids": retain_message_ids,
@@ -3344,6 +3416,7 @@ class LibreChatBridge:
         stream_id: Optional[str],
         cortex_delivery: Optional[dict[str, Any]],
         authorize_before_side_effect: Optional[Callable[[], Awaitable[bool]]] = None,
+        delivery_controls: Optional[dict[str, Any]] = None,
     ) -> bool:
         authority = self._poll_delivery_authority(stream_id, cortex_delivery)
         if authority is None:
@@ -3365,6 +3438,7 @@ class LibreChatBridge:
             stream_id=stream_id,
             return_receipt=True,
             before_side_effect=ensure_current_before_transport,
+            **({"delivery_controls": delivery_controls} if delivery_controls is not None else {}),
         )
         message_ids = (
             receipt.get("message_ids")
@@ -3390,6 +3464,8 @@ class LibreChatBridge:
             isinstance(receipt, dict) and receipt.get("stale") is True
         )
         if transport_reported_stale or not await self._poll_delivery_is_current(authority):
+            if stream_id:
+                self._mark_followup_sent(stream_id)
             await self._retract_cortex_presentation_refs(presentation_refs)
             status = await self._record_poll_delivery_state(
                 authority=authority,
@@ -3420,6 +3496,8 @@ class LibreChatBridge:
             "stale_source_order",
             "not_found",
         }:
+            if stream_id:
+                self._mark_followup_sent(stream_id)
             removal_status = await self._record_poll_delivery_state(
                 authority=authority,
                 state="partial_removed",
@@ -3443,7 +3521,10 @@ class LibreChatBridge:
         cortex_delivery: Optional[dict[str, Any]] = None,
         enforce_order_fence: bool = False,
         authorize_before_side_effect: Optional[Callable[[], Awaitable[bool]]] = None,
+        delivery_controls: Optional[dict[str, Any]] = None,
     ) -> bool:
+        if delivery_controls is None and cortex_delivery:
+            delivery_controls = cortex_delivery.get("deliveryControls")
         async def _emit() -> bool:
             if enforce_order_fence:
                 return await self._send_poll_delivery(
@@ -3452,16 +3533,19 @@ class LibreChatBridge:
                     stream_id=stream_id,
                     cortex_delivery=cortex_delivery,
                     authorize_before_side_effect=authorize_before_side_effect,
+                    **({"delivery_controls": delivery_controls} if delivery_controls is not None else {}),
                 )
             if not cortex_delivery:
                 return bool(
-                    await self._send_followup_text(chat_id, text, stream_id=stream_id)
+                    await self._send_followup_text(chat_id, text, stream_id=stream_id,
+                        **({"delivery_controls": delivery_controls} if delivery_controls is not None else {}))
                 )
             receipt = await self._send_followup_text(
                 chat_id,
                 text,
                 stream_id=stream_id,
                 return_receipt=True,
+                **({"delivery_controls": delivery_controls} if delivery_controls is not None else {}),
             )
             message_ids = (
                 receipt.get("message_ids")
@@ -3494,12 +3578,11 @@ class LibreChatBridge:
                     "Cortex Telegram presentation acknowledgement was not recorded: %s",
                     status,
                 )
-            return status not in {
-                "conflict",
-                "stale_revision",
-                "stale_source_order",
-                "not_found",
-            }
+            if status in {"conflict", "stale_revision", "stale_source_order", "not_found"}:
+                if stream_id:
+                    self._mark_followup_sent(stream_id)
+                return False
+            return True
 
         return await self._emit_followup_once(stream_id=stream_id, emit=_emit)
 
@@ -3629,6 +3712,8 @@ class LibreChatBridge:
         telegram_user_id: str = "",
         attachments: Optional[list[dict[str, Any]]] = None,
         on_message_ids: Optional[Callable[[list[str]], None]] = None,
+        delivery_controls: Optional[dict[str, Any]] = None,
+        native_file_identity: Optional[tuple[str, str]] = None,
     ) -> Any:
         if not self.on_message_callback:
             return False
@@ -3645,12 +3730,26 @@ class LibreChatBridge:
                 raise _GlassHiveDeliveryAuthorizationLost(
                     "telegram_attachment_callback_unavailable", transport_started=False
                 )
+        covered_file_grants = _verified_attachment_grants(attachments, native_file_identity)
         # === VIVENTIUM START ===
         # Feature: Proactive follow-up voice parity.
         # Purpose: Apply existing voice preference gate + TTS for callback delivery.
         voice_audio: Optional[bytes] = None
         convo_id = preference_convo_id or str(target_chat_id)
-        voice_route = self._stream_voice_route(stream_id) or self.get_cached_voice_route(str(target_chat_id))
+        voice_route = self._stream_voice_route(stream_id)
+        speech_route_unavailable = False
+        if not voice_route and telegram_user_id:
+            try:
+                voice_route = await self.get_voice_route(
+                    telegram_user_id=telegram_user_id, telegram_chat_id=str(target_chat_id),
+                    telegram_message_thread_id=message_thread_id,
+                )
+            except Exception as error:
+                speech_route_unavailable = True
+                logger.warning("Callback Speaking route unavailable: class=%s", type(error).__name__)
+        elif not voice_route:
+            # Legacy callers lack incoming ownership; retain their scoped cached route.
+            voice_route = self.get_cached_voice_route(str(target_chat_id))
         voice_text = (
             raw_message
             if isinstance(raw_message, str) and raw_message.strip()
@@ -3659,10 +3758,31 @@ class LibreChatBridge:
         delivery_plan = parse_delivery_controls(voice_text)
         voice_text = delivery_plan.clean_text
         if isinstance(raw_message, str) and raw_message.strip():
-            message = render_telegram_markdown(voice_text, strip_voice_markup=True)
+            message = render_telegram_markdown(voice_text, strip_voice_markup=True, covered_file_grants=covered_file_grants)
             parse_mode = "HTML"
         else:
             message = strip_delivery_controls_for_preview(message)
+        native_audio_text = extract_followup_audio_text(voice_text, delivery_controls)
+        full_voice_chars = len(voice_text)
+        if native_audio_text is not None:
+            voice_text = native_audio_text
+        legacy_skip = delivery_plan.skip_voice or (
+            isinstance(delivery_controls, dict) and delivery_controls.get("skipVoice") is True
+        )
+        callback_disposition = delivery_controls.get("deliveryDisposition") if isinstance(delivery_controls, dict) else None
+        callback_disposition_required = bool(
+            isinstance(delivery_controls, dict) and "deliveryDisposition" in delivery_controls
+            and (normalize_delivery_disposition(callback_disposition) is None
+                or callback_disposition.get("required") is True)
+        )
+        if native_audio_text is not None:
+            callback_disposition_required = True
+            callback_disposition = ({"version": 1, "audio": "eligible", "required": True,
+                "valid": True, "source": "model"} if native_audio_text.strip() else None)
+        callback_audio_allowed, callback_disposition_decision = resolve_delivery_audio_gate(
+            legacy_skip_requested=legacy_skip, delivery_disposition=callback_disposition,
+            disposition_required=callback_disposition_required,
+        )
         should_send_voice = False
         model_skip_effective = False
         if voice_text and convo_id:
@@ -3679,10 +3799,10 @@ class LibreChatBridge:
                     voice_enabled=voice_responses_enabled,
                     text=voice_text,
                 )
-                model_skip_effective = bool(delivery_plan.skip_voice and should_send_voice)
-                if delivery_plan.skip_voice:
+                model_skip_effective = bool(legacy_skip and should_send_voice)
+                if not callback_audio_allowed:
                     should_send_voice = False
-                if should_send_voice:
+                if should_send_voice and not speech_route_unavailable:
                     voice_audio = await synthesize_speech(
                         voice_text,
                         convo_id,
@@ -3698,11 +3818,13 @@ class LibreChatBridge:
             (
                 "skipped_model"
                 if model_skip_effective
-                else ("sent" if should_send_voice else "disabled_user")
+                else ("skipped_native_ranges" if native_audio_text is not None and not voice_text.strip()
+                    else f"skipped_{callback_disposition_decision}" if not callback_audio_allowed
+                    else "sent" if should_send_voice else "disabled_user")
             ),
-            int(bool(delivery_plan.skip_voice)),
+            int(bool(legacy_skip)),
             int(model_skip_effective),
-            len(voice_text) if model_skip_effective else 0,
+            full_voice_chars if model_skip_effective else max(0, full_voice_chars - len(voice_text)),
             delivery_plan.message_break_count,
             len(delivery_plan.segments),
             delivery_plan.merged_break_count,
@@ -3816,7 +3938,7 @@ class LibreChatBridge:
                     chunk
                     for segment in delivery_plan.segments
                     for chunk in split_telegram_html(
-                        render_telegram_markdown(segment, strip_voice_markup=True),
+                        render_telegram_markdown(segment, strip_voice_markup=True, covered_file_grants=covered_file_grants),
                         limit=3500,
                     )
                     if chunk.strip()
@@ -4940,6 +5062,23 @@ class LibreChatBridge:
                                     else None
                                 )
                                 final_cortex_parts = extract_cortex_parts(response_content)
+                                disposition_event = extract_delivery_disposition(
+                                    payload,
+                                    required=self._delivery_disposition_required_by_stream.get(
+                                        stream_id, False,
+                                    ),
+                                )
+                                disposition = disposition_event["delivery_disposition"]
+                                native = (response_payload.get("nativeResponse")
+                                          if isinstance(response_payload, dict) else None)
+                                quiet_native_final = bool(
+                                    isinstance(native, dict)
+                                    and native.get("status") == "completed"
+                                    and disposition is not None
+                                    and disposition["required"] is True
+                                    and disposition["source"] == "model"
+                                    and disposition["audio"] == "skip"
+                                )
 
                                 # === VIVENTIUM START ===
                                 # Feature: Recover structured pre-follow-up completion failures.
@@ -5031,7 +5170,12 @@ class LibreChatBridge:
                                     and not has_final_attachments
                                 ):
                                     diagnosis = _diagnose_empty_response(payload)
-                                    if deferred_internal_final or self._has_glasshive_seen(stream_id):
+                                    if quiet_native_final:
+                                        self._trace(
+                                            "LibreChatBridge accepted quiet native final: stream_id=%s",
+                                            stream_id,
+                                        )
+                                    elif deferred_internal_final or self._has_glasshive_seen(stream_id):
                                         self._trace(
                                             "LibreChatBridge pending follow-up final: chat_id=%s stream_id=%s diagnosis=%s keys=%s",
                                             chat_id,
@@ -5059,13 +5203,6 @@ class LibreChatBridge:
                                         )
                                         yield _empty_response_message(diagnosis)
                                         # === VIVENTIUM END ===
-                                disposition_event = extract_delivery_disposition(
-                                    payload,
-                                    required=self._delivery_disposition_required_by_stream.get(
-                                        stream_id,
-                                        False,
-                                    ),
-                                )
                                 if (
                                     disposition_event["required"]
                                     or disposition_event["present"]
@@ -5074,9 +5211,18 @@ class LibreChatBridge:
                                 # === VIVENTIUM START ===
                                 # Feature: Emit any final attachments after the main text.
                                 self._observe_memory_receipt(stream_id, payload.get("memoryReceipt"))
+                                native_file_identity = _native_file_identity_from_final(payload)
+                                if final_attachments:
+                                    logger.info(
+                                        f"[TG_FILE_FINAL] identityPresent={bool(native_file_identity)} "
+                                        f"attachmentsSeen={len(final_attachments)} "
+                                        f"verifiedGrantCount={len(_verified_attachment_grants(final_attachments, native_file_identity))}"
+                                    )
                                 for attachment in final_attachments:
                                     emitted_attachments = True
-                                    yield {"type": "attachment", "attachment": attachment}
+                                    yield {"type": "attachment", "attachment": attachment,
+                                           **({"native_file_identity": native_file_identity}
+                                              if native_file_identity else {})}
                                 # === VIVENTIUM END ===
                                 return
 
@@ -5585,6 +5731,7 @@ class LibreChatBridge:
                                 text,
                                 stream_id=stream_id,
                                 enforce_order_fence=True,
+                                delivery_controls=follow_up.get("deliveryControls"),
                             )
                             # Prevent insight fallback after a merged follow-up is finalized.
                             if sent:
@@ -6090,6 +6237,8 @@ class LibreChatBridge:
         telegram_user_id: str = "",
         attachments: Optional[list[dict[str, Any]]] = None,
         on_message_ids: Optional[Callable[[list[str]], None]] = None,
+        delivery_controls: Optional[dict[str, Any]] = None,
+        native_file_identity: Optional[tuple[str, str]] = None,
     ) -> Any:
         if not text:
             return False
@@ -6100,7 +6249,8 @@ class LibreChatBridge:
         # === VIVENTIUM END ===
         # === VIVENTIUM NOTE ===
         # Fix: Always render HTML for text display, even when input was voice.
-        message = render_telegram_markdown(text)
+        message = render_telegram_markdown(text,
+            covered_file_grants=_verified_attachment_grants(attachments, native_file_identity))
         parse_mode = "HTML"
         # === VIVENTIUM NOTE END ===
         if not message:
@@ -6126,6 +6276,8 @@ class LibreChatBridge:
             native_work_item=native_work_item,
             telegram_user_id=telegram_user_id,
             attachments=attachments,
+            native_file_identity=native_file_identity,
             on_message_ids=on_message_ids,
+            **({"delivery_controls": delivery_controls} if delivery_controls is not None else {}),
         )
     # === VIVENTIUM END ===

@@ -137,7 +137,10 @@ except ImportError:
 
 from librechat_llm import (
     _PUBLIC_PART_COMPLETION_EXTRA,
+    _NATIVE_INPUT_OFFER_EXTRA,
+    _native_input_offer,
     _public_part_completion,
+    _content_audio_segments,
     LibreChatAuth, LibreChatLLM, TYPED_INPUT_EXTRA_KEY, _VoiceTtsDeltaBuffer,
     _voice_source_event_id,
 )
@@ -278,6 +281,7 @@ DEFAULT_XAI_TTS_OPTIMIZE_STREAMING_LATENCY = int(
 )
 
 _TERMINAL_GLASSHIVE_CALLBACK_EVENTS = {
+    "run.needs_input",
     "run.completed",
     "run.failed",
     "run.cancelled",
@@ -4323,12 +4327,15 @@ class CallTaskStreamSpeechAuthority:
         suspend: Any,
         apply_state: Any,
         terminate: Optional[Any] = None,
+        shutdown: Optional[Any] = None,
     ) -> None:
         self._call_session_id = call_session_id
         self._fetch_call_state = fetch_call_state
         self._suspend = suspend
         self._apply_state = apply_state
         self._terminate = terminate or suspend
+        self._shutdown = shutdown
+        self._terminated = False
         self._session_ready = False
         self._stream_connected = False
         self._authoritative = False
@@ -4340,6 +4347,18 @@ class CallTaskStreamSpeechAuthority:
     @property
     def stream_connected(self) -> bool:
         return self._stream_connected
+
+    def terminate(self) -> None:
+        """Drain this local job once without cancelling its durable host work."""
+        if self._terminated:
+            return
+        self._terminated = True
+        self._session_ready = False
+        self._stream_connected = False
+        self._authoritative = False
+        self._terminate()
+        if self._shutdown is not None:
+            self._shutdown()
 
     def _valid_call_state(
         self,
@@ -4368,7 +4387,7 @@ class CallTaskStreamSpeechAuthority:
     def mark_session_ready(self, state: Any) -> bool:
         """Open speech only after both SSE 2xx and the exact ready transition."""
         self._authoritative = False
-        if not self._stream_connected or not self._valid_call_state(
+        if self._terminated or not self._stream_connected or not self._valid_call_state(
             state,
             require_listening=True,
         ):
@@ -4385,6 +4404,8 @@ class CallTaskStreamSpeechAuthority:
 
     async def reconcile(self) -> bool:
         """Restore only from a fresh call snapshot while the task stream is live."""
+        if self._terminated:
+            return False
         self._authoritative = False
         self._suspend()
         if not self._session_ready or not self._stream_connected:
@@ -4398,6 +4419,8 @@ class CallTaskStreamSpeechAuthority:
                 type(exc).__name__,
             )
             return False
+        if self._terminated or not self._stream_connected:
+            return False
         if not self._valid_call_state(snapshot):
             return False
         if self._apply_state(snapshot) is False:
@@ -4406,6 +4429,8 @@ class CallTaskStreamSpeechAuthority:
         return True
 
     async def on_stream_health(self, health: Any) -> None:
+        if self._terminated:
+            return
         valid = bool(
             isinstance(health, dict)
             and health.get("version") == 1
@@ -4414,9 +4439,7 @@ class CallTaskStreamSpeechAuthority:
         )
         state = health.get("state") if valid else "invalid"
         if state in {"invalid", "terminal", "stopped"}:
-            self._stream_connected = False
-            self._authoritative = False
-            self._terminate()
+            self.terminate()
             return
         if state != "connected":
             self._stream_connected = False
@@ -4431,9 +4454,7 @@ class CallTaskStreamSpeechAuthority:
             or status < 200
             or status >= 300
         ):
-            self._stream_connected = False
-            self._authoritative = False
-            self._terminate()
+            self.terminate()
             return
 
         if self._stream_connected and self._authoritative:
@@ -4838,12 +4859,16 @@ class ViventiumVoiceAgent(Agent):
         async with aclosing(chunks) as chunks:
             async for chunk in chunks:
                 completion = None
+                native_offer = None
                 if isinstance(chunk, ChatChunk) and chunk.delta is not None:
                     extra = dict(chunk.delta.extra or {})
-                    has_completion_control = _PUBLIC_PART_COMPLETION_EXTRA in extra
+                    has_native_control = _NATIVE_INPUT_OFFER_EXTRA in extra
+                    native_offer = _native_input_offer(extra.pop(_NATIVE_INPUT_OFFER_EXTRA, None))
+                    has_completion_control = _PUBLIC_PART_COMPLETION_EXTRA in extra or has_native_control
                     completion = _public_part_completion(extra.pop(_PUBLIC_PART_COMPLETION_EXTRA, None))
                     if chunk.delta.tool_calls:
                         completion = None
+                        native_offer = None
                     if has_completion_control:
                         chunk = chunk.model_copy(update={"delta": chunk.delta.model_copy(update={"extra": extra})})
                     if chunk.delta.content:
@@ -4856,6 +4881,13 @@ class ViventiumVoiceAgent(Agent):
                     if isinstance(chunk, str) and chunk:
                         has_public_text = True
                     yield chunk
+                if native_offer:
+                    key = (chunk.id, native_offer["requestKey"], native_offer["streamId"], "native-input")
+                    if key not in seen:
+                        seen.add(key)
+                        if has_public_text:
+                            has_public_text = False
+                            yield FlushSentinel()
                 if completion:
                     key = (chunk.id, completion["request_id"], completion["run_id"], completion["part_id"])
                     if key not in seen:
@@ -5533,7 +5565,9 @@ class CortexFollowupScheduler:
                                         not task_ref or task_ref.get("streamId")
                                         != f"glasshive-delivery:{delivery.get('deliveryId')}"
                                         or delivery.get("callbackMessageId") != message_id
-                                        or not isinstance(delivery.get("workerCompletionPresentation"), dict)
+                                        or not (isinstance(delivery.get("workerCompletionPresentation"), dict)
+                                            or (delivery.get("event") == "run.needs_input"
+                                                and isinstance(delivery.get("nativeInputBinding"), dict)))
                                         or (delivery.get("presentationTask") or {}).get("taskId")
                                         != task_ref.get("taskId")
                                     ):
@@ -5704,6 +5738,11 @@ class CortexFollowupScheduler:
                                     return True
                                 return
                             text = follow_up.get("text")
+                            if "content" in follow_up:
+                                text = "".join(part for part, silent in _content_audio_segments(
+                                    follow_up["content"], default_skipped=True) if not silent)
+                                if not text.strip():
+                                    return
                             if isinstance(text, str) and text.strip():
                                 text = text.strip()
                                 if is_no_response_only(text):
@@ -6055,7 +6094,10 @@ class CortexFollowupScheduler:
         work_refs: set[str] = set()
         result_keys: set[str] = set()
         for binding in bindings:
-            if not isinstance(binding, dict) or set(binding) != binding_keys:
+            attention = isinstance(binding, dict) and binding.get("kind") == "nonterminal_attention"
+            expected_keys = {"kind", "originRef", "workRef", "workerId", "runId", "callbackRef",
+                             "event", "workTerminal", "evidenceId"} if attention else binding_keys
+            if not isinstance(binding, dict) or set(binding) != expected_keys:
                 return None
             string_fields = ("originRef", "workRef", "workerId", "runId")
             if any(
@@ -6065,6 +6107,15 @@ class CortexFollowupScheduler:
                 for field in string_fields
             ):
                 return None
+            if attention:
+                if (binding.get("event") != "run.needs_input" or binding.get("workTerminal") is not False
+                        or not self._prefixed_lower_hex(binding.get("callbackRef"), "callback_sha256:", 64)
+                        or not self._prefixed_lower_hex(binding.get("evidenceId"), "ghe_", 32)
+                        or binding["workRef"] in work_refs or binding["evidenceId"] in result_keys):
+                    return None
+                work_refs.add(binding["workRef"])
+                result_keys.add(binding["evidenceId"])
+                continue
             if (
                 not self._prefixed_lower_hex(
                     binding.get("callbackRef"), "callback_sha256:", 64
@@ -6175,6 +6226,16 @@ class CortexFollowupScheduler:
             return None
 
         if previous is not None:
+            native_binding = delivery.get("nativeInputBinding")
+            native_cap = (
+                self._glasshive_dispatch_permit_expiry(native_binding)
+                if delivery.get("event") == "run.needs_input"
+                and isinstance(native_binding, dict)
+                and native_binding.get("version") == 1
+                and native_binding.get("runId") == delivery.get("runId")
+                and bool(native_binding.get("runId"))
+                else None
+            )
             previous_expiry = self._glasshive_dispatch_permit_expiry(previous)
             previous_generation = previous.get("permitGeneration")
             if (
@@ -6185,7 +6246,8 @@ class CortexFollowupScheduler:
                 or generation != previous_generation
                 or revision != previous.get("resultRevision")
                 or digest != previous.get("resultDigest")
-                or expiry <= previous_expiry
+                or expiry < previous_expiry
+                or (expiry == previous_expiry and native_cap != expiry)
             ):
                 return None
         return dict(payload)
@@ -6539,6 +6601,8 @@ class CortexFollowupScheduler:
                     return False
                 remaining_s = (expiry - datetime.now(timezone.utc)).total_seconds()
                 renew_after_s = max(0.0, min(30.0, remaining_s * 0.5))
+                if delivery.get("event") == "run.needs_input" and remaining_s <= 1.0:
+                    renew_after_s = max(0.0, remaining_s)
                 try:
                     await asyncio.wait_for(completed.wait(), timeout=renew_after_s)
                 except asyncio.TimeoutError:
@@ -7833,6 +7897,7 @@ async def entrypoint(ctx: JobContext) -> None:
         suspend=_suspend_for_task_stream_uncertainty,
         apply_state=_apply_task_stream_call_state,
         terminate=_terminate_for_task_stream_failure,
+        shutdown=ctx.shutdown,
     )
     async def _on_call_task_stream_health(health: dict[str, Any]) -> None:
         if health.get("state") != "connected":
@@ -7916,7 +7981,7 @@ async def entrypoint(ctx: JobContext) -> None:
         mode, status, revision = parsed
         latest_pushed_mode_revision[0] = revision
         if status in {"failed", "ended"}:
-            _terminate_for_task_stream_failure()
+            task_stream_authority.terminate()
             logger.info(
                 "[VoiceMode] push_terminal callSessionId=%s status=%s revision=%s",
                 call_session_id,
@@ -7964,17 +8029,12 @@ async def entrypoint(ctx: JobContext) -> None:
 
         def _on_terminal_state(status: str) -> None:
             terminal_state_seen[0] = True
-            _terminate_for_task_stream_failure()
+            task_stream_authority.terminate()
             logger.info(
                 "[VoiceMode] terminal_state callSessionId=%s status=%s backendTaskPreserved=true",
                 call_session_id,
                 status,
             )
-            shutdown = getattr(ctx, "shutdown", None)
-            if callable(shutdown):
-                result = shutdown()
-                if inspect.isawaitable(result):
-                    asyncio.create_task(result)
 
         async def _reconcile_once() -> None:
             terminal_state_seen[0] = False

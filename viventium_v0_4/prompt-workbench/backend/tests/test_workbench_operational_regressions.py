@@ -27,6 +27,16 @@ from prompt_workbench import (  # noqa: E402
 )
 
 
+@pytest.mark.parametrize("prompt_id", [
+    "main.conscious_agent", "main.tools", "worker.grok_mcp_tool_access",
+])
+def test_native_terminal_schema_contract_is_visible_in_prompt_workbench(prompt_id):
+    rows = {row["id"]: row for row in prompt_service.related_config_for_prompt(prompt_id)}
+    for ref in ["worker-conversation-output-contract", "worker-grok-output-projection", "worker-grok-output-authority", "worker-conversation-output-rendering", "worker-conversation-output-wire-projection"]:
+        assert ref in rows
+        assert rows[ref]["path"].startswith("viventium_v0_4/xPerfect/")
+
+
 @pytest.mark.parametrize("private_source", (False, True))
 def test_workbench_never_reuses_generated_runtime_yaml_as_prompt_source(
     tmp_path: Path,

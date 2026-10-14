@@ -42,6 +42,9 @@ def test_ensure_telegram_media_prereqs_installs_ffmpeg_via_brew(tmp_path: Path) 
     function_def += extract_shell_function(script_text, "ensure_telegram_media_prereqs")
     fake_bin = tmp_path / "bin"
     fake_bin.mkdir(parents=True, exist_ok=True)
+    ffprobe_path = fake_bin / "ffprobe"
+    ffprobe_path.write_text("#!/bin/sh\nexit 0\n")
+    ffprobe_path.chmod(0o755)
     brew_log = tmp_path / "brew.log"
     ffmpeg_path = fake_bin / "ffmpeg"
     brew_path = fake_bin / "brew"
@@ -103,6 +106,9 @@ def test_ensure_telegram_media_prereqs_reinstalls_broken_ffmpeg(tmp_path: Path) 
     function_def += extract_shell_function(script_text, "ensure_telegram_media_prereqs")
     fake_bin = tmp_path / "bin"
     fake_bin.mkdir(parents=True, exist_ok=True)
+    ffprobe_path = fake_bin / "ffprobe"
+    ffprobe_path.write_text("#!/bin/sh\nexit 0\n")
+    ffprobe_path.chmod(0o755)
     brew_log = tmp_path / "brew.log"
     ffmpeg_path = fake_bin / "ffmpeg"
     ffmpeg_path.write_text(
@@ -166,6 +172,23 @@ def test_ensure_telegram_media_prereqs_reinstalls_broken_ffmpeg(tmp_path: Path) 
     assert "WARN:ffmpeg is installed but not runnable" in completed.stdout
     assert "OK:ffmpeg is ready for Telegram media support" in completed.stdout
     assert brew_log.read_text(encoding="utf-8").strip() == "reinstall ffmpeg"
+
+
+def test_telegram_media_readiness_rejects_missing_or_broken_ffprobe(tmp_path: Path) -> None:
+    function_def = extract_shell_function(START_SCRIPT_PATH.read_text(), "ffmpeg_is_usable")
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    ffmpeg = fake_bin / "ffmpeg"
+    ffmpeg.write_text("#!/bin/sh\nexit 0\n")
+    ffmpeg.chmod(0o755)
+    for present in (False, True):
+        if present:
+            ffprobe = fake_bin / "ffprobe"
+            ffprobe.write_text("#!/bin/sh\nexit 1\n")
+            ffprobe.chmod(0o755)
+        result = subprocess.run(["/bin/bash", "-c", f"PATH='{fake_bin}'\n{function_def}\nffmpeg_is_usable"],
+                                capture_output=True)
+        assert result.returncode != 0
 
 
 def test_start_telegram_bot_checks_media_prereqs_before_launch() -> None:

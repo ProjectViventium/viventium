@@ -28,6 +28,7 @@ import concurrent.futures
 import io
 import json
 import logging
+import math
 import os
 import re
 import threading
@@ -250,13 +251,24 @@ class MlxChatterboxTTS(TTS):
         return _MlxChatterboxChunkedStream(tts=self, input_text=text, conn_options=conn_options)
 
 
-def synthesize_wav_bytes(text: str, *, config: MlxChatterboxConfig) -> bytes:
+def synthesize_wav_bytes(text: str, *, config: MlxChatterboxConfig, deadline: Optional[float] = None) -> bytes:
     """
     Produce a complete WAV payload for non-LiveKit surfaces such as Telegram.
 
     This reuses the same model cache, sanitization, ref-audio, and generation knobs as the
     streaming LiveKit provider while returning a single self-contained audio file.
     """
+    if deadline is not None:
+        deadline = float(deadline)
+        if not math.isfinite(deadline):
+            raise ValueError("speech_deadline_invalid")
+        if deadline <= time.monotonic():
+            raise TimeoutError("speech_deadline_expired")
+    stop_event = threading.Event()
+
+    def stopped() -> bool:
+        return stop_event.is_set() or (deadline is not None and time.monotonic() >= deadline)
+
     input_text = sanitize_voice_text(text or "")
     input_text = _strip_cartesia_emotion_tags(input_text).strip()
     if not input_text:
@@ -265,7 +277,11 @@ def synthesize_wav_bytes(text: str, *, config: MlxChatterboxConfig) -> bytes:
     _log_tts_input(surface="wav_bytes", text=input_text, config=config)
 
     def _synthesize() -> bytes:
+        if stopped():
+            return b""
         model = _load_mlx_model(config.model_id)
+        if stopped():
+            return b""
         effective_sample_rate = int(config.sample_rate)
         chunks: list[bytes] = []
 
@@ -277,6 +293,8 @@ def synthesize_wav_bytes(text: str, *, config: MlxChatterboxConfig) -> bytes:
             temperature=float(config.temperature),
             repetition_penalty=float(config.repetition_penalty),
         ):
+            if stopped():
+                return b""
             result_sample_rate = getattr(result, "sample_rate", None)
             if isinstance(result_sample_rate, int) and result_sample_rate > 0:
                 effective_sample_rate = int(result_sample_rate)
@@ -284,7 +302,7 @@ def synthesize_wav_bytes(text: str, *, config: MlxChatterboxConfig) -> bytes:
             if pcm:
                 chunks.append(pcm)
 
-        if not chunks:
+        if stopped() or not chunks:
             return b""
 
         return _pcm_to_wav_bytes(
@@ -293,7 +311,19 @@ def synthesize_wav_bytes(text: str, *, config: MlxChatterboxConfig) -> bytes:
             num_channels=int(config.num_channels),
         )
 
-    return _submit_mlx_work(_synthesize).result()
+    future = _submit_mlx_work(_synthesize)
+    try:
+        remaining = None if deadline is None else max(0.0, deadline - time.monotonic())
+        result = future.result(timeout=remaining)
+        if stopped():
+            raise TimeoutError("speech_deadline_expired")
+        return result
+    except BaseException:
+        stop_event.set()
+        # A running native call cannot be interrupted; discard at its next yield.
+        # Cancel only this request's queued work on the one owning MLX executor.
+        future.cancel()
+        raise
 
 
 class _MlxChatterboxChunkedStream(ChunkedStream):

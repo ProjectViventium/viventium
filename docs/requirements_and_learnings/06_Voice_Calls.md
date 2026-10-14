@@ -32,6 +32,20 @@ background-cortex behavior.
   - do not wait so long after a true stop that the system feels sluggish or unresponsive
 - Background insights must be surfaced after the main response without leaking raw internal insight
   text into live voice speech.
+- Accepted terminal worker-run callbacks must also settle their owner-bound Voice task projection
+  when callback prose remains internal. A completed, failed, cancelled or interrupted run must
+  not stay running or cancellable in call task snapshots. Its WorkRef may remain queued for a
+  sibling run; terminal run state does not close that mission or authorize callback speech.
+  Lifecycle-only, busy conversation, moved conversation and deleted-origin acceptance paths must
+  apply the same exact run projection before returning their presentation receipt. Existing
+  ownership, durable terminal effect and cancellation/suppression guards remain authoritative.
+- One Main-authored aggregate reply settles delivery status for every exact included Worker result.
+  Voice uses its signed presentation bindings; shared external delivery also retains the same
+  immutable accepted-result bindings from Main's authored group. Each status write preserves the
+  current owner, run, result and authored-reply identity. A newer result or unrelated reply must
+  remain unchanged. Surface failures and unknown receipts keep their existing precedence. The
+  existing bounded projection reconciler recovers incomplete saved aggregate status without
+  another message or speech attempt, and records completion only after all member effects commit.
 - A later persisted Main-authored Cortex reply must wake the existing call-wide task stream,
   including after its parent completes. Speech must use the authenticated Cortex fetch and
   playback receipt paths, preserve the parent result, and honor Stop, End, and Listen-Only.
@@ -481,6 +495,10 @@ background-cortex behavior.
   existing syntax guards; incomplete link targets remain non-speech at input end. Reuse a pending
   code or link span until a closing delimiter can change its classification. This does not change
   display text, model audio choices, interruption, or fallback authority.
+- Completed speech boundary state must remain bounded as an utterance grows. The gateway and
+  provider continuation guards retain only the last nonspace character and trailing whitespace
+  needed for numeric and punctuation boundaries. They must preserve exact authored words and
+  supported emotion controls without copying the whole completed utterance for every chunk.
 - Email-address replacement must remain natural on both speech and linked-chat persistence paths:
   an input such as `Email qa@example.com` becomes `Email address available`, never the adjacent
   duplicate `Email email available`.
@@ -1055,6 +1073,11 @@ background-cortex behavior.
 - The exact bound voice worker may read `ended` from the terminal state endpoint while it shuts
   down. That narrow read does not renew a lease or authorize another worker. The gateway treats it
   as a terminal stop, not as unavailable state or a mode change to an empty value.
+- A terminal authoritative task subscription or an authoritative `ended`/`failed` call state shuts
+  down the local gateway job once through the existing SDK cleanup. Local input, mode, task-event
+  and follow-up couriers drain without waiting for room retention. Transient disconnections keep
+  their reconnect grace; accepted host work continues in the linked chat. Normal End is not a new
+  provider failure.
 - Expired auth, invalid session, denied microphone, missing configured route, gateway outage, and
   provider failure are distinct inline states. A generic microphone error must not hide another
   failure class.
@@ -1216,6 +1239,10 @@ background-cortex behavior.
   It uses the existing worker-only follow-up window without changing a concurrent Cortex turn.
   A terminal callback that precedes its Voice presentation keeps awaiting that presentation within
   the same window; Core claims, permits and completed playback still own delivery.
+  A finished speech handle alone does not prove audible delivery. The exact handle must have
+  confirmed native audio playout and an explicit uninterrupted outcome before worker completion
+  is acknowledged. Unheard, text-only, interrupted or uncertain playout retains delivery uncertainty.
+  Back-to-back audio segments bind to their own handle even without another session speaking event.
   Claim consumers compare the canonical callback reference while preserving the raw terminal binding
   and exact owner, call, delivery and claim scope. Cancelling one task retains bounded parent
   references for unrelated running workers; closing the call clears them.
@@ -1286,6 +1313,86 @@ the launch URL and capability bootstrap. The linked-chat action is available bef
 turn and stays available after normal End and full reload. The ID is a navigation hint; server ownership
 checks still control chat access. Telegram-posted launch URLs omit this internal navigation hint. Calls
 without a concrete conversation ID wait for a canonical result before showing the linked-chat action.
+
+### Native worker questions in the Main call
+
+An exact pending native worker question returns through Main's existing durable call presenter.
+It uses the same delivery wake, task ownership, permit, speech trace, interruption and once-only
+acknowledgement as other durable follow-ups. The question survives Main finishing or moving to a
+new turn. Speech contains the actual question, not a waiting-status notice. Current native request
+identity and expiry are checked before speech and renewal. Actual choices and consent stay in the
+existing owner-input control; speech presentation cannot authorize the requested operation.
+Within the existing 8,000-character presentation limit, questions also speak their offered
+choices. Permissions reuse the native model's validated action description when the declared
+tool contract supplies it, followed by the actual consent choices. The exact operation title
+stays available in the owner form and the call's closed **Action details** disclosure; it is
+not added to speech. This optional display detail follows the same current native permission
+identity through the existing task and gateway contracts. Legacy requests without it still
+work. If adding choices would exceed the presentation limit, retain the original valid prompt
+and complete owner form rather than reject the request or truncate its response choices.
+The underlying worker task remains `needs_input` while its separate question presentation completes.
+A still-current legacy question is repaired in its existing canonical message and delivery before
+speaking; answered, replaced or expired requests are suppressed. Real configured-provider input
+and audible acceptance must be reported separately from isolated native permission IPC evidence.
+
+### Native clarification questions use the same owner input path
+
+The existing Grok native `x.ai/ask_user_question` request uses the same current
+worker input identity and Main call presentation as a native permission request.
+Permission retains its exact `optionId` consent control. Clarification retains the
+native question keys and option labels in `answers` arrays, with optional `Other`
+notes in `annotations`. Display text can be sanitized without changing wire keys.
+The existing owner form and call task input present these controls; transport JSON
+is not shown to the user. A partial answer is permitted when the native protocol
+permits it. The native runtime validates and acknowledges the actual response.
+
+The supported request is bounded to 16 questions, 16 offered options per question,
+8,000 characters per question or note, and 64 KiB of response content. Single and
+multiple choice constraints remain native. `Other` notes are optional; supplied notes must be nonempty and bounded. Unknown options,
+extra question keys, conflicting selection flags, stale identity and unsupported
+shapes fail closed. Preview forwarding and unrelated native extensions are outside
+this bounded form contract. The existing input operation and acknowledgement replay
+retain the same response bytes and target. Native permission authority is unchanged.
+
+Protocol, form and event tests prove deterministic support. They do not prove that
+a configured provider will choose to ask a question or that the foreground question
+is audible. Actual provider elicitation and call presentation remain separate
+acceptance evidence.
+
+#### Foreground native question speech admission
+
+An active Main generation presents its exact native pending question through the
+existing speech stream. The current task, owner, call, stream, canonical prompt,
+request ID, fingerprint, native run, attempt and expiry must match. The existing
+VoiceTask row stores one atomic request-specific speech offer outside coalesced
+task snapshots. A fresh native owner read after that claim rejects a question
+already answered through another surface, even if an older task snapshot still
+says `needs_input`. Stop, replacement, expiry and participant disconnect are
+checked again before offering text.
+
+The offer has an `offered_unknown` outcome: it prevents replay after an uncertain
+connection or restart, but does not prove that the caller heard the question.
+Auxiliary question text is excluded from provider response, resume and history
+accounting. A separate typed native offer control uses the existing SDK flush
+boundary so an unterminated question can reach TTS while the provider waits. It
+does not claim model public-part provenance. No disconnected question buffer,
+second manager, additional model call or new delivery queue is used. Audible
+acceptance remains a real call QA gate.
+
+
+### Current human answers to native permission requests
+
+Main may relate a spoken owner answer to an exact currently offered native single-operation
+permission choice through its existing work-action tool. The courier signs only a current,
+authenticated human source with the immutable server receipt on its original message.
+The native owner validates that the original answer arrived after this exact request event,
+including run, attempt, session, fingerprint and expiry, before acknowledging an `allow_once`
+or `reject_once` option. A prior request to create a file is not approval for a later permission.
+Callbacks, system turns, missing legacy receipts and ambiguous source segments cannot grant
+natural permission. Direct owner forms retain their existing native options and authority.
+The same typed tool and native validation serve Web, Telegram and Voice; this is not a second
+voice orchestrator. Deterministic source tests, exact-model selection checks and real audible
+acceptance are separate evidence gates.
 
 <!-- VIVENTIUM-STABLE-REQUIREMENT-DECLARATIONS:START -->
 ## Stable requirement declarations
