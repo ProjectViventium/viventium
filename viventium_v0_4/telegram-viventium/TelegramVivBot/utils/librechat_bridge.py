@@ -3077,11 +3077,11 @@ class LibreChatBridge:
     async def _deliver_glasshive_delivery(self, delivery: dict[str, Any]) -> bool:
         chat_id = str(delivery.get("telegramChatId") or "").strip()
         text = str(delivery.get("fullText") or delivery.get("text") or "").strip()
-        if not chat_id or not text:
+        if not chat_id or (not text and not delivery.get("attachments")):
             await self._mark_glasshive_delivery_status(
                 delivery,
                 "suppressed",
-                reason="missing Telegram chat id or text",
+                reason="missing Telegram chat id or content",
             )
             return False
         if is_no_response_only(text):
@@ -3986,6 +3986,9 @@ class LibreChatBridge:
                 ]
                 payload_parse_mode = parse_mode
 
+            if not payloads and attachments:
+                # An accepted file does not need placeholder prose or synthesized speech.
+                payloads = [""]
             if not payloads:
                 if return_receipt:
                     return {"sent": False, "message_ids": []}
@@ -6277,7 +6280,7 @@ class LibreChatBridge:
         delivery_controls: Optional[dict[str, Any]] = None,
         native_file_identity: Optional[tuple[str, str]] = None,
     ) -> Any:
-        if not text:
+        if not text and not attachments:
             return False
         # === VIVENTIUM START ===
         # Feature: No-response tag ({NTA}) should never be delivered to Telegram users.
@@ -6290,7 +6293,7 @@ class LibreChatBridge:
             covered_file_grants=_verified_attachment_grants(attachments, native_file_identity))
         parse_mode = "HTML"
         # === VIVENTIUM NOTE END ===
-        if not message:
+        if not message and not attachments:
             return False
         target_chat_id = self._resolve_telegram_chat_id(chat_id=chat_id, stream_id=stream_id)
         if target_chat_id is None:

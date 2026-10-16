@@ -8463,6 +8463,75 @@ async def test_worker_no_response_still_suppresses_attachments():
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("text", ["", "   "])
+@pytest.mark.parametrize("authorization", ["accepted", "denied", "renewal_lost"])
+async def test_worker_attachment_only_keeps_authority_and_receipt_without_text_or_voice(text, authorization):
+    bridge = _make_bridge()
+    events, statuses = [], []
+    attachments = [{"file_id": "accepted-file", "filename": "result.csv"}]
+
+    async def authorize(delivery):
+        events.append("authorize")
+        return None if authorization == "denied" else await _fake_glasshive_dispatch_permit(delivery)
+
+    async def renew(delivery, permit):
+        events.append("renew")
+        return None if authorization == "renewal_lost" else await _fake_glasshive_dispatch_permit_renewal(delivery, permit)
+
+    async def callback(chat_id, rendered, *, before_side_effect, attachments, **kwargs):
+        assert chat_id == 404
+        assert rendered == ""
+        assert kwargs.get("voice_audio") is None
+        assert attachments == [{"file_id": "accepted-file", "filename": "result.csv"}]
+        await before_side_effect()
+        events.append("file")
+        kwargs["on_message_ids"](["file-message"])
+        return {"message_ids": ["file-message"]}
+
+    async def mark(delivery, status, **kwargs):
+        statuses.append((status, delivery.get("telegramSentMessageIds")))
+        return True
+
+    async def release(delivery, permit):
+        events.append("release")
+        return True
+
+    bridge.set_on_message_callback(callback)
+    bridge._authorize_glasshive_delivery = authorize
+    bridge._renew_glasshive_delivery = renew
+    bridge._mark_glasshive_delivery_status = mark
+    bridge._release_glasshive_delivery = release
+    delivery = {"deliveryId": "file-only", "claimId": "claim", "telegramChatId": "404",
+        "event": "main.followup", "text": text, "attachments": attachments,
+        "deliveryControls": {"deliveryDisposition": {
+            "version": 1, "audio": "skip", "required": True, "valid": True, "source": "model"}}}
+    assert await bridge._deliver_glasshive_delivery(delivery) is (authorization == "accepted")
+    if authorization == "accepted":
+        assert events == ["authorize", "renew", "file", "renew"]
+        assert statuses == [("sent", ["file-message"])]
+    else:
+        assert "file" not in events
+        assert not any(status == "sent" for status, _ in statuses)
+
+
+@pytest.mark.asyncio
+async def test_empty_worker_followup_without_files_stays_silent():
+    bridge = _make_bridge()
+    bridge.set_on_message_callback(lambda *args, **kwargs: pytest.fail("empty callback sent"))
+    bridge._authorize_glasshive_delivery = lambda *args: pytest.fail("empty callback authorized")
+    statuses = []
+
+    async def mark(delivery, status, **kwargs):
+        statuses.append(status)
+        return True
+
+    bridge._mark_glasshive_delivery_status = mark
+    assert await bridge._deliver_glasshive_delivery({"deliveryId": "empty", "claimId": "claim",
+        "telegramChatId": "404", "text": "", "attachments": []}) is False
+    assert statuses == ["suppressed"]
+
+
+@pytest.mark.asyncio
 async def test_streamed_text_equality_does_not_suppress_new_followup_file_carrier():
     bridge = _make_bridge()
     bridge.followup_timeout_s = bridge.glasshive_timeout_s = 0.05

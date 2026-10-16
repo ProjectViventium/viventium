@@ -49,7 +49,8 @@ truthful Main presentation without losing or repeating durable work.
 ### Completion presentation
 
 - **PW-076:** Useful completion is presented once through Main. Redundant results may become durably
-  silent, and closely related completions may coalesce within one configured brief window.
+  silent. Committed worker results enter the existing conversation lane without a fixed collection
+  wait. Results already pending may coalesce; later independent results use the next durable pass.
 - Durable completion adjudication retains each originating mission’s exact input and trusted
   result identity alongside its evidence. A later conversational question does not replace that
   mission’s request. Silent adjudication must not appear as a delivered user-facing result merely
@@ -71,6 +72,10 @@ truthful Main presentation without losing or repeating durable work.
 - Failed optional follow-up synthesis must not turn raw internal insights into another Main
   answer. Preserve the failure record, existing empty-primary recovery, and durable callback retry;
   a provider failure is not a model decision that a required result should remain silent.
+- A silent Main decision may still owe an accepted output file. Core emits that file with empty
+  text and audio disabled through the existing attachment carrier. Telegram preserves its normal
+  dispatch permit, per-file authorization, and delivery receipt; it adds no placeholder message or
+  speech. An empty result without files and a literal no-response control remain suppressed.
 
 ### Foreground and background execution
 

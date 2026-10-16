@@ -1023,15 +1023,14 @@ destinations and current account mapping, then creates one idempotent delivery r
 - GlassHive outbox success means `http_accepted`, not user delivery.
 - Core separately records callback persistence, target resolution, target enqueue, surface delivery,
   and acknowledgement. A terminal HTTP acceptance with zero resolvable targets alerts.
-- Each terminal Active Work entry updates immediately. Useful terminal prose is coalesced for at
-  most two seconds within the same owner and origin conversation before Main authors it. An
-  independent conversation must not wait behind another conversation's synthesis or provider retry.
-  Groups sharing one conversation retain their existing ordering and immutable membership. Once a
-  group is pinned, Main's ready notification resumes it in that same lane without another collection
-  delay. This ready pass cannot claim ungrouped arrivals or shorten their initial collection window;
-  a busy lane retains the wake until its current claim releases. Retained blank, null and missing
-  conversation IDs share the owner's fallback lane. Callbacks remain
-  individually durable and replayable.
+- Each terminal Active Work entry updates immediately. Committed results enter Main's existing
+  owner-and-conversation lane without a fixed collection delay. Already pending results may be
+  grouped; later independent completions use the next durable pass. Independent conversations do
+  not wait behind another conversation's synthesis or provider retry. Groups retain their existing
+  ordering and immutable membership. Main's ready notification resumes a pinned group in that same
+  lane. A busy lane preserves a broader pending pass when a ready wake also arrives. Retained blank,
+  null and missing conversation IDs share the owner's fallback lane. Callbacks remain individually
+  durable and replayable. This scheduling does not change sealed Cortex cohort completion.
 - Web chat, shared history and selected-branch exports show persisted callback and Main follow-up
   messages beside overlapping user turns through the existing scheduler branch projection. Their
   original parents remain unchanged. Additive results appear once, do not select another ordinary
@@ -1906,7 +1905,7 @@ PW-072: Core owns origin/delivery binding; callback-provided Telegram or convers
 PW-073: HTTP callback acceptance is transport truth, not persisted/enqueued/delivered/acknowledged truth. Each configured destination owns one durable delivery row.
 PW-074: Delivery states are `pending`, `delivered`, `acknowledged`, `failed`, or `silent`. Zero-target terminal callbacks alert and remain undelivered.
 PW-075: A scheduled occurrence with required external missions remains `waiting_external` until all required authoritative work is terminal.
-PW-076: Redundant/moved-on results may become durably silent. Useful completion comes once through Main; close completions may coalesce within two seconds.
+PW-076: Redundant/moved-on results may become durably silent. Useful completion comes once through Main; already pending completions may coalesce without a fixed collection delay.
 PW-077: Capacity, account cap, resource pressure, provider quota/429, missing login/auth, provider outage, approval denial, tool absence, and roster unavailability remain distinct typed states.
 PW-078: Capacity-blocked work exposes available/required/shortage/reservation, queue age, blocker, next retry, and timeout. It never makes an unverified future-delivery promise.
 PW-079: Provider health/cooldown is durable and structural. Honor authoritative retry time; do not repeatedly start an exhausted route. Use `presentation_committed_at`, not generic row update time, as delivery truth.
@@ -2318,6 +2317,23 @@ capability checks. A typed unsupported result remains unsupported; it is not a q
 consumed acknowledgement. Reading already accepted background facts for the exact current
 Main also needs no provider artifact pin. Its owner, source, current-job, Stop and text-digest
 fences remain required, including the recheck after the read.
+
+A Main-authored callback also has a real native invocation, bound to its planned message, exact
+serialized body and stream. Its current-author record belongs only to the existing conversation
+lane, never to a fabricated user turn or UI job. Committed sibling evidence may use the same
+native input courier while that author runs. Owner, conversation, Main, surface, Feelings scope,
+claim generation, abort and final-output fences must all match. A queued acknowledgement is not
+consumption: the sibling remains pending for the ordinary relevance and delivery pass. The
+frozen group and its file-publication authority do not expand with an evidence offer. Ending
+a Call disables that live offer, not callback synthesis or delivery into the linked conversation.
+
+A silent relevance decision does not discard an accepted worker file still owed to the user.
+The existing authenticated Message and attachment publication path may carry that file with
+empty text and audio skipped. No status prose is generated. The retained message and delivery
+identity make restart/replay idempotent; a blank message without attachments is not completion.
+Linked-conversation delivery must settle the canonical saved attachment set under the same accepted
+result generation even when text is empty. Record those attachments in the existing delivery row;
+replay must not create another message, file import, or speech task.
 
 ### User delivery constraints and worker execution instructions
 

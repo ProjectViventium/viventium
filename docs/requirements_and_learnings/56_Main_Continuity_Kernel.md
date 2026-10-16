@@ -1088,8 +1088,9 @@ unfinished candidate, edits stored history, clips a tool result, or marks unrevi
 Each background claim reloads its durable record; only a reviewed commit advances the prefix.
 Idle work uses its own background response and budget, without the finished request's scheduler
 deadline or abort signal.
-The same foreground fences, fresh active-call checks, Call End continuation, finite batch/deadline,
-and failure-stop policy apply. A lazy declared fallback need not initialize its tools merely to
+The same foreground fences, finite batch/deadline, and failure-stop policy apply. A live Call
+alone does not pause opportunistic memory maintenance; active foreground admission still has
+priority. A lazy declared fallback need not initialize its tools merely to
 classify the current primary's native courier; its actual dispatch still checks source authority.
 
 Header-only, mixed or unproved routes retain required foreground reconciliation. Genuine aggregate
@@ -1099,8 +1100,8 @@ this change does not enlarge a context window or guarantee arbitrary history fit
 
 ### Bounded idle continuation of reviewed legacy history
 
-Background accepted-turn maintenance and the existing Call End flush reuse the same claim runner
-for up to four claims within a shared twenty-minute deadline. A completed
+Background accepted-turn maintenance reuses the same claim runner for up to four claims within a
+shared twenty-minute deadline. A completed
 store-owned claim signals continuation only while its legacy cursor remains incomplete. The runner
 yields the event loop between claims, checks the existing interactive admission fence before each
 claim, and keeps the existing in-flight cancellation and native capacity-release checks. Required
@@ -1144,13 +1145,17 @@ four claims and deadline, yield to foreground admission, and retain every unrevi
 Failure alone never re-arms an exhausted idle batch. Summary promotion and source-cursor movement
 still require the existing independent fidelity review.
 
-When an enclosing budget pauses a completed fidelity correction or a shrinking whole-proposal,
-summary, or carrier byte-size correction, the existing epoch/lease CAS may retain
+When an enclosing budget pauses a completed fidelity correction, the first typed byte-size rejection,
+or a shrinking size correction, the existing epoch/lease CAS may retain
 `pendingCompactionRepair`. Fidelity repair contains its structurally valid rejected candidate and
 reviewer feedback. Size repair retains typed byte counts, the exact size issue and shrinking
-progress. A structurally valid draft rejected only by the rendered carrier or summary bound may
-also survive in the existing correction field when its complete JSON fits the current JSON cap.
-Whole-JSON overflow remains numeric-only; no oversized draft is stored. Both retain the exact source digest,
+progress. The first size rejection has no invented previous byte count; the next rejected proposal
+must be strictly smaller. A structurally valid draft rejected only by the rendered carrier or summary
+bound may also survive when its complete JSON fits the current JSON cap. A draft whose only failure
+is whole-JSON size may remain unaccepted correction input only within both existing carrier ceilings.
+The service must also prove that the full rendered correction fits all configured native routes before
+retaining it; unknown or insufficient capacity keeps numeric feedback only. This does not relax the
+JSON cap for promotion. Both retain the exact source digest,
 configured route/output contract, source window and consumed attempt counters. The checkpoint is
 separate from accepted context and is never presented or spoken. Saving it requires a live exact
 lease and confirmed native capacity release. A fitting candidate rejected by the independent
@@ -1180,8 +1185,8 @@ its issue is rebased to that current binding target. It restores both consumed a
 existing shrinking-size state, so another batch does not restart its attempt budget. The model
 receives the complete original source and exact typed feedback. A resumed bounded size draft
 keeps its exact bytes and must pass the same complete-request native admission-floor check again.
-Unknown or insufficient admission capacity, or a tighter JSON cap that no longer contains the
-draft, leaves numeric feedback only. Rendered carrier excess is recomputed for the current reserve.
+Unknown or insufficient admission capacity, or a tighter carrier ceiling that no longer contains a
+whole-JSON draft, leaves numeric feedback only. Rendered carrier excess is recomputed for the current reserve.
 The next attempt continues the existing counter; retaining a draft grants no retry, quality bypass,
 model change or accepted-memory promotion. Any new rejected candidate is eligible for the same
 in-claim admission check. The canonical compaction prompt defines `maxJsonUtf8Bytes`
@@ -1210,13 +1215,14 @@ complete. Approved memory and all original source remain available while mainten
 
 Provider or review failure, cancellation, contention, stale source, an exhausted deadline, or the
 four-claim cap stops the batch. After successful reviewed legacy progress exhausts only that batch
-budget, the existing per-domain Call/idle deferral owner re-arms one continuation after thirty idle
+budget, the existing per-domain idle scheduling owner re-arms one continuation after thirty idle
 seconds, without requiring another user turn. It waits while the existing foreground fence is held;
-required foreground recovery or a newer schedule discards the old timer. Before each historical
-background claim, the Call Session owner checks fresh owner/agent session status, expiry and fatal
-state across conversations. A new active or connecting call moves that work back to the existing
-Call End deferral, including when the idle timer was armed before the call began. An unavailable
-liveness read starts no maintenance claim. Ordinary memory admission and Feelings remain parallel.
+required foreground recovery or a newer schedule discards the old timer. Historical maintenance
+can run during a long-lived Call without waiting for End. The existing foreground admission fence
+and cancellation owner yield to an actual interactive turn; a connected but idle Call does not hold
+the memory queue. Each current turn keeps its admitted snapshot. Promotion still rechecks source
+generation, digest, lease, current carrier and the store CAS, so parallel work cannot replace newer
+source or advance an unreviewed cursor. Ordinary memory admission and Feelings also remain parallel.
 An inherited enclosing
 deadline is never extended by re-arming. Provider/review transport errors, cancelled work and source contention
 stop continuation. The current reviewed summary and durable source cursor remain available.
