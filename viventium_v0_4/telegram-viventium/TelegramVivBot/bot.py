@@ -82,6 +82,8 @@ from utils.voice import (
 # Feature: Telegram account linking flow + citation-safe formatting helpers.
 from utils.librechat_bridge import (
     TelegramLinkRequired,
+    _STRUCTURED_STREAM_ERROR_MESSAGES,
+    _stream_error_message,
     render_telegram_markdown,
     _verified_attachment_grants,
     sanitize_telegram_display_text,
@@ -503,6 +505,7 @@ class _TelegramRetractionStore:
             ("claim_token", "TEXT NOT NULL DEFAULT ''"),
             ("claim_generation", "INTEGER NOT NULL DEFAULT 0"),
             ("presentation_refs", "TEXT NOT NULL DEFAULT '[]'"),
+            ("error_class", "TEXT NOT NULL DEFAULT ''"),
         ):
             if column not in pending_columns:
                 connection.execute(
@@ -710,7 +713,7 @@ class _TelegramRetractionStore:
             rows = connection.execute(
                 """
                 SELECT telegram_user_id, chat_id, thread_id, source_sequence,
-                       claim_generation, presentation_refs
+                       claim_generation, presentation_refs, error_class
                 FROM telegram_source_pending_terminals AS pending
                 WHERE next_attempt_at <= ? AND claimed_until <= ?
                   AND NOT EXISTS (
@@ -735,6 +738,7 @@ class _TelegramRetractionStore:
                 source_sequence,
                 claim_generation,
                 presentation_refs,
+                error_class,
             ) in rows:
                 claim_token = uuid.uuid4().hex
                 next_generation = int(claim_generation) + 1
@@ -779,6 +783,7 @@ class _TelegramRetractionStore:
                         "claim_token": claim_token,
                         "claim_generation": next_generation,
                         "presentation_refs": decoded_refs if isinstance(decoded_refs, list) else [],
+                        "error_class": error_class,
                     })
             connection.commit()
             return claimed
@@ -797,6 +802,7 @@ class _TelegramRetractionStore:
         source_sequence,
         presentation_refs,
         lease_s=30,
+        error_class="",
     ):
         now = time.time()
         identity = (
@@ -806,6 +812,9 @@ class _TelegramRetractionStore:
             int(source_sequence),
         )
         encoded_refs = json.dumps(list(presentation_refs or []), separators=(",", ":"))
+        error_class = str(error_class or "").strip().lower()
+        if error_class and error_class not in _STRUCTURED_STREAM_ERROR_MESSAGES:
+            error_class = "completion_error"
         connection = self._connect()
         try:
             connection.execute("BEGIN IMMEDIATE")
@@ -814,14 +823,15 @@ class _TelegramRetractionStore:
                 INSERT INTO telegram_source_pending_terminals
                   (telegram_user_id, chat_id, thread_id, source_sequence,
                    attempts, next_attempt_at, claimed_until, claim_token,
-                   claim_generation, presentation_refs, expires_at)
-                VALUES (?, ?, ?, ?, 0, ?, 0, '', 0, ?, ?)
+                   claim_generation, presentation_refs, expires_at, error_class)
+                VALUES (?, ?, ?, ?, 0, ?, 0, '', 0, ?, ?, ?)
                 ON CONFLICT(telegram_user_id, chat_id, thread_id, source_sequence) DO UPDATE SET
                   next_attempt_at = MIN(next_attempt_at, excluded.next_attempt_at),
                   presentation_refs = excluded.presentation_refs,
+                  error_class = excluded.error_class,
                   expires_at = MAX(expires_at, excluded.expires_at)
                 """,
-                (*identity, now, encoded_refs, now + self.ttl_s),
+                (*identity, now, encoded_refs, now + self.ttl_s, error_class),
             )
             row = connection.execute(
                 """
@@ -880,6 +890,7 @@ class _TelegramRetractionStore:
                 "claim_token": claim_token,
                 "claim_generation": claim_generation,
                 "presentation_refs": list(presentation_refs or []),
+                "error_class": error_class,
             }
         except Exception:
             connection.rollback()
@@ -1582,7 +1593,7 @@ class _TelegramSourceOrderGuard:
         ]
         return True
 
-    async def call(self, method_name, *args, **kwargs):
+    async def call(self, method_name, *args, retain_output=True, **kwargs):
         if not await self.is_current():
             await self.mark_stale()
             raise _StaleTelegramSourceOrder("stale Telegram source before presentation")
@@ -1609,7 +1620,8 @@ class _TelegramSourceOrderGuard:
         if stale_after_wait:
             await self.mark_stale()
             raise _StaleTelegramSourceOrder("stale Telegram source after presentation wait")
-        self._retain_result(result, kwargs)
+        if retain_output:
+            self._retain_result(result, kwargs)
         if not await self.is_current():
             await self.mark_stale()
             raise _StaleTelegramSourceOrder("stale Telegram source after presentation")
@@ -1758,7 +1770,8 @@ class _TelegramSourceOrderGuard:
             if pending_claim is not None:
                 await self.retract_all()
             return None
-        terminal_text = (
+        error_class = pending_claim.get("error_class") if pending_claim else None
+        terminal_text = _stream_error_message(None, error_class=error_class) if error_class else (
             "I could not safely confirm that reply. It was removed. "
             "Please retry your message."
         )
@@ -1823,7 +1836,7 @@ class _TelegramSourceOrderGuard:
                 logger.error("Could not persist Telegram retry terminal: %s", type(exc).__name__)
         return message_id
 
-    def reserve_pending_retry_terminal(self):
+    def reserve_pending_retry_terminal(self, *, error_class=""):
         try:
             if self._store is None:
                 self._store = _TelegramRetractionStore()
@@ -1833,6 +1846,7 @@ class _TelegramSourceOrderGuard:
                 thread_id=self.thread_id,
                 source_sequence=self.source_sequence,
                 presentation_refs=self.presentation_refs(),
+                error_class=error_class,
             )
         except Exception as exc:
             logger.error("Could not persist Telegram retry recovery: %s", type(exc).__name__)
@@ -1848,8 +1862,9 @@ class _TelegramSourceOrderGuard:
 
 
 class _SourceOrderedBotProxy:
-    def __init__(self, guard):
+    def __init__(self, guard, *, retain_output=True):
         self._source_order_guard = guard
+        self._retain_output = retain_output
         self._raw_bot = guard.bot
 
     def __getattr__(self, name):
@@ -1858,15 +1873,17 @@ class _SourceOrderedBotProxy:
             return attribute
         if (name.startswith("send_") and name != "send_chat_action") or name.startswith("edit_"):
             async def _guarded(*args, **kwargs):
-                return await self._source_order_guard.call(name, *args, **kwargs)
+                return await self._source_order_guard.call(
+                    name, *args, retain_output=self._retain_output, **kwargs
+                )
             return _guarded
         return attribute
 
 
 class _SourceOrderedContextProxy:
-    def __init__(self, context, guard):
+    def __init__(self, context, guard, *, retain_output=True):
         self._context = context
-        self.bot = _SourceOrderedBotProxy(guard)
+        self.bot = _SourceOrderedBotProxy(guard, retain_output=retain_output)
 
     def __getattr__(self, name):
         return getattr(self._context, name)
@@ -2109,6 +2126,8 @@ async def _resolve_prepared_voice_input(context, guard, **kwargs):
     try:
         return await _with_source_ordered_context_bot(
             context, guard, lambda guarded: _resolve_voice_input_message(guarded, **kwargs),
+            # A finalized user transcript is input evidence, not retractable assistant output.
+            retain_output=bool(kwargs.get("voice_error_text")),
         )
     except _StaleTelegramSourceOrder:
         # Presentation may become stale while Telegram sends the transcription. The original
@@ -2132,8 +2151,8 @@ async def _send_prepared_attachment_error(context, guard, chat_id, thread_id, me
         return
 
 
-async def _with_source_ordered_context_bot(context, guard, operation):
-    guarded_context = _SourceOrderedContextProxy(context, guard)
+async def _with_source_ordered_context_bot(context, guard, operation, *, retain_output=True):
+    guarded_context = _SourceOrderedContextProxy(context, guard, retain_output=retain_output)
     return await operation(guarded_context)
 # === VIVENTIUM END ===
 
@@ -4289,13 +4308,13 @@ async def _getViventiumResponse(
     # Fix: a Main stream that fails after its preview reached Telegram is a failed presentation.
     # The unfinished preview is never kept as, or joined to, an answer: the existing retry terminal
     # replaces the live output, and the logical turn is acknowledged failed instead of committed.
-    async def _fail_stream_presentation() -> None:
+    async def _fail_stream_presentation(error_class="") -> None:
         nonlocal answer_messageid, lastresult, stream_preview_superseded
         stream_preview_superseded = True
         await _cancel_stream_previews()
         answer_messageid = None
         lastresult = ""
-        pending_claim = source_guard.reserve_pending_retry_terminal()
+        pending_claim = source_guard.reserve_pending_retry_terminal(error_class=error_class)
         if pending_claim is None:
             await source_guard.retract_all()
         else:
@@ -4531,7 +4550,7 @@ async def _getViventiumResponse(
                     await _discard_queued_stream_preview()
                     await _flush_stream_previews()
                     if source_guard.live_refs:
-                        await _fail_stream_presentation()
+                        await _fail_stream_presentation(data.get("error_class"))
                         return
                     result = ""
                     # === VIVENTIUM END ===

@@ -1867,6 +1867,26 @@ If the declared tail does not match, retain the original authority, omit this ad
 and record only a boolean skip. The native launch receipt checks the complete registered
 composition and rejects any changed authority, fact, or tail.
 
+The host may attach the current canonical MCP catalog as bounded capability data in the current
+broker descriptor. The native registered fact renders the complete catalog once, only for its
+exact configured server and current grant; absent, expired, mismatched or oversized catalogs
+retain ordinary search/use discovery. Each catalog is limited to 64 tools and 64 KiB of UTF-8
+JSON, without choosing a subset. It preserves current authorization, eager/deferred discovery,
+and file-bound schemas. The rendered data contains names, descriptions and input schemas only;
+grant identifiers, expiry and transport URLs stay outside model text. Standalone xPerfect can
+render the same validated catalog as literal JSON without a host prompt package or inline
+behavioral fallback. The existing broker bootstrap descriptor is the host contract; Core is one
+catalog producer, while native rendering and binding checks remain in xPerfect. Both modes enclose
+literal JSON in an untrusted-data element and escape delimiter characters. Known metadata permits
+a direct native call, but never requires one. Native built-ins, other profile prompts and model
+defaults remain unchanged. The optional projection reads only existing owner/server metadata,
+with current grant and policy checks; cold or incomplete caches omit the whole catalog without
+network discovery. It never seeds ordinary discovery from reduced cached metadata. The complete
+bootstrap carrier must remain within its existing bound. Measure preparation time and added input
+tokens against any saved model round. Adoption requires the same positive,
+negative and adjacent cases on the exact model and effort, with actual native receipts, correct
+answers, and paired independent grading. A prompt projection alone proves no latency gain.
+
 ### Accepted published files and new output capture
 
 `worker.conversation_file_delivery` distinguishes an accepted current owner-bound published file

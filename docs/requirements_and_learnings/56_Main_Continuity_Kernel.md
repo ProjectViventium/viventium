@@ -1088,10 +1088,9 @@ unfinished candidate, edits stored history, clips a tool result, or marks unrevi
 Each background claim reloads its durable record; only a reviewed commit advances the prefix.
 Idle work uses its own background response and budget, without the finished request's scheduler
 deadline or abort signal.
-The same foreground fences, finite batch/deadline, and failure-stop policy apply. A live Call
-alone does not pause opportunistic memory maintenance; active foreground admission still has
-priority. A lazy declared fallback need not initialize its tools merely to
-classify the current primary's native courier; its actual dispatch still checks source authority.
+The same finite batch/deadline and failure-stop policy apply. A live Call and ordinary foreground
+admission do not cancel independent memory maintenance; native admission owns actual capacity.
+A lazy declared fallback need not initialize its tools merely to classify the current primary's native courier; its actual dispatch still checks source authority.
 
 Header-only, mixed or unproved routes retain required foreground reconciliation. Genuine aggregate
 turn-context overflow retains the existing foreground carrier recovery and reload; its limits and
@@ -1131,8 +1130,27 @@ reserve described above.
 After reviewed progress, an insufficient budget for the next claim exhausts this batch and uses
 the same idle continuation owner. A concrete fidelity repair may also continue as described below;
 provider/review transport failures do not re-arm continuation.
-Foreground admission still cancels the exact maintenance attempt and waits for its capacity-release
-acknowledgment. Only independently reviewed output can promote the summary or advance a source cursor.
+Required foreground carrier recovery uses the same authenticated Native stage
+receipt and store-owned lease heartbeat, so Core's short initial guard does not cancel a longer
+already-admitted Native request. It retains Native's ordinary response budget; only background
+maintenance derives a timeout from the enclosing twenty-minute batch. A finite waiting-request
+deadline still bounds receipt admission and leaves the existing review/completion reserves.
+Unknown routes, unrenewable claims, cancellation and stale-lease fences retain their policy.
+This repairs a timeout mismatch; it does not make required foreground recovery parallel or fast.
+
+Ordinary Main admission does not reserve an owner-wide memory fence or abort ongoing compaction.
+A fitting reviewed context returns immediately. When the actual carrier cannot fit, the existing
+recovery owner waits for current same-domain compaction promises, reloads, and rechecks after the
+finite idle batch advances to another claim. Only a loaded, reviewed context that fits is adopted;
+settlement and release acknowledgments are not promotion. If no active producer remains, the one
+existing foreground recovery may claim and reload. The same check handles a producer admitted
+during that claim race; an unclaimed busy result does not spend a producer attempt, while
+post-provider contention retains its attempt count. A waiting request's Stop cancels its wait without canceling the shared
+producer. Explicit maintenance cancellation, Native capacity and release checks, claim leases,
+four-claim/twenty-minute batches, source generation/digest checks, fidelity review and promotion CAS
+remain enforced. Same-family saturation can queue Main; this policy does not promise immediate
+capacity or complete historical convergence.
+Only independently reviewed output can promote the summary or advance a source cursor.
 
 A whole-proposal, summary or rendered-carrier byte overflow can use the same batch's next claim
 when the existing source planner proves a smaller whole prefix. The failed result carries its
@@ -1141,7 +1159,7 @@ the new store-owned claim must belong to the same domain, have a different diges
 strictly fewer source bytes. An unchanged or indivisible source releases that claim and stops;
 it never repeats model work merely because the target number decreased. Field/item errors,
 provider or review failures and cancellation do not qualify. These reductions consume the same
-four claims and deadline, yield to foreground admission, and retain every unreviewed source.
+four claims and deadline, honor explicit cancellation, and retain every unreviewed source.
 Failure alone never re-arms an exhausted idle batch. Summary promotion and source-cursor movement
 still require the existing independent fidelity review.
 
@@ -1186,7 +1204,7 @@ existing shrinking-size state, so another batch does not restart its attempt bud
 receives the complete original source and exact typed feedback. A resumed bounded size draft
 keeps its exact bytes and must pass the same complete-request native admission-floor check again.
 Unknown or insufficient admission capacity, or a tighter carrier ceiling that no longer contains a
-whole-JSON draft, leaves numeric feedback only. Rendered carrier excess is recomputed for the current reserve.
+whole-JSON draft, leaves numeric feedback only. Rendered carrier excess is recomputed for the current reserve. Element text escapes `&`, `<` and `>`; quotes and apostrophes remain literal text. Attribute values still escape both quote forms. Sizing, full/reference summaries, source/tool/background projections and deferral use this same text representation. A valid retained size checkpoint keeps its prior stricter output ceiling when serialization frees capacity, so its source and attempt counters do not reset. A retained draft may carry the exact former attribute-escaped carrier measurement as historical rejection feedback; that measurement is verified against its full draft, not treated as current capacity. New output always passes the current full-carrier check and independent fidelity review.
 The next attempt continues the existing counter; retaining a draft grants no retry, quality bypass,
 model change or accepted-memory promotion. Any new rejected candidate is eligible for the same
 in-claim admission check. The canonical compaction prompt defines `maxJsonUtf8Bytes`
@@ -1216,11 +1234,10 @@ complete. Approved memory and all original source remain available while mainten
 Provider or review failure, cancellation, contention, stale source, an exhausted deadline, or the
 four-claim cap stops the batch. After successful reviewed legacy progress exhausts only that batch
 budget, the existing per-domain idle scheduling owner re-arms one continuation after thirty idle
-seconds, without requiring another user turn. It waits while the existing foreground fence is held;
-required foreground recovery or a newer schedule discards the old timer. Historical maintenance
-can run during a long-lived Call without waiting for End. The existing foreground admission fence
-and cancellation owner yield to an actual interactive turn; a connected but idle Call does not hold
-the memory queue. Each current turn keeps its admitted snapshot. Promotion still rechecks source
+seconds, without requiring another user turn. Required foreground recovery or a newer schedule
+discards the old timer. Historical maintenance can run during a long-lived Call and ordinary Main
+turns. A waiting request owns only its own cancellation; it does not cancel shared maintenance.
+Each current turn keeps its admitted snapshot. Promotion still rechecks source
 generation, digest, lease, current carrier and the store CAS, so parallel work cannot replace newer
 source or advance an unreviewed cursor. Ordinary memory admission and Feelings also remain parallel.
 An inherited enclosing
