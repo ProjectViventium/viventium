@@ -808,7 +808,9 @@ scheduler authoring deadline. The enclosing deadline is shared across claims. It
 protects Main completion and any measured review reserve. Generation and review each retain their own slowest
 observed duration for subsequent admission. An unobserved stage has no measured estimate and may
 use any positive time within the existing call ceiling, live claim lease and enclosing Main reserve.
-Generation reserves only an observed review duration; one stage never supplies the other's estimate.
+Generation reserves only an observed review duration in this ordinary stage admission; the finite
+Native idle allocation below also reserves the existing independent-review guard. One stage never
+supplies the other's measured estimate.
 The same admission owner applies to converging size repairs. Convergence and the four-attempt
 limit determine eligibility. Each generation and review prepares its prompt, then admits the stage
 once inside its existing error handler. The third and fourth attempts compute their repair timeout
@@ -1105,16 +1107,26 @@ claim, and keeps the existing in-flight cancellation and native capacity-release
 foreground carrier recovery still performs only its own claim.
 
 The finite idle batch also uses the existing authenticated Native admission receipt and claim
-heartbeat. It can replace the short per-stage guard only when the admitted Native deadline,
-existing execution-guard grace and Main completion reserve all fit inside that same enclosing
-batch deadline. A later producer or reviewer cannot reset the batch budget. A deadline that does
-not fit keeps the existing short stage guard; foreground recovery, unknown capabilities and
-claims without renewal retain their prior policy. Every renewal stays within the enclosing
+heartbeat. Its lease-owned, tool-less internal producer sends the remaining absolute batch budget
+through Native's existing response-timeout metadata. It first reserves the existing execution-guard
+grace, Main completion reserve and at least the existing independent-review stage guard (or a longer
+observed review). The reviewer uses its own remaining budget. This prevents Native's private default
+response timeout from silently shortening an already-authorized maintenance window. It does not
+increase the enclosing twenty-minute batch or change interactive, detector, callback or foreground
+recovery budgets. An exhausted allowance starts no child. Request start stays fixed through capacity retries; the absolute stage deadline also survives
+fallback. A tighter existing response budget remains tighter.
+The producer and reviewer check this allowance at the existing pre-dispatch gate before marking
+capacity as outstanding. The final defensive check also keeps the prior release acknowledgement
+when a clock race prevents dispatch, so a resumable repair keeps its draft and counters.
+Only a successful authenticated Native admission receipt can replace Core's short initial guard,
+and its deadline plus those same reserves must still fit the batch. A later producer or reviewer
+cannot reset it. Unknown capabilities and claims without renewal retain their prior policy. Every renewal stays within the enclosing
 budget. Measured producer and reviewer durations remain unchanged. Native-capable background
 planning compares them with the enclosing budget while retaining the short initial guard inside
 the live claim lease and the measured review reserve. A stage already measured above that guard
 must also fit its previously accepted Native admission window; a declined receipt never becomes
-a planning allowance. Producer receipt admission also retains the measured review reserve.
+a planning allowance. Finite producer receipt admission also retains the independent-review
+reserve described above.
 After reviewed progress, an insufficient budget for the next claim exhausts this batch and uses
 the same idle continuation owner. A concrete fidelity repair may also continue as described below;
 provider/review transport failures do not re-arm continuation.

@@ -9,6 +9,13 @@ Voice calls reuse the standard Agents pipeline while streaming audio through the
 gateway. The core requirement is parity with text chat: same agent, same permissions, same
 background-cortex behavior.
 
+Worker-result follow-ups reuse the same authorized active Call read for its selected STT/TTS
+route and provider-specific voice capabilities. The existing Current Call context keeps the requested
+route separate from actual playback: without gateway playback evidence, `actualPlaybackRoute`
+remains null. Missing or ended Calls do not invent provider facts. The gateway remains the owner of
+fallback selection and supported-control sanitization. This metadata reuse adds no extra Call lookup
+or provider request.
+
 ## Core Requirements
 - Call sessions must survive process restarts and multi-instance deployments.
 - Voice gateway authentication must rely on a shared secret plus call-session identity.
@@ -1545,6 +1552,43 @@ The simple answer used 42,376 prompt tokens and 1,944 completion tokens. Do not 
 fastest warm sample as a guarantee. Normal browser Save and reload now retain model choices;
 504 ordered configuration versions were visible, and all 502 snapshots preceding the final UI
 save check remained byte-hash identical. The native history-capacity contract is owned by doc49.
+
+### Later concurrent-worker acceptance and native timing
+
+Two later local Call cases on Grok 4.7 Fast / High answered a simple question while a real
+background browser worker remained active, then delivered its file and a spoken callback.
+Useful speech started at **68.748 s** and **78.792 s** after input ended. These are functional
+concurrency passes and speed failures; they do not establish sub-two-second speech, statistical
+reliability, perceptual audio quality or endurance. A prior failed call that performed direct work
+and remained silent is retained as a failed case, not erased by the successful repeats.
+
+The first concurrent case separated these native stages:
+
+| Measured interval | Seconds | Meaning |
+|---|---:|---|
+| End of input to native request | 1.585 | Speech finalization and Core dispatch; nested timings must not be added again. |
+| Native request to prompt start | 1.032 | Queue, initialization and session setup. |
+| Prompt start to tool-discovery request | 28.957 | Native model/harness processing before its first discovery request. |
+| Tool discovery execution | 0.005 | The actual registry lookup, already ready before the model requested it. |
+| Discovery result to delegation request | 25.811 | Further native model/harness processing. |
+| Delegation execution | 0.926 | Real worker admission and receipt. |
+| Delegation receipt to eligible reply text | 9.896 | Native processing before the useful answer. |
+| Eligible text to first received audio | 0.535 | Streaming delivery and speech synthesis, before native final completion. |
+
+Those intervals include native reasoning and tool-selection work; they are not an isolated
+inference benchmark. Reducing the five-millisecond lookup cannot remove the two long native
+processing intervals. The later callback uses the existing authorized Call metadata and actual
+follow-up formatter to carry the selected voice provider's controls and current-call facts. The
+native callback contained those controls once, needed no control-syntax lookup, kept its authored
+speech control out of the written answer, and produced received speech 0.434 s after persistence.
+The callback's 29.452 s native execution remains a separate speed cost.
+
+A focused check of installed Grok 1.0.50 and the
+[pinned official MCP implementation](https://github.com/xai-org/grok-build/blob/2bdd1d6a6369de0e8c68132ea4539e9abd9e14a8/crates/codegen/xai-grok-tools/src/implementations/search_tool/mod.rs)
+found no supported eager-tool-definition switch. Grok exposes discovery through `search_tool`
+and `use_tool`; existing readiness, registry caching and exact native session reuse already apply.
+Official `use_tool` can dispatch a known qualified name, but that does not guarantee the installed
+model skips discovery. Do not add speculative flags, a parallel cache or a forced routing prompt.
 
 ### Paired preparation-source evaluation
 
