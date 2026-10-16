@@ -640,8 +640,12 @@ background-cortex behavior.
 - Stream aggregation and reconnect retain delivery ranges against the same public-text bytes.
   Apply display cleanup after deciding which ranges may speak. Removing expressive controls before
   that decision must not move a silent range onto audible words. Saved display text remains clean;
-  ranges that no longer match its bytes are not retained as valid offsets. Complete and incomplete
-  matching backtick spans protect literal text from provider-control cleanup.
+  ranges that no longer match its bytes are not retained as valid offsets. Closed inline-code spans
+  and complete or unfinished fenced-code blocks protect literal text from provider-control cleanup.
+  An unmatched single backtick remains literal prose.
+  Native follow-up ranges use the same display projection as the persisted reply. Removing an
+  expressive control must preserve its valid audio choice; actual text or range mismatches still
+  fail closed.
 - The Cartesia public request contract is Sonic-3-only: `Cartesia-Version=2026-03-01`
   and `model_id=sonic-3`. Voice selection is by named persona in the UI, backed by Cartesia
   voice IDs: Megan (`e8e5fffb-252c-436d-b842-8879b84445b6`) and Lyra
@@ -743,6 +747,22 @@ background-cortex behavior.
   Pending or prepared native state is not failed generation; its tool evidence remains unread until
   the exact source-bound Main answer is terminal and published. This does not require delaying
   Phase B sampling until Main's audio finishes.
+- Saved Main-authored worker and Cortex follow-ups retain the same source-bound `audioContent`
+  and `sourceTextSha256` delivery fields used by audio delivery. Canonical display text remains
+  clean. The retained speech text keeps supported expressive controls and the model's exact
+  eligible/skip ranges; it is not a second answer. Core validates its projection against the
+  exact saved display text and ranges before the existing authenticated delivery returns it.
+  Missing or invalid optional speech data falls back to the exact validated canonical audio
+  ranges. Canonical skipped or malformed ranges remain silent; emotion loss never expands
+  audio eligibility. Legacy follow-ups without ranges keep their previous behavior.
+- Delivery hashes use the exact text normalized and returned by Core. The gateway must not trim
+  it again before checking the binding or presentation digest: Unicode whitespace differs
+  between runtimes. Text-free `VoiceAudioBinding` logs distinguish `bound`, `canonical_fallback`,
+  `binding_silenced` and `legacy`; a valid model skip remains distinct from a failed binding.
+- Follow-up synthesis uses the selected TTS route's existing inline-control capability and
+  fallback filter, as foreground speech does. Capable TTS receives supported emotion controls;
+  plain-text TTS receives clean speech. The callback's canonical digest, call identity, permits,
+  interruption rules and completion receipt still bind the saved display presentation.
 - Before returning a persisted Cortex follow-up for speech, the existing authenticated Cortex fetch
   seals its exact canonical text hash, child revision, claim generation, graph-result receipt and
   presentation lease. Owner, conversation, parent, call, task and logical turn must match. The lease

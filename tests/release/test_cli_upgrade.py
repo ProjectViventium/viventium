@@ -3826,6 +3826,8 @@ def test_remote_verification_warning_is_flattened_to_one_launcher_record(
     cli_source = (REPO_ROOT / "bin" / "viventium").read_text(encoding="utf-8")
     function_def = extract_shell_function(launcher_source, "prewarm_remote_call_access")
     log_warn_def = extract_shell_function(launcher_source, "log_warn")
+    log_info_def = extract_shell_function(launcher_source, "log_info")
+    assert 'log_info "STARTUP_CONTRACT: core-handoff-v1"' in launcher_source
     classifier_def = extract_shell_function(cli_source, "launch_log_indicates_startup_failure")
     status_script = tmp_path / "remote-status.sh"
     launch_log = tmp_path / "helper-start.log"
@@ -3848,15 +3850,18 @@ def test_remote_verification_warning_is_flattened_to_one_launcher_record(
                 "remote_call_mode_enabled() { return 0; }\n"
                 "json_state_value() { printf ''; }\n"
                 "YELLOW=''\n"
+                "CYAN=''\n"
                 "NC=''\n"
                 f"VIVENTIUM_REMOTE_CALL_TUNNEL_SCRIPT='{status_script}'\n"
                 "VIVENTIUM_REMOTE_CALL_PREWARM=true\n"
                 "VIVENTIUM_PUBLIC_NETWORK_STATE_FILE=/synthetic/state.json\n"
                 "PYTHON_BIN=/bin/bash\n"
                 f"{log_warn_def}"
+                f"{log_info_def}"
                 f"{function_def}"
                 f"{classifier_def}"
-                f"prewarm_remote_call_access > '{launch_log}'\n"
+                f'log_info "STARTUP_CONTRACT: core-handoff-v1" > "{launch_log}"\n'
+                f"prewarm_remote_call_access >> '{launch_log}'\n"
                 f"if launch_log_indicates_startup_failure '{launch_log}'; then\n"
                 "  printf 'RESULT=failed\\n'\n"
                 "else\n"
@@ -3871,7 +3876,12 @@ def test_remote_verification_warning_is_flattened_to_one_launcher_record(
     )
 
     assert completed.stdout.strip() == "RESULT=clean"
-    assert launch_log.read_text(encoding="utf-8").splitlines() == [
+    records = launch_log.read_text(encoding="utf-8").splitlines()
+    assert len(records) == 2
+    assert all(re.match(r"^\[viventium\] \[\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z\] ", row) for row in records)
+    normalized = [re.sub(r"^(\[viventium\]) \[[^]]+\] ", r"\1 ", row) for row in records]
+    assert normalized == [
+        "[viventium] STARTUP_CONTRACT: core-handoff-v1",
         "[viventium] Remote access verification failed - browser links may need a retry: "
         '{\"provider\": \"synthetic\", \"detail\": '
         '\"BEGIN\\nBuild failed in optional edge probe\\nEND\"}'

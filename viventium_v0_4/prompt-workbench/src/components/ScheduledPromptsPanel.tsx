@@ -76,11 +76,14 @@ export function ScheduledPromptsPanel({
   });
   const schedules =
     schedulesQuery.data?.scheduledPrompts ?? scheduledPrompts ?? [];
-  const [selectedId, setSelectedId] = useState<string>("");
-  const effectiveSelectedId = selectedScheduledPromptId || selectedId;
+  // Undefined means untouched; an empty ID is an explicit unsaved New draft.
+  const [selectedId, setSelectedId] = useState<string>();
+  const effectiveSelectedId = selectedId ?? selectedScheduledPromptId;
   const selected =
     schedules.find((item) => item.id === effectiveSelectedId) ??
-    (objectMode ? undefined : schedules[0]);
+    (!effectiveSelectedId && selectedId === undefined && !objectMode
+      ? schedules[0]
+      : undefined);
   const isUserLevelSchedule = selected?.sourceKind === "user_schedule";
   const supportsWorkbenchVariables = !isUserLevelSchedule;
   const [draft, setDraft] = useState<EditorDraft>(() =>
@@ -146,13 +149,19 @@ export function ScheduledPromptsPanel({
     setArtifactDetailId("");
   }, [selected?.id]);
 
+  const startNewDraft = () => {
+    setSelectedId("");
+    setDraft(draftFromPrompt(undefined, templateQuery.data));
+    setScheduleTouched(false);
+    setArtifactDetailId("");
+    onSelectScheduledPrompt?.("");
+  };
+
   useEffect(() => {
     if (!newRequestNonce || newRequestNonce === handledNewRequestNonce.current)
       return;
     handledNewRequestNonce.current = newRequestNonce;
-    setSelectedId("");
-    setDraft(draftFromPrompt(undefined, templateQuery.data));
-    setScheduleTouched(false);
+    startNewDraft();
   }, [newRequestNonce]);
 
   const previewQuery = useQuery({
@@ -394,10 +403,7 @@ export function ScheduledPromptsPanel({
             </div>
             <button
               className="toolbar-button compact"
-              onClick={() => {
-                setSelectedId("");
-                setDraft(draftFromPrompt(undefined, templateQuery.data));
-              }}
+              onClick={startNewDraft}
             >
               <Plus size={15} />
               New
@@ -456,10 +462,7 @@ export function ScheduledPromptsPanel({
             </div>
             <button
               className="toolbar-button compact"
-              onClick={() => {
-                setSelectedId("");
-                setDraft(draftFromPrompt(undefined, templateQuery.data));
-              }}
+              onClick={startNewDraft}
             >
               <Plus size={15} />
               New

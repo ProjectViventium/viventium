@@ -305,6 +305,66 @@ def test_voice_markup_display_sanitizer_strips_each_xai_square_wrapper(tag):
     assert display_text == "Lead keep this tail."
 
 
+
+@pytest.mark.parametrize("fence", ["```", "~~~"])
+@pytest.mark.parametrize("closed", [True, False])
+def test_voice_display_preserves_literal_code_during_streaming(fence, closed):
+    literal = '  [draft]  [12]  <soft>literal</soft>  \\n  {SKIP_VOICE}'
+    code = fence + "text\n" + literal + ("\n" + fence if closed else "")
+    text = "<soft>Ready.</soft> [laughter]\n" + code
+
+    display = sanitize_telegram_display_text(text)
+    rendered = render_telegram_markdown(text, strip_voice_markup=True, streaming_preview=True)
+
+    assert display == "Ready. \n" + code
+    assert "[draft]" in rendered
+    assert "[12]" in rendered
+    assert "  " in rendered
+    assert "&lt;soft&gt;literal&lt;/soft&gt;" in rendered
+    assert "[laughter]" not in rendered
+
+
+def test_voice_display_preserves_literal_inline_code_and_json_backslashes():
+    literal = r'{"path":"C:\\temp\\notes","items":["[draft]","a\\b"]}'
+    text = "<soft>Ready.</soft> `" + literal + "` [laughter]"
+
+    assert sanitize_telegram_display_text(text) == "Ready. `" + literal + "`"
+    assert render_telegram_markdown(text, strip_voice_markup=True) == "Ready. <code>" + literal + "</code>"
+
+
+@pytest.mark.asyncio
+async def test_followup_preserves_literal_json_and_still_hides_voice_controls():
+    bridge = _make_bridge()
+    captured = {}
+
+    async def capture(chat_id, message, parse_mode=None):
+        captured.update(message=message, parse_mode=parse_mode)
+
+    bridge.set_on_message_callback(capture)
+    literal = r'{"path":"C:\\temp\\notes","items":["[draft]","a\\b"]}'
+    await bridge._send_followup_text("123", "<soft>Ready.</soft>\n```json\n" + literal + "\n```")
+
+    assert captured["parse_mode"] == "HTML"
+    assert literal in captured["message"]
+    assert "&lt;soft&gt;" not in captured["message"]
+
+
+@pytest.mark.parametrize("opening,closing", [
+    ('<emotion value="happy">', '</emotion>'),
+    ('<spell>', '</spell>'),
+    ('<soft>', '</soft>'),
+])
+def test_voice_wrappers_around_inline_literal_code_stay_hidden(opening, closing):
+    text = opening + "Keep `literal [draft]` here." + closing
+    assert sanitize_telegram_display_text(text) == "Keep `literal [draft]` here."
+    assert render_telegram_markdown(text, strip_voice_markup=True) == "Keep <code>literal [draft]</code> here."
+
+
+def test_stray_backtick_does_not_hide_following_voice_controls_or_citations():
+    text = "A stray ` stays literal [laughter] [12] \ue202turn0search0"
+    assert sanitize_telegram_display_text(text) == "A stray ` stays literal"
+    assert render_telegram_markdown(text, strip_voice_markup=True) == "A stray ` stays literal"
+
 def test_render_telegram_markdown_preserves_preescaped_text():
     text = "Already escaped\\. Still escaped\\! And list\\-item\\."
     rendered = render_telegram_markdown(text)

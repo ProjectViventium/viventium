@@ -1135,24 +1135,44 @@ still require the existing independent fidelity review.
 When an enclosing budget pauses a completed fidelity correction or a shrinking whole-proposal,
 summary, or carrier byte-size correction, the existing epoch/lease CAS may retain
 `pendingCompactionRepair`. Fidelity repair contains its structurally valid rejected candidate and
-reviewer feedback. Size repair contains only typed byte counts, the exact size issue and shrinking
-progress; it never stores an oversized draft. Both retain the exact source digest,
+reviewer feedback. Size repair retains typed byte counts, the exact size issue and shrinking
+progress. A structurally valid draft rejected only by the rendered carrier or summary bound may
+also survive in the existing correction field when its complete JSON fits the current JSON cap.
+Whole-JSON overflow remains numeric-only; no oversized draft is stored. Both retain the exact source digest,
 configured route/output contract, source window and consumed attempt counters. The checkpoint is
 separate from accepted context and is never presented or spoken. Saving it requires a live exact
-lease and confirmed native capacity release. The existing semantic cap and four-size-attempt cap
-remain distinct and span batches. Malformed feedback, nonconvergence, exhaustion, cancellation,
+lease and confirmed native capacity release. A fitting candidate rejected by the independent
+review retains one fidelity-repair opportunity even if earlier byte-size work used the normal
+two-producer allowance. The existing checkpoint records whether that fidelity repair was consumed;
+pausing or cancellation cannot reset it. Size work still stops at four producer attempts; one
+fidelity repair can be the fifth only after size work, followed by the unchanged independent review.
+Both use the same lease, native admission reserve and enclosing deadline. A second fidelity
+rejection stops without another repair. Malformed feedback, nonconvergence, exhaustion, cancellation,
 provider failures and unconfirmed release do not qualify. The store's acknowledgement alone lets
 the existing thirty-second idle deferral re-arm; no queue or timer is added.
 
 The next ordinary bounded batch reclaims the exact source prefix and legacy range. Append-only
 user turns remain pending instead of expanding the repair source; edits/deletions invalidate its
-source generation. Fidelity retains its same-route pinned contract within the same carrier class.
+source generation. Fidelity follows the same-route current tighter allocation within the same carrier
+class; newly available capacity cannot widen its previous ceiling. Its rendered correction includes
+the measured signed `carrierHeadroomUtf8Bytes`, recomputed from the exact candidate and current
+normalized contract. These are rendered carrier bytes after escaping and reserve, not raw JSON
+bytes. The number is not persisted or accepted from callers. If the tighter allocation makes the
+previously bounded draft too large, only that exact already-owned candidate and review reason may
+survive as unaccepted repair input under their original validation contract, with the same source,
+generation, route, counters, lease and confirmed-release fences. A new oversized draft cannot use
+this exception. Fidelity repair restores cited facts and may shorten other wording only when the
+source or output limits require it; facts, qualifications and consequential identifiers remain protected.
 Size feedback can resume only under the same route and compatible equal or tighter allocation;
 its issue is rebased to that current binding target. It restores both consumed attempts and the
 existing shrinking-size state, so another batch does not restart its attempt budget. The model
-receives the complete original source and exact typed feedback; a resumed size claim does not
-recover the prior transient draft. Any new rejected candidate is eligible for the same in-claim
-admission check. The canonical compaction prompt defines `maxJsonUtf8Bytes`
+receives the complete original source and exact typed feedback. A resumed bounded size draft
+keeps its exact bytes and must pass the same complete-request native admission-floor check again.
+Unknown or insufficient admission capacity, or a tighter JSON cap that no longer contains the
+draft, leaves numeric feedback only. Rendered carrier excess is recomputed for the current reserve.
+The next attempt continues the existing counter; retaining a draft grants no retry, quality bypass,
+model change or accepted-memory promotion. Any new rejected candidate is eligible for the same
+in-claim admission check. The canonical compaction prompt defines `maxJsonUtf8Bytes`
 as the whole serialized JSON limit, including all fields and JSON syntax/escaping. Individual
 field caps are additional constraints. Recompression protects the facts of prior valid state,
 not its narrative wording or layout. When the whole object is too large, the model shortens the

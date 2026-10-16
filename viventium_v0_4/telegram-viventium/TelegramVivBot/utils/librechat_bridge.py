@@ -263,7 +263,10 @@ _CITATION_CLEANUP_RE = re.compile(
     re.IGNORECASE,
 )
 _BRACKET_CITATION_RE = re.compile(r"\[(\d{1,3})\](?=\s|$)")
-_MARKDOWN_CODE_SPAN_RE = re.compile(r"```[\s\S]*?```|`[^`\n]*`")
+_MARKDOWN_CODE_SPAN_RE = re.compile(
+    r"```[\s\S]*?(?:```|\Z)|~~~[\s\S]*?(?:~~~|\Z)|`[^`\n]*`",
+    re.MULTILINE,
+)
 _EM_DASH_RE = re.compile("—")
 _EM_DASH_OPENERS = "\"'“‘([{"
 # Voice-control markup is model-authored text for expressive TTS. It must not be
@@ -273,14 +276,14 @@ _VOICE_EMOTION_SELF_CLOSING_RE = re.compile(
     r'<emotion\s+value=["\']?[^"\'>]+["\']?\s*/>',
     re.IGNORECASE,
 )
-_VOICE_EMOTION_WRAP_RE = re.compile(
-    r'<emotion\s+value=["\']?[^"\'>]+["\']?\s*>([\s\S]*?)</emotion>',
+_VOICE_EMOTION_TAG_RE = re.compile(
+    r'<emotion\s+value=["\']?[^"\'>]+["\']?\s*>|</emotion>',
     re.IGNORECASE,
 )
 _VOICE_BREAK_RE = re.compile(r'<break\s+time=["\']?[^"\'>]+["\']?\s*/>', re.IGNORECASE)
 _VOICE_SPEED_RE = re.compile(r'<speed\s+ratio=["\']?[^"\'>]+["\']?\s*/>', re.IGNORECASE)
 _VOICE_VOLUME_RE = re.compile(r'<volume\s+ratio=["\']?[^"\'>]+["\']?\s*/>', re.IGNORECASE)
-_VOICE_SPELL_RE = re.compile(r"<spell>([\s\S]*?)</spell>", re.IGNORECASE)
+_VOICE_SPELL_RE = re.compile(r"</?spell>", re.IGNORECASE)
 _VOICE_BRACKET_RE = re.compile(r"\[([A-Za-z][A-Za-z' -]{1,40})\]")
 _XAI_TTS_CAPABILITIES_PATH = (
     Path(__file__).resolve().parents[3] / "shared" / "voice" / "xai_tts_capabilities.json"
@@ -527,13 +530,18 @@ def sanitize_telegram_text(
         lambda match: "" if _contains_glasshive_raw_tool_name(match.group(0)) else match.group(0),
         cleaned,
     )
-    cleaned = _CITATION_COMPOSITE_RE.sub(" ", cleaned)
+    # Internal tool transcripts still have their own exclusion above. Display
+    # cleanup must not reinterpret literal code as citations or speech controls.
+    return _apply_outside_markdown_code(cleaned, _sanitize_telegram_prose)
+
+
+def _sanitize_telegram_prose(text: str) -> str:
+    cleaned = _CITATION_COMPOSITE_RE.sub(" ", text)
     cleaned = _CITATION_STANDALONE_RE.sub(" ", cleaned)
     cleaned = _CITATION_CLEANUP_RE.sub(" ", cleaned)
     cleaned = _BRACKET_CITATION_RE.sub(" ", cleaned)
-    cleaned = _apply_outside_markdown_code(cleaned, _normalize_em_dashes_for_telegram)
-    cleaned = re.sub(r"[ \t]{2,}", " ", cleaned)
-    return cleaned
+    cleaned = _normalize_em_dashes_for_telegram(cleaned)
+    return re.sub(r"[ \t]{2,}", " ", cleaned)
 
 
 def _contains_glasshive_raw_tool_name(text: str) -> bool:
@@ -562,13 +570,17 @@ def _strip_tool_transcript_lines(text: str) -> str:
 def strip_voice_control_tags_for_display(text: str) -> str:
     if not text:
         return ""
+    return _apply_outside_markdown_code(text, _strip_voice_control_tags_from_prose).strip()
+
+
+def _strip_voice_control_tags_from_prose(text: str) -> str:
     cleaned = _VOICE_SPEAK_RE.sub("", text)
-    cleaned = _VOICE_EMOTION_WRAP_RE.sub(r"\1", cleaned)
+    cleaned = _VOICE_EMOTION_TAG_RE.sub("", cleaned)
     cleaned = _VOICE_EMOTION_SELF_CLOSING_RE.sub("", cleaned)
     cleaned = _VOICE_BREAK_RE.sub("", cleaned)
     cleaned = _VOICE_SPEED_RE.sub("", cleaned)
     cleaned = _VOICE_VOLUME_RE.sub("", cleaned)
-    cleaned = _VOICE_SPELL_RE.sub(r"\1", cleaned)
+    cleaned = _VOICE_SPELL_RE.sub("", cleaned)
     while True:
         updated = _VOICE_XAI_WRAPPER_RE.sub(lambda match: match.group("text") or "", cleaned)
         if updated == cleaned:
@@ -577,8 +589,7 @@ def strip_voice_control_tags_for_display(text: str) -> str:
     cleaned = _VOICE_XAI_ANGLE_TAG_RE.sub("", cleaned)
     cleaned = _VOICE_XAI_BRACKET_TAG_RE.sub("", cleaned)
     cleaned = _VOICE_BRACKET_RE.sub(_strip_voice_bracket_marker, cleaned)
-    cleaned = re.sub(r"[ \t]{2,}", " ", cleaned)
-    return cleaned.strip()
+    return re.sub(r"[ \t]{2,}", " ", cleaned)
 
 
 def apply_structured_delivery_controls(text: str, delivery_controls: Any) -> str:

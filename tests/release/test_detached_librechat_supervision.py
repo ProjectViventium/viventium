@@ -231,10 +231,11 @@ def test_telegram_bot_survives_detached_launcher_exit() -> None:
     assert cleanup.index("if detached_start_requested") < cleanup.index("stop_telegram_bot_watchdog")
     assert "trap '' HUP" in launcher_text
     assert (
-        'nohup "${telegram_launch_program[@]}" >"$LOG_DIR/telegram_bot.log" 2>&1 < /dev/null &'
+        'nohup "${telegram_launch_program[@]}" >>"$LOG_DIR/telegram_bot.log" 2>&1 < /dev/null &'
         in fallback_block
     )
-    assert 'nohup "$telegram_python" bot.py >"$LOG_DIR/telegram_bot.log" 2>&1 < /dev/null &' in launcher_text
+    assert 'nohup "$telegram_python" bot.py >>"$LOG_DIR/telegram_bot.log" 2>&1 < /dev/null &' in launcher_text
+    assert ' >"$LOG_DIR/telegram_bot.log"' not in fallback_block
     assert fallback_block.index("TELEGRAM_BOT_PID=$!") < fallback_block.index(
         'disown "$TELEGRAM_BOT_PID"'
     )

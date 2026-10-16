@@ -122,6 +122,13 @@ request resumes that work.
 
 - **GHM-005:** Implement the concrete provider path without speculative platform expansion.
 
+### Experimental local inference
+
+The [local-model research owner](../../research_and_future_plans/05_Local_Models_and_Native_Harnesses.md)
+records native xPerfect Main/worker feasibility and its limits. This is not an installed provider
+promise or a change to the defaults above. The existing host-worker cases `GHHOST-027`–`029` and
+their dated report own qualification; raw model speed is not provider, worker or offline acceptance.
+
 ### Identity and connections
 
 - **GHU-001:** Users get standards-based sign-in under the deployment's configured account-creation

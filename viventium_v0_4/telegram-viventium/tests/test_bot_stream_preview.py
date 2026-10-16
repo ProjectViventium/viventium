@@ -1094,6 +1094,69 @@ def test_get_viventium_response_resolves_nested_blockquote_formatting(monkeypatc
 # === VIVENTIUM END ===
 
 
+@pytest.mark.parametrize("reject_html", [False, True])
+def test_main_reply_preserves_literal_code_with_audio_preference_and_html_fallback(
+    monkeypatch, reject_html
+):
+    literal = r'{"path":"C:\\temp\\notes","items":["[draft]","a\\b"]}'
+    text = "<soft>Ready.</soft>\n```json\n" + literal + "\n```"
+
+    class LiteralRobot:
+        async def ask_stream_async(self, *args, **kwargs):
+            yield text
+            yield {
+                "type": "delivery_disposition",
+                "delivery_disposition": {
+                    "version": 1, "audio": "skip", "required": True,
+                    "valid": True, "source": "model",
+                },
+                "required": True, "present": True,
+            }
+
+        def get_cached_voice_route(self, _key):
+            return None
+
+        def reset(self, *args, **kwargs):
+            pass
+
+    async def no_attachments(**_kwargs):
+        pass
+
+    monkeypatch.setattr(tg_bot, "Users", types.SimpleNamespace(get_config=lambda *_a, **_k: True))
+    monkeypatch.setattr(tg_bot, "send_librechat_attachments", no_attachments)
+    context = _FakeContext()
+    if reject_html:
+        send = context.bot.send_message
+        edit = context.bot.edit_message_text
+
+        async def send_without_html(**kwargs):
+            if kwargs.get("parse_mode") == "HTML":
+                raise RuntimeError("can't parse entities")
+            return await send(**kwargs)
+
+        async def edit_without_html(**kwargs):
+            if kwargs.get("parse_mode") == "HTML":
+                raise RuntimeError("can't parse entities")
+            return await edit(**kwargs)
+
+        context.bot.send_message = send_without_html
+        context.bot.edit_message_text = edit_without_html
+
+    asyncio.run(tg_bot.getViventiumResponse(
+        update_message=_FakeUpdateMessage(), context=context, title="", robot=LiteralRobot(),
+        message="Return this literal content.", chatid=111, messageid=222, convo_id="chat-1",
+        message_thread_id=None, voice_note_detected=False, files=None,
+        trace_id="test-literal-code", telegram_message_id=222, telegram_update_id=333,
+    ))
+
+    messages = context.bot.messages + context.bot.edits
+    assert messages
+    assert all(literal in item["text"] for item in messages if "Ready." in item.get("text", ""))
+    assert any(literal in item.get("text", "") for item in messages)
+    assert all("&lt;soft&gt;" not in item.get("text", "") for item in messages)
+    assert context.bot.audios == []
+
+
 
 @pytest.mark.parametrize(
     ("text", "delivery_event", "expected_audio_count"),

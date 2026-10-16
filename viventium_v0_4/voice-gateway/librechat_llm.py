@@ -944,7 +944,9 @@ def _stream_public_part_completion(event: dict[str, Any], stream_id: str) -> Opt
     return completion if completion and completion["stream_id"] == stream_id else None
 
 
-def _content_audio_segments(content: Any, *, default_skipped: bool) -> list[tuple[str, bool]]:
+def _content_audio_segments(
+    content: Any, *, default_skipped: bool, on_invalid: Optional[Callable[[], None]] = None,
+) -> list[tuple[str, bool]]:
     """Read Core's per-envelope choices without changing the legacy audio default."""
     segments: list[tuple[str, bool]] = []
     if not isinstance(content, list):
@@ -962,6 +964,8 @@ def _content_audio_segments(content: Any, *, default_skipped: bool) -> list[tupl
             continue
         ranges = part["deliveryDispositionRanges"]
         if not isinstance(ranges, list) or not ranges:
+            if on_invalid is not None:
+                on_invalid()
             segments.append((text, True))
             continue
         # Core uses JavaScript UTF-16 indices. Do not split a Unicode surrogate pair.
@@ -996,10 +1000,43 @@ def _content_audio_segments(content: Any, *, default_skipped: bool) -> list[tupl
             if cursor * 2 < len(encoded):
                 raise ValueError("incomplete delivery range coverage")
         except (ValueError, UnicodeError):
+            if on_invalid is not None:
+                on_invalid()
             segments.append((text, True))
         else:
             segments.extend(annotated)
     return segments
+
+
+def _followup_audio_text(text: str, controls: Any) -> Optional[str]:
+    """Read the exact Core binding without applying a second language's text normalization."""
+    if controls is None:
+        logger.info("[VoiceAudioBinding][gateway] state=legacy")
+        return None
+    if (not isinstance(controls, dict)
+            or controls.get("sourceTextSha256") != hashlib.sha256(text.encode("utf-8")).hexdigest()
+            or not isinstance(controls.get("audioContent"), list)):
+        logger.info("[VoiceAudioBinding][gateway] state=binding_silenced")
+        return ""
+    content = controls["audioContent"]
+    if not content or any(not isinstance(part, dict) or part.get("type") != "text"
+           or not isinstance(part.get("text"), str) or not part["text"]
+           or "deliveryDispositionRanges" not in part for part in content):
+        logger.info("[VoiceAudioBinding][gateway] state=binding_silenced")
+        return ""
+    invalid = False
+
+    def mark_invalid() -> None:
+        nonlocal invalid
+        invalid = True
+
+    segments = _content_audio_segments(content, default_skipped=True, on_invalid=mark_invalid)
+    if invalid:
+        logger.info("[VoiceAudioBinding][gateway] state=binding_silenced")
+        return ""
+    speech = "".join(value for value, skipped in segments if not skipped)
+    logger.info("[VoiceAudioBinding][gateway] state=bound audio=%s", "eligible" if speech else "skip")
+    return speech
 
 
 def _extract_resume_state_audio_segments(event: dict[str, Any]) -> list[tuple[str, bool]]:

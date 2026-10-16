@@ -141,6 +141,7 @@ from librechat_llm import (
     _native_input_offer,
     _public_part_completion,
     _content_audio_segments,
+    _followup_audio_text,
     LibreChatAuth, LibreChatLLM, TYPED_INPUT_EXTRA_KEY, _VoiceTtsDeltaBuffer,
     _voice_source_event_id,
 )
@@ -5584,12 +5585,12 @@ class CortexFollowupScheduler:
                                         delivery.get("fullText")
                                         or delivery.get("text")
                                         or text
-                                    ).strip()
+                                    )
                                     worker_presentation = delivery.get(
                                         "workerCompletionPresentation"
                                     )
                                     if worker_presentation is not None:
-                                        text = str(delivery.get("text") or "").strip()
+                                        text = str(delivery.get("text") or "")
                                         if (
                                             self._validate_glasshive_worker_presentation(
                                                 delivery, text
@@ -5662,6 +5663,7 @@ class CortexFollowupScheduler:
                                         seq,
                                         allow_stale_delivery=allow_stale_delivery,
                                         presentation_is_current=presentation_is_current,
+                                        audio_text=_followup_audio_text(text, delivery.get("deliveryControls")),
                                     )
                                     if not spoken or speech_handle is None:
                                         await self._release_glasshive_delivery_permit(
@@ -5745,6 +5747,11 @@ class CortexFollowupScheduler:
                                     return True
                                 return
                             text = follow_up.get("text")
+                            display_text = text
+                            audio_text = _followup_audio_text(text, follow_up.get("deliveryControls")) \
+                                if isinstance(text, str) else ""
+                            if audio_text is not None and not audio_text.strip():
+                                return
                             if "content" in follow_up:
                                 text = "".join(part for part, silent in _content_audio_segments(
                                     follow_up["content"], default_skipped=True) if not silent)
@@ -5774,10 +5781,11 @@ class CortexFollowupScheduler:
                                         len(text),
                                     )
                                 spoken = self._speak_cortex_followup(
-                                    text,
+                                    display_text if audio_text is not None else text,
                                     seq,
                                     trace_id=trace_id,
                                     presentation_ref=str(follow_up.get("messageId") or message_id),
+                                    audio_text=audio_text,
                                     task_ref=task_ref,
                                     allow_stale_delivery=allow_stale_delivery,
                                     presentation_is_current=presentation_is_current,
@@ -6056,12 +6064,12 @@ class CortexFollowupScheduler:
             "bindings",
         }:
             return None
-        normalized_text = str(text or "").strip()
+        canonical_text = str(text or "")
         bindings = presentation.get("bindings")
         if (
             presentation.get("version") != 1
             or presentation.get("revision") != 1
-            or not normalized_text
+            or not canonical_text.strip()
             or not self._prefixed_lower_hex(
                 presentation.get("presentationRef"),
                 "voice_worker_completion_",
@@ -6079,7 +6087,7 @@ class CortexFollowupScheduler:
             or presentation.get("turnId") != delivery.get("voiceRequestId")
             or presentation.get("responseDigest")
             != "sha256:"
-            + hashlib.sha256(normalized_text.encode("utf-8")).hexdigest()
+            + hashlib.sha256(canonical_text.encode("utf-8")).hexdigest()
             or not isinstance(bindings, list)
             or not 1 <= len(bindings) <= 32
         ):
@@ -6695,6 +6703,7 @@ class CortexFollowupScheduler:
         text: str,
         seq: int,
         *,
+        audio_text: Optional[str] = None,
         allow_stale_delivery: bool = False,
         presentation_is_current: Optional[Callable[[], bool]] = None,
     ) -> tuple[bool, Any, str]:
@@ -6707,8 +6716,13 @@ class CortexFollowupScheduler:
         try:
             if is_no_response_only(text):
                 return False, None, "no_response"
-            cleaned = sanitize_voice_followup_text(text)
-            if contains_no_response_tag(text):
+            speech_source = text if audio_text is None else audio_text
+            if is_no_response_only(speech_source):
+                return False, None, "no_response"
+            cleaned = sanitize_voice_followup_text(speech_source,
+                allow_voice_controls=audio_text is not None and getattr(
+                    getattr(self._session.current_agent, "llm", None), "_voice_accepts_inline_controls", False))
+            if contains_no_response_tag(speech_source):
                 cleaned = strip_inline_nta(cleaned)
             if not cleaned:
                 return False, None, "empty"
@@ -6771,12 +6785,13 @@ class CortexFollowupScheduler:
     def _speak_cortex_followup(
         self, text: str, seq: int, *, trace_id: str, presentation_ref: str,
         task_ref: Optional[dict[str, Any]] = None,
+        audio_text: Optional[str] = None,
         allow_stale_delivery: bool = False,
         presentation_is_current: Optional[Callable[[], bool]] = None,
     ) -> bool:
         if presentation_ref in self._cortex_speech_refs:
             return False
-        spoken, handle, reason = self._start_speech(text, seq,
+        spoken, handle, reason = self._start_speech(text, seq, audio_text=audio_text,
             allow_stale_delivery=allow_stale_delivery,
             presentation_is_current=presentation_is_current)
         if not spoken or handle is None:

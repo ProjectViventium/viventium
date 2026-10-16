@@ -2456,9 +2456,15 @@ def test_cli_optional_telegram_surface_requires_api_health() -> None:
     assert "telegram_bridge_surface_healthy() {" in source
     assert "scripts/viventium/telegram_poller_handoff.py\" health" in source
     assert "--require-receipt" in source
-    assert 'runtime_pid_file_running "telegram_bot.pid"' not in source
-    assert 'runtime_pid_file_running "telegram_bot_deferred.pid"' not in source
-    assert 'api_surface_healthy "$api_port"' in source
+    bridge = extract_shell_function(source, "telegram_bridge_surface_healthy")
+    recovery = extract_shell_function(source, "telegram_recovery_owner_missing")
+    for pid_file in ("telegram_bot.pid", "telegram_bot_deferred.pid"):
+        assert f'runtime_pid_file_running "{pid_file}"' not in bridge
+        assert f'runtime_pid_file_running "{pid_file}"' not in source.replace(recovery, "")
+    assert 'api_surface_healthy "$api_port"' in bridge
+    assert 'runtime_env_true "START_TELEGRAM" "false"' in recovery
+    assert '! runtime_pid_file_running "telegram_bot.pid"' in recovery
+    assert '! runtime_pid_file_running "telegram_bot_watchdog.pid" true' in recovery
 
 
 def test_install_summary_uses_lightweight_playground_health_probe() -> None:

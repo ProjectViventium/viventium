@@ -24,6 +24,9 @@ live lineage, useful evaluation, and a recoverable rollout path.
 - **CC-027:** Workbench is the operational view for prompt composition, schedule prompt/model/effort,
   dependencies, history, channel results, latency, cost, and disposition; do not add a duplicate
   continuity dashboard.
+- Starting a new schedule clears the saved selection for the editor, source details, history,
+  periphery queries, and manual-run controls together. Live refresh cannot reselect the old row;
+  choosing a saved schedule restores that schedule's controls.
 
 ### Authentication
 

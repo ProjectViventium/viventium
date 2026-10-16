@@ -302,6 +302,12 @@ Prompt-layer ownership and the runtime-vs-prompt boundary are also recorded in
 
 - Main streamed answers, scheduled/proactive messages, and background follow-ups share
   `render_telegram_markdown(...)` and the same Markdown-to-Telegram-HTML renderer.
+- Literal Markdown code is content, not voice-control syntax. Inline code and fenced code,
+  including an unfinished streaming fence, retain brackets, provider-tag examples, citations,
+  backslashes, indentation, and blank lines. Display cleanup applies outside code; speech keeps
+  its existing provider-capability and delivery-disposition contract. Internal tool-transcript
+  exclusion still applies before presentation. Verify the same literal content in the main reply,
+  preview, plain-text fallback, and background follow-up consumers.
 - The renderer protects converted fragments with internal placeholders. A later block wrapper can
   contain an earlier emphasis placeholder, so restoration must resolve later/outer placeholders
   before earlier/inner placeholders.

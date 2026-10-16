@@ -155,18 +155,18 @@ def sanitize_voice_text(text: str) -> str:
 
 # === VIVENTIUM START ===
 # Feature: Voice follow-up sanitization for speech output (no plans/URLs/emails/markdown).
-# Updated 2026-02-22: Strip voice control tags (SSML + bracket nonverbals) before
-# speech. Follow-up text from the LLM may contain emotion/SSML tags that would be
-# spoken literally by non-Cartesia TTS providers or even by Cartesia if emotion
-# parsing doesn't apply to follow-up utterances.
-def sanitize_voice_followup_text(text: str, *, preserve_leading_space: bool = False) -> str:
+# Follow-up display is stored separately. Preserve controls only when the selected
+# provider declares support; the existing fallback filter owns a later provider change.
+def sanitize_voice_followup_text(
+    text: str, *, preserve_leading_space: bool = False, allow_voice_controls: bool = False,
+) -> str:
     if not text:
         return ""
     leading_space = preserve_leading_space and text[:1].isspace()
     cleaned = sanitize_voice_tts_text(
         text,
         preserve_leading_space=preserve_leading_space,
-        allow_voice_controls=False,
+        allow_voice_controls=allow_voice_controls,
     )
     if not cleaned:
         return ""
