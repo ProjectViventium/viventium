@@ -311,3 +311,53 @@ def test_invalid_suffix_after_multiline_title_recovers_authored_words(native, ch
 def test_followup_invalid_suffix_after_multiline_title_keeps_words(tail):
     text = "Useful words. [the report](sandbox:/out/report.txt\n" + tail
     assert sanitize_voice_followup_text(text) == "Useful words. the report " + tail
+
+
+@pytest.mark.parametrize("raw, expected", [
+    ("Email qa_first.last+test@example.test.", "Email qa_first.last+test@example.test."),
+    ("Email _first_+qa@example.test.", "Email _first_+qa@example.test."),
+    ("Email **qa_first+test@example.test**.", "Email qa_first+test@example.test."),
+    ("Email _qa@example.test_.", "Email qa@example.test."),
+    ("Use docs.example.test/path and qa@example.test.", "Use docs.example.test/path and qa@example.test."),
+])
+def test_requested_email_survives_the_actual_transcription_buffer(raw, expected):
+    for cut in range(len(raw) + 1):
+        buffer = _VoiceTtsDeltaBuffer(native_streaming=lambda: True, preserve_text=True)
+        display = VoiceControlDisplayFilter()
+        actual = ""
+        for chunk in (raw[:cut], raw[cut:]):
+            actual += "".join(display.feed(value) for value in buffer.feed(chunk))
+        actual += "".join(display.feed(value) for value in buffer.finalize())
+        actual += display.feed("", final=True)
+        assert actual == expected, cut
+    speech = sanitize_voice_tts_text(expected)
+    assert "@" not in speech
+    assert "address available" in speech
+    if "docs.example.test/path" in expected:
+        assert "docs.example.test/path" in speech
+
+
+@pytest.mark.parametrize("text", [
+    "Open https://docs.example.test/_Path_?part=A_B#Result now.",
+    "Use docs.example.test/path now.",
+    "The amount is 2.5. Keep it.",
+    "Wait... Yes! Ready.Next.",
+])
+def test_display_buffer_preserves_reference_and_punctuation_bytes(text):
+    for cut in range(len(text) + 1):
+        buffer = _VoiceTtsDeltaBuffer(native_streaming=lambda: True, preserve_text=True)
+        display = VoiceControlDisplayFilter()
+        chunks = [value for chunk in (text[:cut], text[cut:]) for value in buffer.feed(chunk)]
+        chunks.extend(buffer.finalize())
+        actual = "".join(display.feed(value) for value in chunks) + display.feed("", final=True)
+        assert actual == text, cut
+
+
+def test_display_preservation_does_not_change_default_speech_boundary_repair():
+    speech = _VoiceTtsDeltaBuffer(native_streaming=lambda: True)
+    display = _VoiceTtsDeltaBuffer(native_streaming=lambda: True, preserve_text=True)
+    def render(buffer):
+        chunks = buffer.feed("Ready.") + buffer.feed("Next.") + buffer.finalize()
+        return "".join(chunks)
+    assert render(speech) == "Ready. Next."
+    assert render(display) == "Ready.Next."

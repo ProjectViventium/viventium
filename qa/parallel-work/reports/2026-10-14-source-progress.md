@@ -1,5 +1,7 @@
 # Orchestration source checkpoint
 
+<!-- qa-evidence-exempt: Historical source-save checkpoint reusing earlier bounded evidence; it records no new acceptance run. Current case catalogs retain the real-user evidence gates. -->
+
 QA: critical-path
 
 ## Saved behavior

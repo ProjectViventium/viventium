@@ -29,6 +29,26 @@ for(const slot of ['primary','fallback']) {
 assert.throws(()=>r.configuredWorkerRoute('fallback',{}),/unavailable/);
 assert.throws(()=>r.configuredWorkerRoute('unconfigured',env),/slot/);
 assert.throws(()=>r.sourceInstructions({frames:{harness:'x'}},'codex-cli'),/frame_missing/);
+const grokEnv={GLASSHIVE_DEFAULT_WORKER_PROFILE:'grok-build',WPR_MODEL_GROK_BUILD:'grok-selected',WPR_GROK_REASONING_EFFORT:'high'};
+const grok=r.configuredWorkerRoute('primary',grokEnv);
+assert.strictEqual(grok.model,'grok-build:grok-selected');
+assert.throws(()=>r.configuredWorkerRoute('primary',{...grokEnv,WPR_GROK_REASONING_EFFORT:''}),/unavailable/);
+const frames={harness:'host',project:'project',agents:'common',codex:'codex-only',claude:'claude-only'};
+assert.strictEqual(r.sourceInstructions({frames},'grok-build'),'host\n\nproject\n\ncommon');
+const grokBundle={env:{WPR_GROK_REASONING_EFFORT:'high'},provider_capabilities:{native_tools:true},developer_instructions:'exact grok',application_developer_instructions:'exact grok'};
+const grokRecord={state:'completed',model_id:grok.model,provider_route_model:grok.nativeModel,access_mode:'full',run_id:'grok-run',worker_id:'grok-worker',bootstrap_bundle_json:JSON.stringify(grokBundle)};
+assert.strictEqual(r.verifyNativeRun(grokRecord,grok,'exact grok').effort,'high');
+assert.throws(()=>r.verifyNativeRun({...grokRecord,bootstrap_bundle_json:JSON.stringify({...grokBundle,env:{WPR_CLAUDE_CODE_EFFORT:'high'}})},grok,'exact grok'),/route_mismatch/);
+assert.throws(()=>r.sourceInstructions({frames},'unsupported'),/unavailable/);
+const semantic=r.configuredWorkerRoute('primary',grokEnv,false);
+assert.strictEqual(semantic.access,'read_only');
+assert.strictEqual(semantic.nativeTools,false);
+const disabled={...grokRecord,access_mode:'read_only',bootstrap_bundle_json:JSON.stringify({...grokBundle,provider_capabilities:{native_tools:false}})};
+assert.strictEqual(r.verifyNativeRun(disabled,semantic,'exact grok').nativeTools,false);
+assert.throws(()=>r.verifyNativeRun(grokRecord,semantic,'exact grok'),/route_mismatch/);
+assert.throws(()=>r.verifyNativeRun(disabled,grok,'exact grok'),/route_mismatch/);
+assert.throws(()=>r.configuredWorkerRoute('primary',grokEnv,'false'),/native_tools/);
+
 '''
     result = subprocess.run(['node','-e',script,str(runner)],capture_output=True,text=True)
     assert result.returncode == 0, result.stderr
@@ -51,12 +71,17 @@ target.sourceSnapshot.sha256=digest();assert.throws(()=>r.readWorkerSource(targe
     assert result.returncode == 0, result.stderr
 
 
+@pytest.mark.parametrize('native_tools', [True, False])
 @pytest.mark.parametrize('fault',[None,'model','effort','source','request','audit','judge','case'])
-def test_workbench_worker_replay_cannot_claim_unbound_route_or_unjudged_success(monkeypatch,tmp_path,fault):
-    for key,value in {'GLASSHIVE_DEFAULT_WORKER_PROFILE':'claude-code','WPR_MODEL_CLAUDE_CODE':'synthetic','WPR_CLAUDE_CODE_EFFORT':'default'}.items():monkeypatch.setenv(key,value)
-    route=evals._configured_worker_route('primary'); identity='a'*64; source='b'*64
-    selected=[{'family':{'id':'worker'},'case':{'id':'case','fixture':{'workerSource':{'route':'primary'}}}}]
-    row={'caseId':'case','status':'completed','requestedRoute':route.copy(),'observedRoute':{**route,'state':'completed','nativeTools':True,'instructionsSha256':source},'requestIdentityHash':identity,'observedRequestIdentityHash':identity,'instructionsSha256':source,'nativeAudit':{'stdoutHash':'a'*16},'nativeCalls':[],'semanticJudge':{'status':'judged','pass':True,'rawHash':'a'*16,'attemptCount':1}}
+@pytest.mark.parametrize('profile,model_key,effort_key', [
+    ('claude-code','WPR_MODEL_CLAUDE_CODE','WPR_CLAUDE_CODE_EFFORT'),
+    ('grok-build','WPR_MODEL_GROK_BUILD','WPR_GROK_REASONING_EFFORT'),
+])
+def test_workbench_worker_replay_cannot_claim_unbound_route_or_unjudged_success(monkeypatch,tmp_path,fault,profile,model_key,effort_key,native_tools):
+    for key,value in {'GLASSHIVE_DEFAULT_WORKER_PROFILE':profile,model_key:'synthetic',effort_key:'high'}.items():monkeypatch.setenv(key,value)
+    route=evals._configured_worker_route('primary',native_tools); identity='a'*64; source='b'*64
+    selected=[{'family':{'id':'worker'},'case':{'id':'case','fixture':{'workerSource':{'route':'primary','nativeTools':native_tools}}}}]
+    row={'caseId':'case','status':'completed','requestedRoute':route.copy(),'observedRoute':{**route,'state':'completed','nativeTools':native_tools,'instructionsSha256':source},'requestIdentityHash':identity,'observedRequestIdentityHash':identity,'instructionsSha256':source,'nativeAudit':{'stdoutHash':'a'*16},'nativeCalls':[],'semanticJudge':{'status':'judged','pass':True,'rawHash':'a'*16,'attemptCount':1}}
     if fault in {'model','effort'}:row['observedRoute'][fault]='other'
     if fault=='source':row['observedRoute']['instructionsSha256']='c'*64
     if fault=='request':row['observedRequestIdentityHash']='c'*64

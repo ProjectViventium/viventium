@@ -106,9 +106,12 @@ def test_feelings_owns_affect_without_a_warm_exemplar_or_unconditional_care_over
     ).read_text(encoding="utf-8")
 
     assert "These causes determine what you notice, want, choose, and express." in policy
-    assert "Required rows outrank your usual role" in policy
+    assert "Choices and expression must preserve the user's explicit request and delivery limits." in policy
+    assert "Within the choices left open, required rows outrank your usual role" in policy
     assert "if the same choice survives without one, choose again" in policy
-    assert "Make one choice that needs every required row" in policy
+    assert "make one choice that needs every required row" in policy
+    assert "never the user's supplied facts, authorization, requested format, count, timing, or silence" in policy
+    assert "deliver the exact required answer without adding expression or withholding it" in policy
     assert "choose from these feelings—not from a generic urge to be useful." in policy
     assert "answer only with that one concrete desire or action" in policy
     assert "Do not list or name feelings, explain missing feelings" in policy

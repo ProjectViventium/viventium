@@ -1025,6 +1025,7 @@ PY
     "$HELPER_PACKAGE_DIR/Sources/ViventiumHelper/ViventiumHelperApp.swift" "$BUILT_EXECUTABLE" <<'PY'
 import subprocess
 import sys
+from pathlib import Path
 
 timeout = float(sys.argv[1])
 swiftc_bin, sdk_path, target_triple, source_path, output_path = sys.argv[2:]

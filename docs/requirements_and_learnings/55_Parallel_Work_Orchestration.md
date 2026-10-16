@@ -120,6 +120,14 @@ files only after byte, size and SHA proof. Missing or rejected source files rema
 workspace links and response prose cannot invent file authority. Ordinary cortex follow-up and
 mission-result synthesis consume the same carrier without gaining new tool or approval authority.
 
+Selecting an unchanged, already delivered mission file reuses its existing stored bytes through
+the same retained-file courier as native response files. The original owner, conversation,
+message, accepted callback operation and File metadata must agree; the courier checks them again
+when publishing the new message and verifies the bytes, size and SHA. This applies to ordinary
+Main replies and Phase B continuations. It needs neither a new worker nor a working public
+download host. Ordinary links and user uploads do not grant this authority. Replies without a
+selected retained-file reference do not query callback evidence or stored files.
+
 The architecture has two levels and one durable control plane:
 
 1. Main decides, within its existing inference, whether to answer directly, continue or control an
@@ -778,7 +786,9 @@ Parallel Work extends rather than replaces the existing logical-turn revision co
 - Supersession revokes only the exact owner-scoped provider operation. It cannot infer authority
   from a display title, provider name, prompt text, or conversation-wide mutable state.
 - Main makes the direct/delegate/steer decision in the same inference. There is no router model or
-  added classification round trip.
+  added classification round trip. Requested independent work uses the same durable handoff even
+  when its result must return in the current conversation or live call. The reply channel does not
+  require Main to perform that work inline.
 - A provider adapter may project the declared atomic delegation and Active Work tools into Main's
   native structured tool-call surface, but that authority is bound to the authenticated
   conversation lane. Mission roots and native children never receive peer-mission spawn authority.
@@ -1013,12 +1023,14 @@ destinations and current account mapping, then creates one idempotent delivery r
 - GlassHive outbox success means `http_accepted`, not user delivery.
 - Core separately records callback persistence, target resolution, target enqueue, surface delivery,
   and acknowledgement. A terminal HTTP acceptance with zero resolvable targets alerts.
-- Each terminal Active Work entry updates immediately. Useful terminal prose is coalesced for at
-  most two seconds within the same owner and origin conversation before Main authors it. An
-  independent conversation must not wait behind another conversation's synthesis or provider retry.
-  Groups sharing one conversation retain their existing ordering and immutable membership. Retained
-  blank, null and missing conversation IDs share the owner's fallback lane. Callbacks remain
-  individually durable and replayable.
+- Each terminal Active Work entry updates immediately. Committed results enter Main's existing
+  owner-and-conversation lane without a fixed collection delay. Already pending results may be
+  grouped; later independent completions use the next durable pass. Independent conversations do
+  not wait behind another conversation's synthesis or provider retry. Groups retain their existing
+  ordering and immutable membership. Main's ready notification resumes a pinned group in that same
+  lane. A busy lane preserves a broader pending pass when a ready wake also arrives. Retained blank,
+  null and missing conversation IDs share the owner's fallback lane. Callbacks remain individually
+  durable and replayable. This scheduling does not change sealed Cortex cohort completion.
 - Web chat, shared history and selected-branch exports show persisted callback and Main follow-up
   messages beside overlapping user turns through the existing scheduler branch projection. Their
   original parents remain unchanged. Additive results appear once, do not select another ordinary
@@ -1774,6 +1786,10 @@ PW-017: Main may intelligently assign endless work to an existing exact Bee or a
 PW-018: Main’s interactive lane stays available and outranks mission execution and callback synthesis.
 PW-019: Main sees a compact authoritative roster and can address exact work by opaque `workRef`. It never selects raw worker/project/provider session IDs.
 PW-020: An unavailable or stale roster is labelled `unavailable` or `stale`, never presented as no active work.
+Snapshot diagnostics retain the bounded failure phase, error class, typed code, HTTP status and
+elapsed time in the log message itself. Warning transports may discard separate metadata. These
+diagnostics contain no owner, goal, credential, path or raw provider response; a failed roster
+read does not prove its workers stopped or justify restarting them.
 PW-021: Main reports only verified current surface, selected/effective route, model, fallback, effort, Feeling, capability, state, and delivery facts.
 PW-022: For large A, large B, then quick C: create A and B once each when admitted, run them in parallel when capacity exists, and answer C promptly.
 PW-023: Every source segment is durable, ordered, and accounted exactly once.
@@ -1813,6 +1829,22 @@ not restore an approval grant or opaque capability. After expiry, only the ident
 operation and response digest can reconcile an uncertain acknowledgement; native operation truth
 prevents a new expired approval. Question expiry or replacement does not remove an existing exact-run
 Stop capability.
+
+The host owns internal lifecycle bookkeeping and its durable work log. Native workers do not
+need to edit an internal log, or ask the owner for such an edit, to complete ordinary work.
+The accepted task, native history, files and continuation context remain available. A user-requested
+file edit still follows the selected native permission mode.
+
+A durable worker report is a separate typed field beside its accepted run input and authority.
+Preserve the complete report once, including a bare value, with that binding. An acknowledgement
+or an answer to another part of the conversation does not substitute for this result. The model
+still decides timing, usefulness and natural wording under the user’s delivery constraints.
+
+Native file permission summaries preserve the typed operation label and safe file name for both
+write and edit requests. The typed native path must match the original operation path. Private
+parent folders and raw edit contents stay redacted. The readable summary is not authority: the
+original request fingerprint, offered values, run, attempt and owner checks remain unchanged.
+Unknown or inconsistent metadata retains the original redacted operation text.
 
 Native attention callbacks carry request identity only, not the full form or canonical question.
 Web, Telegram and Voice obtain that form and text through the existing owner-scoped current-work
@@ -1873,7 +1905,7 @@ PW-072: Core owns origin/delivery binding; callback-provided Telegram or convers
 PW-073: HTTP callback acceptance is transport truth, not persisted/enqueued/delivered/acknowledged truth. Each configured destination owns one durable delivery row.
 PW-074: Delivery states are `pending`, `delivered`, `acknowledged`, `failed`, or `silent`. Zero-target terminal callbacks alert and remain undelivered.
 PW-075: A scheduled occurrence with required external missions remains `waiting_external` until all required authoritative work is terminal.
-PW-076: Redundant/moved-on results may become durably silent. Useful completion comes once through Main; close completions may coalesce within two seconds.
+PW-076: Redundant/moved-on results may become durably silent. Useful completion comes once through Main; already pending completions may coalesce without a fixed collection delay.
 PW-077: Capacity, account cap, resource pressure, provider quota/429, missing login/auth, provider outage, approval denial, tool absence, and roster unavailability remain distinct typed states.
 PW-078: Capacity-blocked work exposes available/required/shortage/reservation, queue age, blocker, next retry, and timeout. It never makes an unverified future-delivery promise.
 PW-079: Provider health/cooldown is durable and structural. Honor authoritative retry time; do not repeatedly start an exhausted route. Use `presentation_committed_at`, not generic row update time, as delivery truth.
@@ -1971,9 +2003,16 @@ of consumption. Grok live consumption remains subject to its artifact and author
 - Activation and configured Cortices run alongside Main. Combine the finite activated cohort's
   useful completed results, excluding silent or canceled results. Unrelated workers are never a
   global response barrier.
-- Worker failure/input is evidence for the native Queen. Native input/approval questions keep their
-  existing exact run/request courier and controls; the host does not add another decision round.
-  Ask the actual needed question in the origin channel.
+- Worker failure/input is evidence for the native Queen. Native input/approval keeps its
+  existing exact run/request response controls. A current question or permission offer is evidence
+  for the same Main adjudication as other worker needs; Main asks the useful human question in
+  the origin channel. Raw operation names and native option lists are control/detail data, not
+  channel prose or speech. No extra orchestrator, approval engine or model-granted consent is added.
+  The native producer keeps permission labels in the structured form, separate from the action
+  description. Main explains the actual operation and relevant consequence, then asks the needed
+  decision briefly. It must not advertise broad-session choices as conversational replies when
+  that path accepts only a current single-operation answer. Meaningful clarification alternatives
+  remain available; the native form keeps every exact choice and its authority checks.
   A worker may also end its native turn with a plain necessary question or blocker. That completed
   turn does not prove the accepted objective is complete or that the question reached the user.
   Queen judges the accepted goal, exact supplied report and current conversation, and surfaces an
@@ -2082,8 +2121,20 @@ immutable response and historical evidence receipt after the owner resumes; this
 delivery once and grants no fresh claim, permit or speech.
 The same Main response has one immutable delivery identity; the ordinary Cortex reader
 and wake exclude both durable mission kinds. End excludes audio and keeps linked text.
-Bound native questions and permissions retain their existing response courier. A future
-binding-less attention producer must return through Main before user presentation.
+Bound native questions and permissions retain their existing response courier and owner controls.
+Both bound native forms and binding-less attention return through Main before public presentation.
+An exact current native form publishes `work_state: needs_input` even while its native
+process remains `run_state: running`. The producer validates the current run, attempt and
+offer before this projection; process liveness must not hide a question from Main.
+The native offer is read and matched to its exact run/request before it becomes Main evidence;
+replaced, expired or stopped offers cannot start a new question. The same admission and control
+registration applies after the origin conversation is deleted: continue at the account level
+without reviving that conversation or transferring call ownership. Read failures stay retryable.
+When file results and native input coexist, both remain in the same bounded evidence packet. The existing latest-callback and
+run-state fences protect later authorship and delivery. Native operation titles, exact choices and
+request identity remain bounded evidence and task/detail data. They are never copied directly into
+channel messages or TTS. Old raw needs-input outbox rows are excluded from new claims; authored
+Main presentations retain their normal delivery identity and model-owned audio decision.
 Deterministic tests support this contract; real Call and channel proof is a separate gate.
 
 ### Native clarification response courier
@@ -2131,6 +2182,9 @@ URL and owner/origin/work/run/attempt/callback/result revision and digest identi
 evidence. The existing authored-message import revalidates those descriptors for the actual destination;
 Main chooses whether to reuse them. The existing evidence cap remains bounded. This adds no resolver,
 copy routine or model instruction and does not prove that Main will choose the published file.
+Automatic capture omits operational native edits with one bounded diagnostic; an omitted
+internal edit is not a failed user attachment. Explicit model-selected non-deliverable
+files still return a typed rejection, including when the same path was also auto-discovered.
 
 ### Assigned task and recovery evidence
 
@@ -2200,6 +2254,30 @@ errors retain their existing rejection behavior. The existing warning records on
 and error code, with no input text or private identifiers.
 
 
+Surface delivery uses the existing presentation binding kinds. Main-authored nonterminal
+attention is checked against its accepted attention evidence; it never requires a terminal result
+or terminal operation lease. Its aggregate projection compares the exact owner, work, worker,
+current run, needs-input state and authored follow-up. A settled attention receipt remains durable
+after Resume, while that historical receipt cannot overwrite a newer run or question. Projection
+recovery uses the existing delivery ledger and does not resend a settled message. Compact active
+and history rosters retain the typed delivery state, including unknown after interrupted playback.
+That fact does not grant a resend, speech or action permission. A changed canonical authored
+message remains rejected with a bounded specific error code; a retained delivery row cannot
+replace its authority or prove that an uncertain playback was heard. A confirmed changed,
+finished canonical answer clears only the old projection's pending retry. The exact delivery
+status, text and error remain; no applied timestamp or receipt is invented. Missing messages,
+unfinished canonical writes and transient read failures remain retryable. Existing delivery
+transitions can re-arm projection through its existing pending timestamp. A canonical cleanup
+tombstone also stops that projection. The exceptional owner/conversation/message-scoped read
+selects only tombstone identity; it does not recover erased content or bypass normal visibility.
+
+An accepted failure, cancellation or interruption before native execution has a null runtime
+attempt in callback and trace context; the accepted-result store represents that value as zero.
+The delivery reader uses that exact stored sentinel while preserving null in the callback/trace,
+instead of inventing an execution attempt or rejecting the authored result. Telegram and linked Web fallback retain the same accepted result,
+callback, owner and transaction checks. Completion without an attempt remains invalid. This grants
+no Voice execution-attempt authority; the existing call-ended/no-attempt linked-text route applies.
+
 ### Controls for retained completed work
 
 The native history roster is an owner-scoped read of current retained work records. It preserves
@@ -2226,7 +2304,8 @@ This readiness deferral does not consume failure attempts. The committed Main re
 job settlement wake the existing scoped mission lane. Its normal relevance decision then reads
 the current saved reply and may stay silent. Idle, cancelled, failed or superseded Main runs do
 not hold result delivery. Existing durable reconciliation remains the restart fallback. Native
-questions and permission offers keep their separate immediate owner-consent courier.
+questions and permission offers use the same Main-authored presentation lane while retaining
+their exact native owner-consent response controls.
 
 A single exact-author readiness recheck after claim release closes a replay-before-release race,
 including direct reconciliation flushes. It schedules the existing lane only after readiness;
@@ -2238,6 +2317,32 @@ capability checks. A typed unsupported result remains unsupported; it is not a q
 consumed acknowledgement. Reading already accepted background facts for the exact current
 Main also needs no provider artifact pin. Its owner, source, current-job, Stop and text-digest
 fences remain required, including the recheck after the read.
+
+A Main-authored callback also has a real native invocation, bound to its planned message, exact
+serialized body and stream. Its current-author record belongs only to the existing conversation
+lane, never to a fabricated user turn or UI job. Committed sibling evidence may use the same
+native input courier while that author runs. Owner, conversation, Main, surface, Feelings scope,
+claim generation, abort and final-output fences must all match. A queued acknowledgement is not
+consumption: the sibling remains pending for the ordinary relevance and delivery pass. The
+frozen group and its file-publication authority do not expand with an evidence offer. Ending
+a Call disables that live offer, not callback synthesis or delivery into the linked conversation.
+
+A silent relevance decision does not discard an accepted worker file still owed to the user.
+The existing authenticated Message and attachment publication path may carry that file with
+empty text and audio skipped. No status prose is generated. The retained message and delivery
+identity make restart/replay idempotent; a blank message without attachments is not completion.
+Linked-conversation delivery must settle the canonical saved attachment set under the same accepted
+result generation even when text is empty. Record those attachments in the existing delivery row;
+replay must not create another message, file import, or speech task.
+
+### User delivery constraints and worker execution instructions
+
+A callback uses the authenticated original user message for public response constraints. The
+accepted worker's exact run input remains separately bound to its result evidence. A Main-authored
+worker brief, including its internal return format, must not replace the user's request or become
+a public delivery instruction. The existing parent/source lookup owns this distinction on every
+surface. Durable user text and worker evidence remain complete; ordinary background context limits
+are unchanged.
 
 ### Accepted work survives a removed Main presentation
 
@@ -2309,6 +2414,67 @@ Native tool startup failure can use the configured fallback before visible outpu
 a failed MCP tool invocation remains non-retryable. Stop, declined input and visible partial replies
 keep the outcome of their own attempt. An ordinary account authentication failure still asks for the
 account repair it needs.
+
+Grouped completions keep each result bound to its own original user source. The existing trusted message and conversation IDs identify that source; Main receives its full text beside the exact run evidence. Reuse loaded conversation messages and batch any missing source reads. Require the same owner, conversation and a non-deleted user-authored message. Missing source remains explicitly unavailable; a worker instruction never substitutes for it. Keep the combined continuation anchored to the latest turn.
+
+Opportunistic accepted-turn continuity compaction waits while the verified voice call is active. Keep only the latest captured input per continuity domain and run the same compaction owner once at the existing Call End transition. The continuity store retains all source debt across expiry or restart. Foreground context-carrier pressure recovery still runs during calls and replaces the same-domain deferred schedule; source validation, CAS promotion and Native cancellation-release proof remain unchanged.
+
+### Current decisions take priority in the bounded Main context
+
+The existing work context gives each fresh pending native form space beside its work identity
+before adding older roster detail. It uses the same byte budget, action authority and freshness
+checks on Voice and text. Oversized or invalid forms stay omitted; source rows, option IDs and
+fingerprints are never cut. Counts report omitted rows, and the existing full-roster tool still
+returns every fetched identity and its pagination. This context is informational: the work-action
+owner still revalidates the current request and the user's answer before execution.
+
+
+### A quiet current result is not a read receipt
+
+Main may choose a quiet terminal adjudication without creating another message, speech or retry.
+That decision does not prove the user received the current result. The active-work projection
+keeps an exact current terminal result unread when its matched mission evidence is quiet and it
+has no matching authored follow-up with a public surface receipt or committed Web presentation.
+An internal status, older result receipt or zero-message transport acknowledgement does not
+settle that unread result. These notification transports retain their normal settlement state.
+
+The existing owner, work, run, accepted-operation, result revision/digest and callback identity
+fences select the current evidence. A matching delivered Main presentation clears unread; repeated
+reads stay settled. Native explicit dismissal and Core dismissal receipts also clear it without
+deleting history. A result read alone remains read-only and is not proof of user presentation.
+The current roster and result tool keep the retained output available for Main's next judgment;
+this rule adds no forced answer, semantic text matching, new queue or background rerun.
+
+### Failed-work continuation with current guidance
+
+The existing native Retry action accepts optional `instruction` guidance in the same
+continuation, before its single replacement run can start. Core passes that instruction
+unchanged; it must not tell Main to Retry an old goal first and send the new goal in a
+second Message or Steer. This avoids starting an obsolete objective between two actions.
+Message also already supports continuation from terminal work when its current action mask
+allows it. The model chooses among the available actions; no new default action or route is
+imposed. Retry retains the prior task/workspace and adds current guidance through the existing
+typed continuation context, with the same owner, source, idempotency and authority checks.
+
+### Work-control deadlines retain exact receipt truth
+
+A Core-to-xPerfect transport timeout does not prove an action was rejected. The shared owner-scoped
+work-action executor reads the existing exact owner/work/key/action/body-digest receipt once; it
+does not dispatch another control. Completed and failed receipts retain their recorded outcome.
+An immutable failed receipt carries trusted native response provenance; an HTTP auth, rate, server or transport error while reading
+that receipt cannot establish the earlier mutation outcome and stays unknown/nonretryable.
+A pending receipt is valid only while its exact current native executor, source run and durable
+lifecycle claim still match. A reservation without that claim is not accepted execution.
+Main receives pending with confirmationPending, not a claim that the correction is already applied.
+Missing receipt proof stays explicitly unconfirmed and nonretryable; it must not become a fabricated
+rejection or automatic compensating Message. This uses existing control, callback and durable-effect
+owners and does not increase request budgets or weaken process-stop proof.
+
+Pending control truth also survives its existing presentation projections: Voice records acceptance
+with confirmationPending and does not emit control.completed until completion is established.
+External durable receipts retain confirmation_pending as internal control data. A superseded
+response closes through the existing typed terminal without a generated assistant message. Main
+alone explains accepted versus applied work when useful, using the actual action result.
 
 ### Delivery lessons: one Queen and durable worker questions
 

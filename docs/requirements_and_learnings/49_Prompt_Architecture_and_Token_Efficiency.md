@@ -286,6 +286,9 @@ tool-availability cases. They support—but do not replace—the real Web, Teleg
 - Semantic judges receive the visible/persisted answer after surface delivery controls are stripped.
   Raw provider markers remain separately validated against the provider grammar. Mixing these two
   views creates false semantic failures.
+- Render evaluations with the owning caller's actual role and surface rules. Main follow-ups must
+  not inherit specialist cortex rules from a test helper. Preserve a mismatched run as diagnostic
+  evidence; correct the fixture before using it to justify a product prompt change.
 - Behavioral fixtures must be executable. If the task lacks required source material, a sharply
   targeted question may be the aligned high-Drive action; do not grade invented work as better than
   a necessary clarification. A high-Play state must alter a real choice, but the rubric must not
@@ -1884,3 +1887,35 @@ Unknown capacity, unhydrated media, mixed or missing native capabilities, or gen
 overflow keep exact-source reconciliation. A stale prefix is never reused; whole source
 may travel only after its exact fit proof. This does not truncate stored history
 or waive authority, source coverage, review, cancellation, or carrier bounds.
+
+## Agent configuration history and document capacity
+
+Normal Agent Builder saves must keep all accepted configuration history. Large prompt snapshots
+can make embedded `Agent.versions` reach MongoDB's 16 MiB document limit; removing history,
+skipping model-setting versions, or reporting a selected value that did not persist are not fixes.
+
+When MongoDB refuses an embedded update with its typed BSON capacity error, the owning Agent
+model uses a native transaction to copy every existing snapshot and the new snapshot into
+`AgentVersion` documents with stable agent identity and version index. The same transaction
+publishes the current settings and history count, then removes the now-archived embedded copies.
+A failed or stale publication leaves both the prior settings and complete history intact.
+Subsequent archived-history saves use the same transaction and optimistic current-document fence.
+
+Expanded Agent details and Version history return the complete ordered snapshots. Revert still
+validates the selected historical provider/model and reads its original index. Runtime agent
+loads use current settings and the history count without loading archived prompts. Ordinary
+standalone saves retain the existing embedded path; an actual overflow fails visibly when the
+deployment cannot provide the atomic transaction required for lossless archival.
+
+Owners: LibreChat `api/models/Agent.js`, `packages/data-schemas/src/methods/agentVersions.ts`,
+`packages/data-schemas/src/models/agentVersion.ts`, and the existing expanded/revert controller.
+Deterministic evidence: `api/models/AgentVersion.integration.spec.js` exercises real BSON overflow,
+full history, subsequent saves, indexed revert, rollback, transaction-unavailable refusal and
+stale-publication protection. Live acceptance must use normal Save, reload and Version history;
+a temporary test cleanup with `skipVersioning` is not acceptance evidence.
+
+Concurrent history insert collisions return the existing HTTP 409 save conflict with reload guidance.
+VersionPanel uses the existing EDIT/expanded query; VIEW/basic details do not expose historical prompts.
+The current Agent Builder expanded query also loads full history on editor open. Its transfer/render
+cost can grow with retained history; this remains an explicit performance gap. Ordinary runtime
+agent loads do not fetch archived history. No history is pruned to reduce that cost.

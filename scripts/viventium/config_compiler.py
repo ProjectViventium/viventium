@@ -2267,12 +2267,23 @@ CURATED_CUSTOM_ENDPOINTS = [
 GLASSHIVE_PROVIDER_ID = "glasshive-harness"
 GLASSHIVE_PROVIDER_MODELS = [
     {"id": "codex-cli:gpt-6.1-sol", "label": "OpenAI / GPT-6.1 Sol", "harnessProfile": "codex-cli",
-     "effortChoices": ["low", "medium", "high", "xhigh", "max"], "recommendedEffort": "high", "contextLimit": 1050000},
+     "effortChoices": ["low", "medium", "high", "xhigh", "max"], "recommendedEffort": "high", "contextLimit": 1050000,
+     "serviceTierChoices": ["default", "priority"]},
     {"id": "claude-code:claude-opus-5-5", "label": "Anthropic / Opus 5.5", "harnessProfile": "claude-code",
      "effortChoices": ["default", "low", "medium", "high", "xhigh", "max"], "recommendedEffort": "high", "contextLimit": 1000000},
     {"id": "grok-build:grok-4.7", "label": "Grok / Grok 4.7", "harnessProfile": "grok-build",
      "effortChoices": ["default", "low", "medium", "high", "xhigh"], "recommendedEffort": "high", "contextLimit": 500000},
     {"id": "grok-build:grok-4.7-build-fast", "label": "Grok / Grok 4.7 Fast", "harnessProfile": "grok-build",
+     "effortChoices": ["default", "low", "medium", "high", "xhigh"], "recommendedEffort": "high", "contextLimit": 500000},
+    {"id": "direct-openai:gpt-6.1-sol", "label": "Direct OpenAI / GPT-6.1 Sol", "harnessProfile": "direct-openai",
+     "executionBackend": "direct-api", "workerNativeTools": False,
+     "effortChoices": ["default", "low", "medium", "high", "xhigh", "max"], "recommendedEffort": "high", "contextLimit": 1050000,
+     "serviceTierChoices": ["default", "priority", "ultrafast"]},
+    {"id": "direct-anthropic:claude-opus-5-5", "label": "Direct Anthropic / Opus 5.5", "harnessProfile": "direct-anthropic",
+     "executionBackend": "direct-api", "workerNativeTools": False,
+     "effortChoices": ["default", "low", "medium", "high", "max"], "recommendedEffort": "high", "contextLimit": 1000000},
+    {"id": "direct-xai:grok-4.7", "label": "Direct xAI / Grok 4.7", "harnessProfile": "direct-xai",
+     "executionBackend": "direct-api", "workerNativeTools": False,
      "effortChoices": ["default", "low", "medium", "high", "xhigh"], "recommendedEffort": "high", "contextLimit": 500000},
     {
         "id": "codex-cli:gpt-6-astra",
@@ -6563,6 +6574,18 @@ def render_runtime_env(
     voice_mode = resolved_voice["mode"]
     env["VIVENTIUM_VOICE_ENABLED"] = "true" if voice_mode != "disabled" else "false"
     env["VIVENTIUM_VOICE_MODE"] = voice_mode
+    preparation = voice.get("prebuild_context", {}) or {}
+    preparation_timeout = int(preparation.get("timeout_s", 120))
+    if not 1 <= preparation_timeout <= 600:
+        raise SystemExit("voice.prebuild_context.timeout_s must be between 1 and 600")
+    preparation_prompt = str(preparation.get("prompt_id", "voice.prebuild_context") or "").strip()
+    if not preparation_prompt:
+        raise SystemExit("voice.prebuild_context.prompt_id must not be empty")
+    env["VIVENTIUM_VOICE_PREBUILD_CONTEXT_ENABLED"] = (
+        "true" if resolve_bool(preparation.get("enabled"), False) else "false"
+    )
+    env["VIVENTIUM_VOICE_PREBUILD_CONTEXT_PROMPT_ID"] = preparation_prompt
+    env["VIVENTIUM_VOICE_PREBUILD_CONTEXT_TIMEOUT_S"] = str(preparation_timeout)
     env["VIVENTIUM_STT_PROVIDER"] = resolved_voice["stt_provider"]
     if resolved_voice.get("stt_model"):
         env["VIVENTIUM_STT_MODEL"] = resolved_voice["stt_model"]
@@ -7857,6 +7880,9 @@ def render_service_envs(output_dir: Path, env: dict[str, str]) -> None:
     service_dir.mkdir(parents=True, exist_ok=True)
 
     librechat_keys = [
+        "VIVENTIUM_VOICE_PREBUILD_CONTEXT_ENABLED",
+        "VIVENTIUM_VOICE_PREBUILD_CONTEXT_PROMPT_ID",
+        "VIVENTIUM_VOICE_PREBUILD_CONTEXT_TIMEOUT_S",
         "VIVENTIUM_LIFE_INTENT_FILE",
         "OPENAI_API_KEY",
         "ANTHROPIC_API_KEY",

@@ -221,6 +221,12 @@ llm:
   extra_provider_keys:
     openrouter: keychain://viventium/openrouter_api_key
 voice:
+  # Optional startup work in the same conversation. Main gathers visible, silent context;
+  # subsequent turns use the existing Voice Call LLM. This does not promise sub-two-second speech.
+  prebuild_context:
+    enabled: false
+    prompt_id: voice.prebuild_context
+    timeout_s: 120
   # The public full example must compile on every supported host. Enable one complete route
   # explicitly: `local` is Apple-Silicon-only and never falls back to cloud; `hosted` requires
   # configured provider credentials.

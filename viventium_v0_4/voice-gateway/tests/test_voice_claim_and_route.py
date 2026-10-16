@@ -75,6 +75,19 @@ def _claim(**overrides):
 
 
 class VoiceClaimBoundaryTests(unittest.TestCase):
+    def test_preparation_budget_is_bounded_metadata_for_all_call_modes(self):
+        expected = dict(expected_call_session_id='call-1', expected_room_name='room-1',
+            expected_gateway_agent_name='voice-gateway', expected_owner_participant_identity='owner-1')
+        for mode in ('call', 'wing', 'listen_only'):
+            payload = _claim(preparationTimeoutS=120)
+            payload['callState']['mode'] = mode
+            validated = _validate_voice_session_claim(payload, **expected)
+            self.assertEqual(validated['preparationTimeoutS'], 120)
+            self.assertEqual(validated['callState']['mode'], mode)
+        for invalid in (True, '120', -1, 601, float('inf')):
+            with self.assertRaisesRegex(RuntimeError, 'invalid canonical voice claim'):
+                _validate_voice_session_claim(_claim(preparationTimeoutS=invalid), **expected)
+
     def test_terminal_lease_release_waits_for_report_and_all_auth_planes(self):
         async def run():
             report_done = asyncio.Event()

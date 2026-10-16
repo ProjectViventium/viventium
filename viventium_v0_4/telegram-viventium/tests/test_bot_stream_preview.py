@@ -965,7 +965,9 @@ class _LinkRequiredRobot:
         _ = args, kwargs
 
 
-def test_get_viventium_response_always_voice_stays_text_mode_with_audio(monkeypatch):
+def test_get_viventium_response_always_voice_stays_text_mode_with_audio(monkeypatch, caplog):
+    timings = []
+    monkeypatch.setattr(tg_bot, "_tg_timing_log", lambda trace, stage, start, **fields: timings.append((stage, fields)))
     class _CaptureRobot:
         def __init__(self) -> None:
             self.kwargs = None
@@ -1030,6 +1032,8 @@ def test_get_viventium_response_always_voice_stays_text_mode_with_audio(monkeypa
     assert robot.kwargs["voice_mode"] is False
     assert robot.kwargs["input_mode"] == "text"
     assert len(context.bot.audios) == 1
+    assert any(stage == "tts_send" and "bytes=" in fields.get("extra", "") for stage, fields in timings)
+    assert "Failed to send voice response" not in caplog.text
     rendered = " ".join(str(item.get("text", "")) for item in context.bot.messages + context.bot.edits)
     assert "[laughter]" not in rendered
 
@@ -1088,6 +1092,69 @@ def test_get_viventium_response_resolves_nested_blockquote_formatting(monkeypatc
     assert "<blockquote><b>Agency compounds.</b></blockquote>" in rendered
     assert "\x00PH" not in rendered
 # === VIVENTIUM END ===
+
+
+@pytest.mark.parametrize("reject_html", [False, True])
+def test_main_reply_preserves_literal_code_with_audio_preference_and_html_fallback(
+    monkeypatch, reject_html
+):
+    literal = r'{"path":"C:\\temp\\notes","items":["[draft]","a\\b"]}'
+    text = "<soft>Ready.</soft>\n```json\n" + literal + "\n```"
+
+    class LiteralRobot:
+        async def ask_stream_async(self, *args, **kwargs):
+            yield text
+            yield {
+                "type": "delivery_disposition",
+                "delivery_disposition": {
+                    "version": 1, "audio": "skip", "required": True,
+                    "valid": True, "source": "model",
+                },
+                "required": True, "present": True,
+            }
+
+        def get_cached_voice_route(self, _key):
+            return None
+
+        def reset(self, *args, **kwargs):
+            pass
+
+    async def no_attachments(**_kwargs):
+        pass
+
+    monkeypatch.setattr(tg_bot, "Users", types.SimpleNamespace(get_config=lambda *_a, **_k: True))
+    monkeypatch.setattr(tg_bot, "send_librechat_attachments", no_attachments)
+    context = _FakeContext()
+    if reject_html:
+        send = context.bot.send_message
+        edit = context.bot.edit_message_text
+
+        async def send_without_html(**kwargs):
+            if kwargs.get("parse_mode") == "HTML":
+                raise RuntimeError("can't parse entities")
+            return await send(**kwargs)
+
+        async def edit_without_html(**kwargs):
+            if kwargs.get("parse_mode") == "HTML":
+                raise RuntimeError("can't parse entities")
+            return await edit(**kwargs)
+
+        context.bot.send_message = send_without_html
+        context.bot.edit_message_text = edit_without_html
+
+    asyncio.run(tg_bot.getViventiumResponse(
+        update_message=_FakeUpdateMessage(), context=context, title="", robot=LiteralRobot(),
+        message="Return this literal content.", chatid=111, messageid=222, convo_id="chat-1",
+        message_thread_id=None, voice_note_detected=False, files=None,
+        trace_id="test-literal-code", telegram_message_id=222, telegram_update_id=333,
+    ))
+
+    messages = context.bot.messages + context.bot.edits
+    assert messages
+    assert all(literal in item["text"] for item in messages if "Ready." in item.get("text", ""))
+    assert any(literal in item.get("text", "") for item in messages)
+    assert all("&lt;soft&gt;" not in item.get("text", "") for item in messages)
+    assert context.bot.audios == []
 
 
 
@@ -6494,3 +6561,43 @@ def test_ordinary_main_final_covers_only_verified_file_grants_and_keeps_preview_
     assert f'href="{ordinary}"' in final
     assert f'href="{adjacent}"' in final
     assert delivered_attachments == [attachment]
+
+@pytest.mark.parametrize("effect_ref", ["", "owned-work-ref"])
+@pytest.mark.parametrize("quiet", [False, True])
+def test_validated_quiet_completion_acknowledges_without_fake_message(monkeypatch, caplog, effect_ref, quiet):
+    caplog.set_level("INFO")
+    class Robot:
+        def __init__(self):
+            self.acks = []
+        async def ask_stream_async(self, *args, **kwargs):
+            yield {"type": "logical_turn", "logical_turn_id": "quiet-turn", "revision": 2}
+            if effect_ref:
+                yield {"type": "durable_effect", "effect_ref": effect_ref}
+            yield {"type": "delivery_disposition", "quiet_completion": quiet,
+                   "required": True, "present": True, "delivery_disposition": {
+                       "version": 1, "audio": "skip", "valid": True,
+                       "required": True, "source": "model"}}
+        async def ack_delivery_status(self, *args, **kwargs):
+            self.acks.append((args, kwargs))
+            return "recorded"
+        def reset(self, *args, **kwargs):
+            pass
+    async def noop(**kwargs):
+        pass
+    monkeypatch.setattr(tg_bot, "Users", types.SimpleNamespace(get_config=lambda *a, **k: False))
+    monkeypatch.setattr(tg_bot, "should_send_voice_reply", lambda **k: False)
+    monkeypatch.setattr(tg_bot, "send_librechat_attachments", noop)
+    context = _FakeContext()
+    robot = Robot()
+    asyncio.run(tg_bot.getViventiumResponse(
+        update_message=_FakeUpdateMessage(), context=context, title="", robot=robot,
+        message="synthetic request", chatid=111, messageid=222, convo_id="chat-1",
+        message_thread_id=None, trace_id="quiet-ack", telegram_message_id=222,
+        telegram_update_id=333))
+    assert not context.bot.messages
+    if quiet:
+        assert any("voice_decision=intentional_quiet" in record.message for record in caplog.records)
+        assert robot.acks == [(("quiet-turn", 2, "committed", "", []),
+                               {"effect_ref": effect_ref} if effect_ref else {})]
+    else:
+        assert robot.acks == []

@@ -1048,19 +1048,22 @@ def _validate_observed_lineage(
     )
 
 
-def _configured_worker_route(slot: str) -> dict[str, str]:
+def _configured_worker_route(slot: str, native_tools: bool = True) -> dict[str, Any]:
+    if not isinstance(native_tools, bool):
+        raise ValueError("invalid_worker_source_native_tools")
     if slot not in {"primary", "fallback"}:
         raise ValueError("invalid_worker_route_slot")
     profile = os.environ.get("GLASSHIVE_DEFAULT_WORKER_PROFILE" if slot == "primary" else "GLASSHIVE_DEFAULT_FALLBACK_WORKER_PROFILE", "")
     fields = {
         "codex-cli": ("WPR_MODEL_CODEX_CLI", "WPR_CODEX_CLI_REASONING_EFFORT"),
         "claude-code": ("WPR_MODEL_CLAUDE_CODE", "WPR_CLAUDE_CODE_EFFORT"),
+        "grok-build": ("WPR_MODEL_GROK_BUILD", "WPR_GROK_REASONING_EFFORT"),
     }.get(profile)
     if not fields or not all(os.environ.get(field) for field in fields):
         raise ValueError("configured_native_worker_route_unavailable")
     return {"slot": slot, "profile": profile, "provider": "glasshive-harness",
             "model": profile + ":" + os.environ[fields[0]], "nativeModel": os.environ[fields[0]],
-            "effort": os.environ[fields[1]], "access": "full"}
+            "effort": os.environ[fields[1]], "access": "full" if native_tools else "read_only", "nativeTools": native_tools}
 
 
 def _worker_source_execution_route(output_dir: Path, *, selected: list[dict[str, Any]]) -> dict[str, Any]:
@@ -1083,7 +1086,8 @@ def _worker_source_execution_route(output_dir: Path, *, selected: list[dict[str,
         if row.get("caseId") != case.get("id") or row.get("status") != "completed":
             return invalid("execution_case_coverage_unverified")
         try:
-            route = _configured_worker_route((case.get("fixture") or {}).get("workerSource", {}).get("route", "primary"))
+            fixture = (case.get("fixture") or {}).get("workerSource", {})
+            route = _configured_worker_route(fixture.get("route", "primary"), fixture.get("nativeTools", True))
         except ValueError as error:
             return invalid(str(error))
         observed = row.get("observedRoute") or {}
@@ -1093,7 +1097,7 @@ def _worker_source_execution_route(output_dir: Path, *, selected: list[dict[str,
         instructions = str(row.get("instructionsSha256") or "")
         if (not re.fullmatch(r"[0-9a-f]{64}", identity) or row.get("observedRequestIdentityHash") != identity
             or not re.fullmatch(r"[0-9a-f]{64}", instructions) or observed.get("instructionsSha256") != instructions
-            or observed.get("nativeTools") is not True or observed.get("state") != "completed"):
+            or observed.get("nativeTools") is not route["nativeTools"] or observed.get("state") != "completed"):
             return invalid("native_worker_source_evidence_mismatch")
         audit = row.get("nativeAudit") or {}
         if not audit.get("stdoutHash") or not isinstance(row.get("nativeCalls"), list):

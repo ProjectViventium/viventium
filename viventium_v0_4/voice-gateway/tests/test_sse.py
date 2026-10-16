@@ -607,6 +607,22 @@ class TestSSEParser(unittest.IsolatedAsyncioTestCase):
                 actual += display.feed("", final=True)
                 self.assertEqual(actual, expected)
 
+    def test_display_preserves_complete_email_bytes(self) -> None:
+        cases = [
+            ("Email qa_first.last+test@example.test.", "Email qa_first.last+test@example.test."),
+            ("Email _first_+qa@example.test.", "Email _first_+qa@example.test."),
+            ("Email **qa_first+test@example.test**.", "Email qa_first+test@example.test."),
+            ("Email _qa@example.test_.", "Email qa@example.test."),
+        ]
+        for raw, expected in cases:
+            with self.subTest(raw=raw):
+                display = VoiceControlDisplayFilter()
+                actual = display.feed(raw) + display.feed("", final=True)
+                self.assertEqual(actual, expected)
+                spoken = sanitize_voice_tts_text(expected)
+                self.assertNotIn("@", spoken)
+                self.assertIn("address available", spoken)
+
     def test_display_releases_safe_prefix_before_later_formatting_completes(self) -> None:
         display = VoiceControlDisplayFilter()
         self.assertEqual(display.feed("Read **Pub"), "Read ")

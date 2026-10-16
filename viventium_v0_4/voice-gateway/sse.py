@@ -155,18 +155,18 @@ def sanitize_voice_text(text: str) -> str:
 
 # === VIVENTIUM START ===
 # Feature: Voice follow-up sanitization for speech output (no plans/URLs/emails/markdown).
-# Updated 2026-02-22: Strip voice control tags (SSML + bracket nonverbals) before
-# speech. Follow-up text from the LLM may contain emotion/SSML tags that would be
-# spoken literally by non-Cartesia TTS providers or even by Cartesia if emotion
-# parsing doesn't apply to follow-up utterances.
-def sanitize_voice_followup_text(text: str, *, preserve_leading_space: bool = False) -> str:
+# Follow-up display is stored separately. Preserve controls only when the selected
+# provider declares support; the existing fallback filter owns a later provider change.
+def sanitize_voice_followup_text(
+    text: str, *, preserve_leading_space: bool = False, allow_voice_controls: bool = False,
+) -> str:
     if not text:
         return ""
     leading_space = preserve_leading_space and text[:1].isspace()
     cleaned = sanitize_voice_tts_text(
         text,
         preserve_leading_space=preserve_leading_space,
-        allow_voice_controls=False,
+        allow_voice_controls=allow_voice_controls,
     )
     if not cleaned:
         return ""
@@ -413,7 +413,7 @@ class VoiceControlDisplayFilter:
     TTS receives the original LLM text, including supported provider tags. The
     LiveKit transcript display receives this filtered stream so incomplete tag
     fragments never briefly render to the user while token deltas are arriving.
-    Complete public links and literal code remain display content.
+    Complete public links, email addresses and literal code remain display content.
     """
 
     def __init__(self) -> None:
@@ -449,9 +449,11 @@ class VoiceControlDisplayFilter:
             source = re.sub(r"`.*\Z", protect, source, count=1, flags=re.DOTALL)
         source = _MARKDOWN_EMPHASIS_RE.sub(
             lambda match: match.group("marker")
-            + _URL_RE.sub(protect, match.group("text")) + match.group("marker"), source,
+            + _EMAIL_RE.sub(protect, _URL_RE.sub(protect, match.group("text")))
+            + match.group("marker"), source,
         )
         source = _URL_RE.sub(protect, source)
+        source = _EMAIL_RE.sub(protect, source)
         output: list[str] = []
         index = 0
         source_len = len(source)
@@ -531,7 +533,6 @@ class VoiceControlDisplayFilter:
             cleaned = cleaned[:safe_end]
         self._pending = restore(self._pending)
         cleaned = _strip_inline_markdown_emphasis(cleaned)
-        cleaned = _EMAIL_RE.sub("address available", cleaned)
         cleaned = re.sub(r"[ \t]{2,}", " ", cleaned)
         return restore(cleaned)
 # === VIVENTIUM END ===

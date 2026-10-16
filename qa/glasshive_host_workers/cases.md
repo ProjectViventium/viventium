@@ -32,6 +32,10 @@ Use stable `GHHOST-NNN` IDs for glasshive host workers cases.
 | `GHHOST-023` | The delegation prompt envelope contains the exact typed task context, without private chat, host identity, or invented provider/tool gates. | A delegated worker receives the user brief and explicit constraints without hidden conversation or host IDs. | GlassHive MCP delegation projection and tool contract | Exact projection/privacy and minimal-envelope tests in `test_mcp_server.py` | PARTIAL 2026-08-22; source tests only, installed MCP not run. |
 | `GHHOST-024` | Every persisted `running` row has the exact invocation marker, live unexpired lease, and matching open attempt. | Direct creation, legacy updates, confirmation, startup, and reconciliation cannot invent execution. | GlassHive store and startup reconciliation | Exact direct-create, generic-mutation, legacy-confirmation, admitted-restart, and startup/reconcile cases in `test_host_run_leases.py`; observer/confirmation cases in `test_api.py`; exact control lifecycle in `test_phase3_controls.py` | PARTIAL 2026-08-22; source tests only, installed restart not run. |
 | `GHHOST-025` | The owner-scoped callback/detail producer preserves exact attempt identity and emits only strict redacted trace and safe artifact fields. | Core can reject malformed/replayed work evidence without treating transport acceptance as user delivery. | GlassHive callback outbox and owner-scoped work-detail API | Exact missing/wrong-attempt, stable replay, callback identity, detail shape, overflow, lifecycle-effect, and artifact cases in `test_account_api.py`, `test_queue_truth_and_trace.py`, `test_phase4_lifecycle_effects.py`, and callback-focused `test_api.py` | PARTIAL 2026-08-22; source tests only, installed Core callback/detail path not run. |
+| `GHHOST-026` | Worker conclusions match the requested evidence scope; unique totals do not double-count shared items. | A partial connection check cannot masquerade as an all-connection result. | Worker tools, callback, chat/voice result | Exact-model old/proposed registered worker contract with synthetic connected tools; real aggregate and single-source user paths | PARTIAL 2026-10-15: six Grok 4.7 Low synthetic tool-loop controls passed; a real larger-context partial-count failure remains recorded. No runtime prompt change was justified. |
+| `GHHOST-027` | Exact native local model, route and authority remain consistent for Main and helpers. | Real file work and returned results use the selected local model. | Native harness, coordinator, worker, browser | Candidate `test_local_inference.py` plus real file/result/reload QA | PARTIAL 2026-10-14: both Main harnesses and Codex bee passed; Claude bee and installed parity not run. [Report](reports/2026-10-14-xperfect-local-models.md). |
+| `GHHOST-028` | Natural delegation is durable, truthful and keeps Main available. | Background requests create actual work; the user can keep chatting and receives the result. | Browser, native coordinator and helper | Natural request versus explicit coordinator control, state/artifact inspection, overlapping foreground request | FAIL 2026-10-14: natural request ran in Main with false background wording; explicit handoff passed; latency missed the goal. [Report](reports/2026-10-14-xperfect-local-models.md). |
+| `GHHOST-029` | Serving restrictions and offline evidence are scoped to the tested profile and process boundary. | Users can distinguish a queued request, unsupported interface, permission refusal and untested alternative. | Native server/CLI, tools, private runtime startup | Version/model slot control, native protocol check, egress and tool/startup checks | PARTIAL 2026-10-14: restrictions and blockers measured; single-runner fix and whole-app offline acceptance remain open. [Report](reports/2026-10-14-xperfect-local-models.md). |
 
 ## `GHHOST-001` - Core User Flow
 
@@ -623,3 +627,72 @@ rows before claiming a pass when the feature behavior changes.
 | `GHHOST-UC-023` | Delegate a typed brief that includes files and explicit constraints while private-chat/host-ID decoys exist. | `GHHOST-023` | installed GlassHive MCP path | projected instruction, project definition, serialized payload | Exact public-safe task context arrives; decoys and invented gates do not. | NOT RUN — cataloged 2026-08-22; source automation passed; installed MCP remains open. |
 | `GHHOST-UC-024` | Restart with a legacy or corrupted running row, then inspect the exact run before any retry starts. | `GHHOST-024` | installed GlassHive restart | run, attempt, lease, and first-start fields | The row is non-running with no synthesized invocation; first-start history is preserved. | NOT RUN — cataloged 2026-08-22; source automation passed; installed restart remains open. |
 | `GHHOST-UC-025` | Complete delegated work, interrupt and replay callback transport, reload work detail, and inspect its artifact. | `GHHOST-025` | installed Core callback and work-detail surfaces | callback ingress/outbox, work detail, artifact response, delivery ledger | Attempt identity and hashes match; HTTP acceptance is not user delivery; malformed or overflowed detail fails closed. | NOT RUN — cataloged 2026-08-22; source automation passed; installed Core callback/detail path remains open. |
+| `GHHOST-UC-027` | Ask local Main to inspect a file, dispatch a helper and reopen its result. | `GHHOST-027` | isolated native harness and browser | exact saved route, real artifact, result turn, expanded detail and reload | Correct result on the selected model with no cloud authority leak. | PARTIAL 2026-10-14: both Main harnesses and Codex bee exercised; Claude bee and installed parity not run. |
+| `GHHOST-UC-028` | Ask for a background inventory report naturally, then keep chatting. | `GHHOST-028` | isolated xPerfect browser | goal/run state, file destination, response timing, returned result | Real delegation and truthful available Main, not Main work mislabeled as a helper. | FAIL 2026-10-14: zero goals in natural request; explicit control passed separately; latency goal missed. |
+| `GHHOST-UC-029` | Use the chosen local model while another task generates, then exercise the intended offline file-tool path. | `GHHOST-029` | isolated native server, CLI/tools and runtime startup | actual slots, endpoint, covered processes and native error class | Serving and offline claims match the exact tested profile and enforcement boundary. | PARTIAL 2026-10-14: queue and protocol/policy blockers identified; fixes/full offline remain open. |
+
+
+## `GHHOST-026` - Evidence Scope And Aggregate Results
+
+- Requirement: [shared worker result scope](../../viventium_v0_4/xPerfect/docs/02_Architecture_and_Components.md#optional-direct-model-execution).
+- Use the configured model and effort with two authorized synthetic connections. Both remain discoverable through the existing capability inventory; no route or tool order is forced.
+- Cases:
+  1. Ask for an unqualified aggregate. Distinct lists of two and three items yield five, or an explicitly qualified partial result if a relevant source cannot be checked.
+  2. Ask for the first connection only. Return two without broadening the read to the second connection.
+  3. Ask for a unique total. Lists of two and three stable IDs with one shared ID yield four, not five.
+- Compare actual tool calls, result evidence and the final user-visible answer. A terminal run, discovered server or well-formed answer alone does not pass.
+- Record source, compiled body, rendered authority, model/effort and result hashes privately. Keep real account identities and item IDs out of public evidence.
+- Acceptance remains open until the affected real user surface reports full or explicitly qualified scope. Small synthetic controls do not prove large-context reliability or justify a prompt change when the existing source already passes.
+
+## `GHHOST-027` - Native Local Main And Worker Route
+
+- Requirement: [GlassHive provider and native harness boundary](../../docs/requirements_and_learnings/capabilities/glasshive.md#experimental-local-inference);
+  [experimental local integration](../../docs/research_and_future_plans/05_Local_Models_and_Native_Harnesses.md).
+- User outcome / surfaces: Main and a real helper use one exact configured local model through the
+  advertised native harness; browser results agree with actual files and durable state.
+- Preconditions: isolated candidate with local-route implementation, resident weights, exact model
+  and context, existing host authorization and private test state. Ordinary cloud defaults stay separate.
+- Steps: record versions/digest; ask each advertised Main harness to inspect a synthetic file;
+  explicitly dispatch a helper; verify its file, returned result, expanded browser Result and reload.
+  Change/unset global settings and verify saved worker routes cannot silently become cloud routes.
+- Expected result: correct artifact and result; exact model/endpoint persists; incompatible cloud
+  authority or settings fail closed. A model catalog entry or source-only test is not installed proof.
+- Automation: candidate `test_local_inference.py`, coordinator/store/reservation suites; native and
+  browser paths remain required. Candidate tests are not claimed in the installed component.
+- Last run: PARTIAL 2026-10-14, isolated development only. Both Main harnesses and Codex bee passed;
+  Claude bee/result parity and installed artifact remain not run. See the [report](reports/2026-10-14-xperfect-local-models.md).
+
+## `GHHOST-028` - Natural Delegation And Foreground Availability
+
+- Requirement: [model judgment and truthful states](../../docs/requirements_and_learnings/01_Key_Principles.md#ai-runtime-boundary),
+  [GlassHive result delivery](../../docs/requirements_and_learnings/capabilities/glasshive.md#result-delivery).
+- User outcome / surfaces: an ordinary background-work request creates durable helper work, Main
+  ends its dispatch reply promptly, another question is serviceable and the result returns visibly.
+- Preconditions: the exact local route and existing native execution policy are ready; use a fresh
+  conversation and synthetic inventory. Keep an explicit coordinator request as a separate control.
+- Steps: request a background report without naming tools; inspect actual goal/run state and target
+  file; ask a short question while work is running; inspect returned result/detail and reload.
+- Expected result: real durable delegation, correct file/result, truthful wording and the stated
+  foreground response goal. Tool-directed success cannot substitute for the natural request.
+- Forbidden result: Main does the work itself and calls it background work; a queued model request
+  is presented as an immediately available Main; hardcoded intent rules make one prompt pass.
+- Last run: FAIL 2026-10-14. Natural browser request created zero goals and used false background
+  wording. Explicit dispatch, correct file, result wake and reload passed separately; foreground
+  latency missed the sub-2s research target. See the [report](reports/2026-10-14-xperfect-local-models.md).
+
+## `GHHOST-029` - Serving Profile And Offline Boundary Truth
+
+- Requirement: [truthful failure classes and privacy](../../docs/requirements_and_learnings/01_Key_Principles.md#truthful-states),
+  [serving and configuration boundaries](../../docs/research_and_future_plans/05_Local_Models_and_Native_Harnesses.md).
+- User outcome / surfaces: a user can distinguish one-endpoint integration from concurrent model
+  generation, a failed native protocol from an untested engine, and local inference from a full offline app.
+- Preconditions: versioned model/server, independent test cache/state and an explicitly recorded
+  network policy. Do not alter shared services or weaken native permissions to obtain a pass.
+- Steps: verify actual slot count with a parallel setting; exercise the full native harness rather
+  than only raw chat; test overlapping requests; apply the intended egress policy and exercise both
+  inference and real file tools/startup; record which processes the policy covers.
+- Expected result: scoped results and exact blockers; no cloud fallback or claim that two model
+  copies are required by the architecture. Unrun models/engines remain not run.
+- Last run: PARTIAL 2026-10-14. The slot setting did not fix the selected Ollama/Qwen profile;
+  llama.cpp native compatibility failed; protected tools/startup failed. No completed single-runner
+  fix or whole-app offline proof. See the [report](reports/2026-10-14-xperfect-local-models.md).

@@ -560,6 +560,7 @@ final class HelperController: ObservableObject {
     // Keep the controller operation single-flight across that replacement window
     // so no second launch can restart the first one mid-boot.
     private var stackLaunchInProgress = false
+    private var stackLaunchTask: Task<Void, Never>?
     private var delayedQuitWatchTask: Task<Void, Never>?
     private var busyStateGraceDeadline: Date?
     private var activatedHelperLifecycle = false
@@ -1709,7 +1710,8 @@ final class HelperController: ObservableObject {
         }
         self.log("Starting stack (\(launchReason))")
         self.beginBusyState(.starting)
-        Task.detached(priority: .userInitiated) {
+        self.stackLaunchTask = Task.detached(priority: .userInitiated) {
+            guard !Task.isCancelled else { return }
             let runtime = RuntimeEnvParser().readRuntime(appSupportDir: config.appSupportDir)
             if await Self.stackOwnedByDifferentRepo(
                 runtime: runtime,
@@ -1717,7 +1719,9 @@ final class HelperController: ObservableObject {
                 expectedRepoRoot: config.repoRoot
             ) {
                 await MainActor.run {
-                    self.stackLaunchInProgress = false
+                guard !Task.isCancelled else { return }
+                    self.stackLaunchTask = nil
+                self.stackLaunchInProgress = false
                     self.log("Start blocked; another workspace owns the running stack")
                     self.stackState = .unavailable("Split Workspace")
                     let alert = NSAlert()
@@ -1736,22 +1740,27 @@ final class HelperController: ObservableObject {
             let startLogOffset = Self.fileSize(startLogURL)
             if let inFlightState = Self.inFlightStackState(
                 appSupportDir: config.appSupportDir,
-                runtimeProfile: runtime.runtimeProfile
+                repoRoot: config.repoRoot
             ) {
                 await MainActor.run {
-                    self.stackLaunchInProgress = false
+                guard !Task.isCancelled else { return }
+                    self.stackLaunchTask = nil
+                self.stackLaunchInProgress = false
                     self.stackState = inFlightState
                     self.log("Start deferred because another stack operation is already in progress (\(launchReason))")
                 }
                 return
             }
+            guard !Task.isCancelled else { return }
             guard let detachedStartPID = Self.submitDetachedStart(
                 repoRoot: config.repoRoot,
                 appSupportDir: config.appSupportDir,
                 logFileName: "helper-start.log"
             ) else {
                 await MainActor.run {
-                    self.stackLaunchInProgress = false
+                guard !Task.isCancelled else { return }
+                    self.stackLaunchTask = nil
+                self.stackLaunchInProgress = false
                     if supervisedLaunch {
                         self.recordSupervisedLaunchFailure()
                     }
@@ -1774,6 +1783,7 @@ final class HelperController: ObservableObject {
                 return
             }
             await MainActor.run {
+                guard !Task.isCancelled else { return }
                 self.log("CLI detached start submitted pid \(detachedStartPID) (\(launchReason))")
             }
             let started: Bool
@@ -1782,10 +1792,13 @@ final class HelperController: ObservableObject {
                 appSupportDir: config.appSupportDir,
                 timeoutSeconds: self.launchHealthTimeoutSeconds,
                 allowEarlyFailure: true,
+                requireManagedReadiness: supervisedLaunch,
                 startLogURL: startLogURL,
                 startLogOffset: startLogOffset
             )
             await MainActor.run {
+                guard !Task.isCancelled else { return }
+                self.stackLaunchTask = nil
                 self.stackLaunchInProgress = false
                 if supervisedLaunch {
                     if started {
@@ -1799,7 +1812,8 @@ final class HelperController: ObservableObject {
                     }
                 }
                 self.refreshState(force: true)
-                self.log(started ? "Stack healthy after \(launchReason)" : "Stack did not become healthy after \(launchReason)")
+                let readyLabel = supervisedLaunch ? "Stack healthy" : "User interface ready"
+                self.log(started ? "\(readyLabel) after \(launchReason)" : "Stack did not become healthy after \(launchReason)")
                 if started && openWhenReady {
                     self.openBrowser(path: openPath)
                 } else if openWhenReady && !started {
@@ -1980,7 +1994,7 @@ final class HelperController: ObservableObject {
             self.openURLString = preferredOpenURLString
             let inFlightState = Self.inFlightStackState(
                 appSupportDir: config.appSupportDir,
-                runtimeProfile: runtime.runtimeProfile
+                repoRoot: config.repoRoot
             )
             let busyStateGraceActive = (self.busyStateGraceDeadline ?? .distantPast) > Date()
             let shouldPreserveBusyState =
@@ -2214,18 +2228,19 @@ final class HelperController: ObservableObject {
         alert.runModal()
     }
 
-    private func refreshNativeDesiredState() {
-        guard let config, config.nativeRuntime == true,
-              let persisted = Self.loadConfig(), persisted.nativeRuntime == true,
+    private func refreshRuntimeDesiredState() {
+        guard let config, let persisted = Self.loadPersistedConfig(),
               persisted.repoRoot == config.repoRoot, persisted.appSupportDir == config.appSupportDir,
+              persisted.nativeRuntime == config.nativeRuntime,
               let supervision = persisted.runtimeSupervision,
               supervision.desiredState != self.runtimeSupervision.desiredState else { return }
         self.runtimeSupervision = supervision
         self.config = persisted
+        if supervision.desiredState == .stopped { self.cancelStackLaunch() }
     }
 
     private func reconcileRuntimeSupervision(trigger: String) {
-        self.refreshNativeDesiredState()
+        self.refreshRuntimeDesiredState()
         guard !self.runtimeSupervisionCheckInFlight,
               !self.stackLaunchInProgress,
               self.runtimeSupervision.desiredState == .running,
@@ -2260,7 +2275,7 @@ final class HelperController: ObservableObject {
                 return
             }
 
-            self.refreshNativeDesiredState()
+            self.refreshRuntimeDesiredState()
             guard self.runtimeSupervision.desiredState == .running else {
                 return
             }
@@ -2295,7 +2310,7 @@ final class HelperController: ObservableObject {
                   !Self.cliOperationStillRunning(appSupportDir: config.appSupportDir),
                   Self.inFlightStackState(
                       appSupportDir: config.appSupportDir,
-                      runtimeProfile: runtime.runtimeProfile
+                      repoRoot: config.repoRoot
                   ) == nil,
                   !self.stackState.actionBusy
             else {
@@ -2340,8 +2355,15 @@ final class HelperController: ObservableObject {
             self.runtimeSupervision.requestRunning()
         } else {
             self.runtimeSupervision.requestStopped()
+            self.cancelStackLaunch()
         }
         self.persistRuntimeSupervision()
+    }
+
+    private func cancelStackLaunch() {
+        self.stackLaunchTask?.cancel()
+        self.stackLaunchTask = nil
+        self.stackLaunchInProgress = false
     }
 
     private func recordSupervisedLaunchFailure() {
@@ -2373,15 +2395,15 @@ final class HelperController: ObservableObject {
         Self.appendHelperLog(self.helperLogURL, message)
     }
 
-    private static func loadConfig() -> HelperConfig? {
+    private static func loadPersistedConfig() -> HelperConfig? {
         let configURL = FileManager.default.homeDirectoryForCurrentUser
             .appendingPathComponent("Library/Application Support/Viventium/helper-config.json")
-        guard
-            let data = try? Data(contentsOf: configURL),
-            let decoded = try? JSONDecoder().decode(HelperConfig.self, from: data)
-        else {
-            return nil
-        }
+        guard let data = try? Data(contentsOf: configURL) else { return nil }
+        return try? JSONDecoder().decode(HelperConfig.self, from: data)
+    }
+
+    private static func loadConfig() -> HelperConfig? {
+        guard let decoded = self.loadPersistedConfig() else { return nil }
         let configured = self.applyActiveRuntimeCheckout(decoded)
         let healed = self.healProtectedFolderBinding(configured)
         if healed != decoded {
@@ -2864,14 +2886,21 @@ final class HelperController: ObservableObject {
         appSupportDir: String,
         timeoutSeconds: Int,
         allowEarlyFailure: Bool,
+        requireManagedReadiness: Bool = false,
         startLogURL: URL? = nil,
         startLogOffset: UInt64 = 0
     ) async -> Bool {
         let deadline = Date().addingTimeInterval(TimeInterval(timeoutSeconds))
         let earlyFailureDeadline = Date().addingTimeInterval(8)
         while Date() < deadline {
-            if await self.userFacingSurfaceHealthy(runtime: runtime) {
-                return true
+            guard !Task.isCancelled else { return false }
+            if requireManagedReadiness {
+                // Surviving old Web/API listeners cannot settle a supervised sidecar recovery.
+                if await self.stackHealthSnapshot(runtime: runtime, appSupportDir: appSupportDir).healthy {
+                    return !Task.isCancelled
+                }
+            } else if await self.userFacingSurfaceHealthy(runtime: runtime) {
+                return !Task.isCancelled
             }
             if allowEarlyFailure,
                Date() >= earlyFailureDeadline,
@@ -3163,7 +3192,7 @@ final class HelperController: ObservableObject {
 
     private nonisolated static func inFlightStackState(
         appSupportDir: String,
-        runtimeProfile: String
+        repoRoot: String
     ) -> StackState? {
         switch self.cliOperationCommand(appSupportDir: appSupportDir) {
         case "launch", "start":
@@ -3171,31 +3200,37 @@ final class HelperController: ObservableObject {
         case "stop":
             return .stopping
         default:
-            return self.detachedLaunchProcessGroupRunning(
-                appSupportDir: appSupportDir,
-                runtimeProfile: runtimeProfile
+            // A detached process group remains the serving owner's Stop boundary after startup.
+            // Only the existing live CLI/startup claim is an operation in progress.
+            return self.runtimeStartupClaimActive(
+                appSupportDir: appSupportDir, repoRoot: repoRoot
             ) ? .starting : nil
         }
     }
 
-    private nonisolated static func detachedLaunchProcessGroupRunning(
+    private nonisolated static func runtimeStartupClaimActive(
         appSupportDir: String,
-        runtimeProfile: String
+        repoRoot: String
     ) -> Bool {
-        let processGroupURL = URL(fileURLWithPath: appSupportDir, isDirectory: true)
-            .appendingPathComponent("state/runtime/\(runtimeProfile)", isDirectory: true)
-            .appendingPathComponent("detached-launch.pgid")
-        guard self.privateOwnedRegularFile(processGroupURL.path),
-              let raw = try? String(contentsOf: processGroupURL, encoding: .utf8),
-              let processGroup = Int32(
-                  raw.trimmingCharacters(in: .whitespacesAndNewlines)
-              ),
-              processGroup > 1,
-              processGroup != getpgrp()
-        else {
-            return false
-        }
-        return kill(-processGroup, 0) == 0 || errno == EPERM
+        let path = URL(fileURLWithPath: appSupportDir, isDirectory: true)
+            .appendingPathComponent("state/runtime/startup-in-progress").path
+        guard self.privateOwnedRegularFile(path),
+              let raw = try? String(contentsOfFile: path, encoding: .utf8)
+        else { return false }
+        let fields = raw.split(separator: "\n", omittingEmptySubsequences: false)
+        guard fields.count >= 3, let pid = Int32(fields[0]), pid > 1,
+              fields[1] == repoRoot, let createdAt = TimeInterval(fields[2])
+        else { return false }
+        let age = Date().timeIntervalSince1970 - createdAt
+        // Same thirty-minute freshness and exact repository/command contract as bin/viventium.
+        guard age >= 0, age <= 1800, kill(pid, 0) == 0 || errno == EPERM else { return false }
+        let process = self.runSystemProcess(
+            executableURL: URL(fileURLWithPath: "/bin/ps"),
+            arguments: ["-p", String(pid), "-o", "uid=,command="], timeoutSeconds: 2
+        )
+        let identity = process.stdout.split(maxSplits: 1, whereSeparator: { $0.isWhitespace })
+        return process.status == 0 && identity.count == 2 &&
+            UInt32(identity[0]) == getuid() && identity[1].contains("\(repoRoot)/bin/viventium")
     }
 
     private nonisolated static func defaultCLIPath(

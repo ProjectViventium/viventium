@@ -396,6 +396,53 @@ class TestCortexFollowupScheduler(unittest.IsolatedAsyncioTestCase):
         scheduler._maintain_glasshive_speech_permit.assert_awaited_once()
         await scheduler.close()
 
+    async def test_exact_worker_claim_speaks_retained_controls_with_unchanged_display(self):
+        for edge in ("", "\u0085"):
+            with self.subTest(edge=ascii(edge)):
+                await self._assert_exact_worker_speech_edge(edge)
+
+    async def _assert_exact_worker_speech_edge(self, edge):
+        session = _DummySession()
+        session.options.tts_text_transforms = ["filter_emoji"]
+        session.current_agent = SimpleNamespace(llm=SimpleNamespace(_voice_accepts_inline_controls=True))
+        scheduler = self._build_scheduler(session=session)
+        claim, text = self._install_pending_worker_delivery(scheduler)
+        text = edge + text + edge
+        claim.return_value["text"] = text
+        claim.return_value["workerCompletionPresentation"]["responseDigest"] = (
+            "sha256:" + hashlib.sha256(text.encode()).hexdigest())
+        raw = "[chuckle] " + text
+        disposition = {"version": 1, "audio": "eligible", "required": True,
+                       "valid": True, "source": "model"}
+        claim.return_value["deliveryControls"] = {
+            "sourceTextSha256": hashlib.sha256(text.encode()).hexdigest(),
+            "audioContent": [{"type": "text", "text": raw, "deliveryDispositionRanges": [
+                {"start": 0, "end": len(raw), "disposition": disposition}]}]}
+        scheduler.set_task_stream_connected(True)
+        llm = self._callwide_llm(scheduler)
+        rendered = []
+
+        async def tts_node(agent, source, settings):
+            async for value in source:
+                rendered.append(value)
+            yield object()
+
+        with mock.patch.object(worker.aiohttp, "ClientSession", _FakeClientSession), \
+             mock.patch.object(worker.Agent.default, "tts_node", tts_node):
+            event = {**self._callwide_event(), **self._pending_worker_delivery_event(type="snapshot"),
+                     "eventId": "expressive-worker-source", "sequence": 5}
+            self.assertTrue(await llm._relay_task_event_once(event))
+            await asyncio.gather(*tuple(scheduler._cortex_wake_tasks))
+            self.assertEqual([call["text"] for call in session.say_calls],
+                             [worker.sanitize_voice_delta_text(text)])
+            async for _ in session.say_calls[0]["audio"]:
+                pass
+        self.assertEqual("".join(rendered), worker.sanitize_voice_followup_text(
+            raw, allow_voice_controls=True))
+        scheduler._authorize_glasshive_delivery.assert_awaited_once()
+        scheduler._maintain_glasshive_speech_permit.assert_awaited_once()
+        await scheduler.close()
+
     async def test_pending_native_question_uses_exact_delivery_wake_once_with_actual_question(self):
         session = _DummySession(); scheduler = self._build_scheduler(session=session)
         claim, _ = self._install_pending_worker_delivery(scheduler)
@@ -859,6 +906,59 @@ class TestCortexFollowupScheduler(unittest.IsolatedAsyncioTestCase):
         self.assertEqual([call["text"] for call in session.say_calls],
                          ["Main-authored completed report."])
         await scheduler.close()
+
+    async def test_callback_preserves_controls_only_for_capable_tts_and_keeps_display_clean(self) -> None:
+        for capable in (True, False):
+            with self.subTest(capable=capable):
+                session = _DummySession()
+                session.options.tts_text_transforms = ["filter_emoji"]
+                session.current_agent = SimpleNamespace(llm=SimpleNamespace(
+                    _voice_accepts_inline_controls=capable))
+                scheduler = self._build_scheduler(session=session)
+                text = "Written only. A useful result."
+                raw = "[chuckle] A useful result."
+                rendered = []
+
+                async def tts_node(agent, source, settings):
+                    async for value in source:
+                        rendered.append(value)
+                    yield object()
+
+                with mock.patch.object(worker.Agent.default, "tts_node", tts_node):
+                    queued, _, _ = scheduler._start_speech(text, scheduler._seq, audio_text=raw)
+                    self.assertTrue(queued)
+                    call = session.say_calls[-1]
+                    self.assertEqual(call["text"], text)
+                    async for _ in call["audio"]:
+                        pass
+                self.assertEqual("".join(rendered), raw if capable else "A useful result.")
+                self.assertNotIn("Written only", "".join(rendered))
+                self.assertFalse(scheduler._start_speech(text, scheduler._seq, audio_text="")[0])
+                self.assertFalse(scheduler._start_speech(text, scheduler._seq - 1, audio_text=raw)[0])
+                await scheduler.close()
+
+    def test_callback_audio_companion_keeps_only_exact_eligible_ranges(self) -> None:
+        text = "Written 🧠. Spoken."
+        raw = "Written 🧠. [chuckle] Spoken."
+        split = len("Written 🧠. ".encode("utf-16-le")) // 2
+        end = len(raw.encode("utf-16-le")) // 2
+        disposition = {"version": 1, "audio": "eligible", "required": True,
+                       "valid": True, "source": "model"}
+        controls = {"sourceTextSha256": hashlib.sha256(text.encode()).hexdigest(), "audioContent": [
+            {"type": "text", "text": raw, "deliveryDispositionRanges": [
+                {"start": 0, "end": split, "disposition": {**disposition, "audio": "skip"}},
+                {"start": split, "end": end, "disposition": disposition}]}]}
+        self.assertEqual(worker._followup_audio_text(text, controls), "[chuckle] Spoken.")
+        self.assertEqual(worker._followup_audio_text(text + " changed", controls), "")
+        self.assertIsNone(worker._followup_audio_text(text, None))
+        controls["audioContent"][0]["deliveryDispositionRanges"][1]["disposition"] = {**disposition, "audio": "skip"}
+        with mock.patch("librechat_llm.logger.info") as log:
+            self.assertEqual(worker._followup_audio_text(text, controls), "")
+            log.assert_called_once_with("[VoiceAudioBinding][gateway] state=bound audio=%s", "skip")
+        controls["audioContent"][0]["deliveryDispositionRanges"][1]["end"] -= 1
+        with mock.patch("librechat_llm.logger.info") as log:
+            self.assertEqual(worker._followup_audio_text(text, controls), "")
+            log.assert_called_once_with("[VoiceAudioBinding][gateway] state=binding_silenced")
 
     async def test_file_followup_keeps_display_link_and_exact_capped_speech(self) -> None:
         session = _DummySession()

@@ -192,7 +192,7 @@ class TestPyWhisperCppRecognition(unittest.TestCase):
         self.assertEqual(kwargs["temperature"], 0.0)
         self.assertEqual(kwargs["audio_ctx"], 0)
         self.assertEqual(kwargs["no_context"], True)
-        self.assertEqual(kwargs["single_segment"], True)
+        self.assertEqual(kwargs["single_segment"], False)
 
     def test_prewarm_inference_can_be_disabled(self) -> None:
         fake_model = SimpleNamespace(transcribe=lambda _media, **_kwargs: [])
@@ -246,7 +246,7 @@ class TestPyWhisperCppRecognition(unittest.TestCase):
         self.assertEqual(fake_model.kwargs["temperature"], 0.0)
         self.assertEqual(fake_model.kwargs["audio_ctx"], 0)
         self.assertEqual(fake_model.kwargs["no_context"], True)
-        self.assertEqual(fake_model.kwargs["single_segment"], True)
+        self.assertEqual(fake_model.kwargs["single_segment"], False)
 
     # === VIVENTIUM START ===
     # Native text is authored speech; VAD, not a phrase list, owns speech presence.
@@ -504,6 +504,47 @@ class TestPyWhisperCppRecognition(unittest.TestCase):
         self.assertIn("transcribe_resume_ms=", joined)
         self.assertIn("native_segment_count=1", joined)
         self.assertNotIn("Secret words", joined)
+
+
+
+class TestNativeWhisperSegmentPolicy(unittest.TestCase):
+    def test_native_multisegment_default_preserves_all_audio_durations(self):
+        with patch.dict(os.environ, {}, clear=True):
+            for duration in (None, 0.25, 4.8, 22.2, 30.6, 61.0):
+                with self.subTest(duration=duration):
+                    kwargs = pywhispercpp_provider._transcribe_kwargs("en", audio_duration_s=duration)
+                    self.assertFalse(kwargs["single_segment"])
+                    self.assertEqual(kwargs["audio_ctx"], 0)
+                    self.assertTrue(kwargs["no_context"])
+
+    def test_explicit_segment_override_remains_configurable(self):
+        for configured, expected in (("true", True), ("1", True), ("false", False), ("0", False), ("", False)):
+            with self.subTest(configured=configured), patch.dict(os.environ, {"VIVENTIUM_STT_SINGLE_SEGMENT": configured}, clear=True):
+                self.assertEqual(pywhispercpp_provider._transcribe_kwargs("en")["single_segment"], expected)
+
+    def test_recognition_joins_every_native_segment_without_truncating_audio(self):
+        captured = {}
+        def transcribe(audio, **kwargs):
+            captured.update(samples=audio.size, parameters=kwargs)
+            return [SimpleNamespace(text="Earlier complete request."), SimpleNamespace(text="Final complete question?")]
+        with patch.object(pywhispercpp_provider, "_get_model", return_value=SimpleNamespace(transcribe=transcribe)), patch.dict(os.environ, {}, clear=True):
+            stt = pywhispercpp_provider.PyWhisperCppSTT(language="en")
+            frames = AudioFrame(data=b"\x00\x00" * (16000 * 31), sample_rate=16000, num_channels=1, samples_per_channel=16000 * 31)
+            event = asyncio.run(stt._recognize_impl(frames))
+        self.assertEqual(captured["samples"], 16000 * 31)
+        self.assertFalse(captured["parameters"]["single_segment"])
+        self.assertEqual(event.alternatives[0].text, "Earlier complete request. Final complete question?")
+
+    def test_prewarm_respects_explicit_segment_override(self):
+        calls = []
+        fake = SimpleNamespace(transcribe=lambda audio, **kwargs: calls.append(kwargs) or [])
+        try:
+            with patch.object(pywhispercpp_provider, "_get_model", return_value=fake), patch.dict(os.environ, {"VIVENTIUM_STT_SINGLE_SEGMENT": "true"}, clear=True):
+                pywhispercpp_provider._MODEL_WARMUP_DONE.clear()
+                pywhispercpp_provider.prewarm_model("large-v3-turbo")
+            self.assertTrue(calls[0]["single_segment"])
+        finally:
+            pywhispercpp_provider._MODEL_WARMUP_DONE.clear()
 
 
 if __name__ == "__main__":

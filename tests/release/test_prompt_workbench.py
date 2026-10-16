@@ -8809,3 +8809,105 @@ def test_native_queen_input_schema_is_visible_as_an_exact_public_workbench_owner
         "source": "native.current_work_input_contract", "path": row["path"],
         "selector": "missingSyntheticAccessor",
     }) is None
+
+def test_schedules_panel_new_clears_all_saved_schedule_consumers() -> None:
+    """Execute the real React panel: New must detach every saved-object consumer."""
+    dependencies = WORKBENCH_ROOT / "node_modules"
+    jsdom = REPO_ROOT / "viventium_v0_4/LibreChat/node_modules/jsdom"
+    if not (dependencies / "typescript").exists() or not jsdom.exists():
+        pytest.skip("Workbench TypeScript and existing Core DOM test dependencies are not installed")
+    script = r"""
+const fs = require('fs');
+const vm = require('vm');
+const assert = require('assert/strict');
+const { createRequire } = require('module');
+const ownedRequire = createRequire(process.cwd() + '/package.json');
+const { JSDOM } = require(process.argv[2]);
+const dom = new JSDOM('<div id="root"></div>', { url: 'http://localhost/' });
+global.window = dom.window;
+global.document = dom.window.document;
+Object.defineProperty(global, 'navigator', { value: dom.window.navigator, configurable: true });
+global.IS_REACT_ACT_ENVIRONMENT = true;
+const React = ownedRequire('react');
+const { createRoot } = ownedRequire('react-dom/client');
+const { QueryClient, QueryClientProvider } = ownedRequire('@tanstack/react-query');
+const ts = ownedRequire('typescript');
+const source = fs.readFileSync(process.argv[1], 'utf8');
+const compiled = ts.transpileModule(source, {
+  compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2020, jsx: ts.JsxEmit.ReactJSX },
+});
+const saved = (id) => ({ id, title: 'Saved ' + id, promptText: 'Existing request.',
+  active: false, sourceKind: 'workbench_definition', sourceLabel: 'Saved source ' + id,
+  executor: 'viventium_agent', channel: ['librechat', 'telegram'],
+  schedule: { type: 'daily', time: '10:00', timezone: 'UTC' },
+  memoryWriteMode: 'off', recentRuns: [{ runId: 'old-run-' + id, status: 'completed' }] });
+const schedules = [saved('first'), saved('second')];
+const calls = [];
+const api = new Proxy({
+  getAuthStatus: async () => ({ admin: true }),
+  getScheduledPrompts: async () => ({ scheduledPrompts: schedules }),
+  getVariables: async () => ({ variables: [], functions: [] }),
+  getNightlyScheduledPromptTemplate: async () => ({ title: 'New draft', promptText: 'New request.' }),
+  renderVariables: async () => ({ variableSnapshot: { items: [] } }),
+  getScheduledPromptMemoryProposals: async () => ({ proposals: [] }),
+  getScheduledPromptPeripheryArtifacts: async () => ({ artifacts: [], invalidArtifacts: [], index: { artifactCount: 0, qualityCounts: {} } }),
+  getScheduledPromptPeripherySnapshot: async () => ({ snapshot: { status: 'ready', counts: {}, missingPrerequisites: [] } }),
+}, { get(target, key) { return target[key] ?? (async (...args) => { calls.push([key, args]); return {}; }); } });
+const loaded = { exports: {} };
+vm.runInNewContext(compiled.outputText, { module: loaded, exports: loaded.exports,
+  require: (id) => id === '../api' ? api : ownedRequire(id),
+  window: dom.window, document: dom.window.document, Intl, Date, console,
+});
+const Panel = loaded.exports.ScheduledPromptsPanel;
+(async () => {
+  for (const objectMode of [true, false]) {
+    const container = document.createElement('div'); document.body.append(container);
+    const root = createRoot(container);
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: 0 } } });
+    const selection = [];
+    const props = { onLog: () => {}, objectMode, selectedScheduledPromptId: 'first',
+      scheduledPrompts: schedules, onSelectScheduledPrompt: (id) => selection.push(id) };
+    const render = async (next) => {
+      await React.act(async () => { root.render(React.createElement(QueryClientProvider,
+        { client }, React.createElement(Panel, next))); await new Promise(resolve => setTimeout(resolve, 5)); });
+    };
+    const assertDetached = () => {
+      assert.ok(!container.querySelector('.schedule-execution-card'), 'schedule-execution-card must detach from the saved row');
+      assert.ok(!container.querySelector('.schedule-source-strip'), 'schedule-source-strip must detach from the saved row');
+      assert.ok(!container.querySelector('.run-row'), 'run-row must detach from the saved row');
+      const run = [...container.querySelectorAll('button')].find(button => /^Run (GlassHive|Viventium Main)$/.test(button.textContent.trim()));
+      assert.ok(run.disabled, 'An unsaved draft must not run the previously selected schedule');
+      assert.ok(!container.textContent.includes('old-run-first'));
+      for (const query of client.getQueryCache().getAll()) {
+        if (['scheduledPromptMemoryProposals', 'scheduledPromptPeripheryArtifacts', 'scheduledPromptPeripherySnapshot'].includes(query.queryKey[0]))
+          assert.equal(query.isActive(), false, 'New must disable saved-object background queries');
+      }
+    };
+    await render(props); await render(props);
+    assert.ok(container.querySelector('.schedule-source-strip').textContent.includes('Saved source first'));
+    assert.ok(container.querySelector('.run-row'));
+    const create = [...container.querySelectorAll('button')].find(button => button.textContent.trim() === 'New');
+    await React.act(async () => { create.click(); });
+    assertDetached();
+    assert.equal(selection.at(-1), '', 'New must clear the parent selection as well');
+    await render(props); // A stale parent prop and live-query refresh must not revive the old row.
+    assertDetached();
+    await render({ ...props, selectedScheduledPromptId: 'second' });
+    assert.ok(container.querySelector('.schedule-source-strip').textContent.includes('Saved source second'));
+    assert.ok(container.querySelector('.run-row').textContent.includes('old-run-second'));
+    await render({ ...props, selectedScheduledPromptId: 'second', newRequestNonce: 1 });
+    assertDetached();
+    await React.act(async () => root.unmount()); client.clear(); container.remove();
+  }
+  assert.deepEqual(calls, [], 'New must not execute, delete, or mutate a saved schedule');
+  dom.window.close();
+})().catch(error => { console.error(error); process.exit(1); });
+"""
+    result = subprocess.run(
+        ["node", "-e", script, str(WORKBENCH_SRC / "components/ScheduledPromptsPanel.tsx"), str(jsdom)],
+        cwd=WORKBENCH_ROOT,
+        text=True,
+        capture_output=True,
+        timeout=30,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr

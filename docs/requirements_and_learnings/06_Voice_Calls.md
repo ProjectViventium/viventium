@@ -9,6 +9,13 @@ Voice calls reuse the standard Agents pipeline while streaming audio through the
 gateway. The core requirement is parity with text chat: same agent, same permissions, same
 background-cortex behavior.
 
+Worker-result follow-ups reuse the same authorized active Call read for its selected STT/TTS
+route and provider-specific voice capabilities. The existing Current Call context keeps the requested
+route separate from actual playback: without gateway playback evidence, `actualPlaybackRoute`
+remains null. Missing or ended Calls do not invent provider facts. The gateway remains the owner of
+fallback selection and supported-control sanitization. This metadata reuse adds no extra Call lookup
+or provider request.
+
 ## Core Requirements
 - Call sessions must survive process restarts and multi-instance deployments.
 - Voice gateway authentication must rely on a shared secret plus call-session identity.
@@ -36,8 +43,10 @@ background-cortex behavior.
   when callback prose remains internal. A completed, failed, cancelled or interrupted run must
   not stay running or cancellable in call task snapshots. Its WorkRef may remain queued for a
   sibling run; terminal run state does not close that mission or authorize callback speech.
-  Lifecycle-only, busy conversation, moved conversation and deleted-origin acceptance paths must
-  apply the same exact run projection before returning their presentation receipt. Existing
+  Lifecycle-only, busy conversation, moved conversation, deleted-origin and persisted callback
+  replay acceptance paths must apply the same exact run projection before returning their
+  presentation receipt. Replaying terminal evidence repairs an unfinished task projection without
+  creating a second task or repeating its terminal event. Existing
   ownership, durable terminal effect and cancellation/suppression guards remain authoritative.
 - One Main-authored aggregate reply settles delivery status for every exact included Worker result.
   Voice uses its signed presentation bindings; shared external delivery also retains the same
@@ -104,6 +113,9 @@ background-cortex behavior.
   Main decides what work serves the user's goal using the existing prompts and capabilities. Call
   mode must not impose a blanket foreground-tool exclusion. Foreground tools and consultants stay
   interruptible/cancellable; no result is claimed before its authoritative evidence returns.
+  When foreground work requires waiting, Main can give a brief natural spoken progress update
+  when useful, honoring requests for silence or strict output. It must not claim an action or
+  result before its receipt or evidence.
   Nonblocking background work can surface later value through the existing Phase-B path.
 - Provider-bound Anthropic histories must drop malformed thinking blocks before execution.
 - Voice input mode must be propagated to main agents and background cortices.
@@ -485,7 +497,7 @@ background-cortex behavior.
 - The live TTS boundary must receive speech-safe phrase chunks, not raw model scaffolding. After
   phrase buffering and before forwarding text to LiveKit TTS, the gateway must deterministically
   strip or convert non-speech artifacts such as source/reference labels, citation remnants,
-  Markdown links/images, raw URLs, bare domains, email addresses, code fences, headings, list/table
+  Markdown links/images, recognized full URLs, email addresses, code fences, headings, list/table
   scaffolding, unknown angle tags, and stray spaces before punctuation. This cleanup must preserve
   leading whitespace needed for provider continuation and must not silently change the selected
   model or provider.
@@ -499,9 +511,16 @@ background-cortex behavior.
   provider continuation guards retain only the last nonspace character and trailing whitespace
   needed for numeric and punctuation boundaries. They must preserve exact authored words and
   supported emotion controls without copying the whole completed utterance for every chunk.
-- Email-address replacement must remain natural on both speech and linked-chat persistence paths:
-  an input such as `Email qa@example.com` becomes `Email address available`, never the adjacent
-  duplicate `Email email available`.
+- Requested URLs and email addresses supported by the user input or verified results belong in the
+  current written reply without a second offer to send them. Call transcripts, linked-chat text,
+  content parts and reload preserve their exact bytes. The speech projection replaces recognized
+  full URLs and email addresses with short availability cues; Main avoids adding a duplicate cue.
+  Bare domain/path text keeps the existing literal behavior rather than using intent inference.
+- Email replacement remains natural on speech only: `Email qa@example.test` becomes
+  `Email address available`, without repeating the word `email`. Display and persistence retain
+  `Email qa@example.test`. The existing display buffer preserves authored reference/punctuation
+  bytes while speech keeps its default boundary repairs. Background Voice follow-ups reuse the
+  canonical Main Voice rules; an explicit follow-up-rule override keeps its existing precedence.
 - Provider voice controls are capability-scoped at the TTS boundary. Routes whose capability
   metadata declares inline voice-control support may keep known provider controls for synthesis;
   routes without that capability, including OpenAI/ElevenLabs plain TTS and fallbacks, must strip
@@ -597,6 +616,14 @@ background-cortex behavior.
   call-session and conversation identifiers kept out of public QA artifacts. Runtime logs must use
   non-deprecated LiveKit surfaces for `llm_node_ttft`, `tts_node_ttfb`, and `e2e_latency`, plus
   provider `tts_metrics` first-audio timing when the TTS implementation emits it.
+- An accepted call Start warms the existing model catalog in the background while RTC connects.
+  The dispatch claim must be accepted, the call must not be Listen-Only, and the catalog uses the
+  authenticated call owner's current identity and role. Opening settings, rejected or repeated
+  claims, and expired calls do not start discovery. The claim response does not wait for this work;
+  a warming failure is logged without failing the call. Existing cache hits, configured model
+  alternatives, discovery validation, and default-then-custom publication order remain unchanged.
+  This overlaps cold setup when connection time permits; it does not promise that discovery has
+  completed before immediate speech or that simultaneous cold requests share one in-flight fetch.
 - Existing opt-in Core latency logging retains its INFO stages and adds structured numeric DEBUG
   records for declared stage, source, request identity, and finite elapsed clocks. The client retains
   its existing hashed request identity. These records contain no prompts or message content and
@@ -620,8 +647,12 @@ background-cortex behavior.
 - Stream aggregation and reconnect retain delivery ranges against the same public-text bytes.
   Apply display cleanup after deciding which ranges may speak. Removing expressive controls before
   that decision must not move a silent range onto audible words. Saved display text remains clean;
-  ranges that no longer match its bytes are not retained as valid offsets. Complete and incomplete
-  matching backtick spans protect literal text from provider-control cleanup.
+  ranges that no longer match its bytes are not retained as valid offsets. Closed inline-code spans
+  and complete or unfinished fenced-code blocks protect literal text from provider-control cleanup.
+  An unmatched single backtick remains literal prose.
+  Native follow-up ranges use the same display projection as the persisted reply. Removing an
+  expressive control must preserve its valid audio choice; actual text or range mismatches still
+  fail closed.
 - The Cartesia public request contract is Sonic-3-only: `Cartesia-Version=2026-03-01`
   and `model_id=sonic-3`. Voice selection is by named persona in the UI, backed by Cartesia
   voice IDs: Megan (`e8e5fffb-252c-436d-b842-8879b84445b6`) and Lyra
@@ -723,6 +754,22 @@ background-cortex behavior.
   Pending or prepared native state is not failed generation; its tool evidence remains unread until
   the exact source-bound Main answer is terminal and published. This does not require delaying
   Phase B sampling until Main's audio finishes.
+- Saved Main-authored worker and Cortex follow-ups retain the same source-bound `audioContent`
+  and `sourceTextSha256` delivery fields used by audio delivery. Canonical display text remains
+  clean. The retained speech text keeps supported expressive controls and the model's exact
+  eligible/skip ranges; it is not a second answer. Core validates its projection against the
+  exact saved display text and ranges before the existing authenticated delivery returns it.
+  Missing or invalid optional speech data falls back to the exact validated canonical audio
+  ranges. Canonical skipped or malformed ranges remain silent; emotion loss never expands
+  audio eligibility. Legacy follow-ups without ranges keep their previous behavior.
+- Delivery hashes use the exact text normalized and returned by Core. The gateway must not trim
+  it again before checking the binding or presentation digest: Unicode whitespace differs
+  between runtimes. Text-free `VoiceAudioBinding` logs distinguish `bound`, `canonical_fallback`,
+  `binding_silenced` and `legacy`; a valid model skip remains distinct from a failed binding.
+- Follow-up synthesis uses the selected TTS route's existing inline-control capability and
+  fallback filter, as foreground speech does. Capable TTS receives supported emotion controls;
+  plain-text TTS receives clean speech. The callback's canonical digest, call identity, permits,
+  interruption rules and completion receipt still bind the saved display presentation.
 - Before returning a persisted Cortex follow-up for speech, the existing authenticated Cortex fetch
   seals its exact canonical text hash, child revision, claim generation, graph-result receipt and
   presentation lease. Owner, conversation, parent, call, task and logical turn must match. The lease
@@ -798,8 +845,12 @@ background-cortex behavior.
     float32 waveform returned the request once with context `0`. Received PCM conversion was
     byte-exact and waveform correlation showed one ordered request. The finite comparison traded
     about `0.15s` of decode time for correct text; speed must not override recognition quality.
-    The model selection stays configured. `single_segment` and `no_context` remain the defaults
-    for independent LiveKit final chunks; their existing env flags still allow long-form testing.
+    The model selection stays configured. `no_context=true` prevents a prior transcript from
+    becoming an implicit decoder prompt. `single_segment=false` restores native multi-segment
+    decoding: forcing one output segment lost the final question in a retained long utterance,
+    while the same audio and model preserved it with native decoding. The existing VAD adapter
+    joins every native segment into one final transcript. Explicit environment overrides remain
+    available; do not shorten valid user speech or add a custom splitter to hide decoder loss.
   - Each transcription must explicitly set `audio_ctx=0` to restore native default, even after
     a prior reduced-context call. The cached decoder retains omitted settings between calls.
     Local STT latency detail separates executor queue wait, native transcription, and event-loop
@@ -1316,24 +1367,31 @@ without a concrete conversation ID wait for a canonical result before showing th
 
 ### Native worker questions in the Main call
 
-An exact pending native worker question returns through Main's existing durable call presenter.
-It uses the same delivery wake, task ownership, permit, speech trace, interruption and once-only
-acknowledgement as other durable follow-ups. The question survives Main finishing or moving to a
-new turn. Speech contains the actual question, not a waiting-status notice. Current native request
-identity and expiry are checked before speech and renewal. Actual choices and consent stay in the
-existing owner-input control; speech presentation cannot authorize the requested operation.
-Within the existing 8,000-character presentation limit, questions also speak their offered
-choices. Permissions reuse the native model's validated action description when the declared
-tool contract supplies it, followed by the actual consent choices. The exact operation title
-stays available in the owner form and the call's closed **Action details** disclosure; it is
-not added to speech. This optional display detail follows the same current native permission
-identity through the existing task and gateway contracts. Legacy requests without it still
-work. If adding choices would exceed the presentation limit, retain the original valid prompt
-and complete owner form rather than reject the request or truncate its response choices.
-The underlying worker task remains `needs_input` while its separate question presentation completes.
-A still-current legacy question is repaired in its existing canonical message and delivery before
-speaking; answered, replaced or expired requests are suppressed. Real configured-provider input
-and audible acceptance must be reported separately from isolated native permission IPC evidence.
+An exact pending native worker question or permission offer is evidence for Main's existing
+adjudication lane. Main relates it to the accepted goal and current conversation, then asks the
+necessary human question in natural words. It uses the same durable delivery wake, task owner,
+permit, speech trace, interruption and acknowledgement as other Main-authored follow-ups.
+Raw operation names and native option lists stay in logs and the existing task/detail controls;
+they are not copied into speech. Model-owned voice disposition still controls the authored reply.
+
+The current native offer is read and matched to its exact run/request before admission, including
+when Main continues after the origin conversation was deleted. Existing call ownership and native
+controls are retained; deletion does not grant authority to move them to another call. Existing
+latest-callback and current-run fences protect synthesis and delivery. Exact question keys,
+choices, consent kinds and native acknowledgement remain with the existing owner-input control.
+Main's public question grants no permission. An owner response still passes the original human
+input, request, run, attempt, session and expiry checks. The worker remains `needs_input` until
+that native owner accepts a valid response. Replaced, expired or stopped requests cannot admit a
+new question. Old raw needs-input outbox rows cannot be newly claimed; already-issued delivery
+receipts keep their existing unknown-outcome and acknowledgement rules.
+
+The question remains deliverable after Main finishes or moves to another turn. The existing
+closed **Action details** disclosure retains the exact operation title and complete owner form
+when available; legacy requests without that optional summary remain usable. The existing
+8,000-character presentation limit does not justify truncating a question or its owner form.
+
+Real configured-model wording, audible acceptance and the native owner response must be measured
+separately from deterministic protocol and routing tests.
 
 ### Native clarification questions use the same owner input path
 
@@ -1393,6 +1451,196 @@ natural permission. Direct owner forms retain their existing native options and 
 The same typed tool and native validation serve Web, Telegram and Voice; this is not a second
 voice orchestrator. Deterministic source tests, exact-model selection checks and real audible
 acceptance are separate evidence gates.
+
+
+## Optional preparation for fast conversation
+
+The optional flow is **prebuild-context-for-fast-conversation**.
+
+`VOICE-PREP-001`: `voice.prebuild_context.enabled` is disabled by default. When enabled, actual Call start (the existing dispatch claim) injects one registered `voice.prebuild_context` prompt through the existing scheduler Main gateway in the same owned conversation. Opening Voice settings does not invoke a model. The default Main and its configured fallback retain ownership, tools, memory, Feelings, cortices, files, approval and native worker capabilities. Preparation is not a second Queen, manager, recurring schedule or tool allowlist.
+
+The gathered report remains visible and durable in linked chat. Its configured delivery channel is LibreChat only, including its delegated worker callbacks and cortex follow-ups. Its prompt uses the existing model-owned `voice=skip` choice when available. Structured chat-only delivery owns silence before streaming starts; the preparation prompt adds no control marker to the visible report. Existing unrelated workers keep their own normal delivery bindings. Existing Call activity shows **Waking up - gathering context.** and actual tool/source progress.
+
+The existing Call row binds the exact preparation stream, registered prompt, once-only dispatch key and absolute deadline. That deadline begins at actual Start, not when the settings page opens. Existing new-conversation admission supplies the canonical conversation ID, which is atomically claimed for the Call. Early Voice generation waits for the preparation's persisted result or bounded degradation after its exact authoring authority is released, then selects the existing per-run Voice endpoint. Failure or deadline remains visible in the existing activity task; normal Voice continues with available current/partial context, without forcing a new call. A disconnected input request abandons only its waiter; it cannot later admit a Voice turn. A still-stopping preparation returns a typed retryable state: the gateway retains and retries the exact same source receipt inside its existing admission owner. Only the call's admission budget includes its configured preparation allowance and bounded stop acknowledgement; ordinary response streaming keeps its normal timeout. The Main model configuration is never toggled. Listen-Only starts no preparation generation; End, exact Stop or a deadline uses the existing job cancellation owner and does not archive the user's chat or cancel unrelated accepted work.
+
+Example configuration:
+
+```yaml
+voice:
+  prebuild_context:
+    enabled: true
+    prompt_id: voice.prebuild_context
+    timeout_s: 120
+```
+
+The prompt is discoverable/versioned in Prompt Workbench and customizable through existing prompt ownership. Raw owner prompts and source evidence remain private. GPT-6.1 Sol/high and configured Opus-5.5/high fallback are the expected normal Main defaults; the agent's saved route remains authoritative. Subsequent voice turns use its configured Voice model and effort. Other supported configurations remain selectable.
+
+Same Core conversation does not imply the same native provider session: system/scheduler and external-user/interactive lanes are distinct, and a changed native model may require a new binding. Preparation does not prove another provider's process or inference cache is warm. Measure call click-to-ready startup cost, early input waiting, first Voice turn and subsequent warm turns separately. Sub-two-second response and output quality require actual configured-model/audio evidence; enabling this option is not such proof. Local installed acceptance has demonstrated a visible, silent report, an early question retained until preparation completed, and a subsequent Voice answer from the same conversation. These bounded cases are not full always-on or recovery acceptance.
+
+
+### Configurable Queen speed
+
+The existing Main, Voice and fallback endpoint controls may expose a **Speed** selector when the provider/model capability metadata declares supported tiers. GPT-6.1 Sol may explicitly use Low effort and Fast (`priority`) for a Queen experiment; omitted tier retains the user's/native default. Main/high, Voice Grok/high and configured Anthropic fallback/high defaults remain unchanged. Supported alternatives remain legal, and OpenCode is unchanged/backlogged.
+
+A priority request or native acceptance echo does not prove the served tier. Record **NOT OBSERVED** unless the actual protocol exposes serving evidence. Benchmark exact configured endpoint/model/effort/tier, first and warm turns, EOU-to-first received/playable speech, context/tool/Feeling parity and useful output quality. The preparation option and speed selection are independent: use either or both without global route rewrites or a second Main.
+
+
+### Measured local experiment findings
+
+The current experiment measures physical end of synthetic input speech to first received active
+response PCM through the real owner Call and LiveKit path. Check the saved answer before counting
+audio as useful: provider-error narration is a failed turn. These small samples do not establish
+reliability, p95, glitch-free playback or a sub-two-second response.
+
+| Voice configuration | Correct saved answers / attempts | Useful response seconds |
+|---|---|---|
+| Grok 4.7 Fast / High, baseline | 1 / 1 | 13.882 |
+| Grok 4.7 Fast / High, final loaded candidate, fresh call | 1 / 1 | 24.025 |
+| GPT-6.1 Sol / Low / Fast | 1 / 3 | 10.550 |
+| GPT-6.1 Sol / High / Fast | 1 / 3 | 14.107 |
+| GPT-6.1 Sol / Low / Standard | 3 / 3 | 12.326, 8.136, 10.756 |
+| GPT-6.1 Sol / High / Standard | 1 / 3 | 14.026 |
+| Grok 4.7 Fast / Low, arithmetic | 3 / 3 | 11.405, 8.720, 6.135 |
+
+The six failed Sol turns returned a structured native HTTP 429. Configured Opus fallback could not
+execute because its CLI authentication was unavailable. Native account usage still allowed ordinary
+usage; the precise short-window rate-limit cause was not exposed. Requested tiers were confirmed;
+served Fast was not observed. Do not infer Fast benefit from one successful cold sample.
+
+In the baseline, 3.705 seconds passed before the native Grok prompt started; the prompt-to-first
+raw answer delta interval was 9.669 seconds. That interval includes the native harness and model,
+not isolated inference. First raw answer delta to received active PCM took 0.511 seconds. TTS was
+already connected. Lower effort cannot remove the measured admission and native-start intervals.
+
+For a synthetic file-context call, Main/high preparation saved a correct report in 35.955 seconds.
+An early Voice question was answered correctly after 53.010 seconds including its preparation wait;
+the following answer took 14.728 seconds. No preparation-report speech was emitted. Preparation
+adds visible startup work; it does not demonstrate faster inference or transfer provider caches.
+An OFF run used a different Grok model and is excluded from a paired speed comparison.
+
+Native error classification uses structured status fields. Trusted scheduler input starting at
+`new` binds the admitted conversation UUID before retaining its source history. Concrete, foreign
+and already-claimed histories retain their existing guards. The preparation activity caption is a
+display projection; original tool/source events remain available.
+
+
+Grok Low's native configuration was confirmed. Its three arithmetic turns reported native TTFT
+of 2.634, 3.733 and 1.721 seconds, with 238, 160 and 127 reasoning tokens. Cached input tokens
+also rose from 1,152 to 64,384. These are not isolated effort-only comparisons, and native TTFT
+includes reasoning rather than first useful words. In the fastest turn, observed stages before
+the native prompt still totalled 2.693 seconds; first raw answer to received speech took 0.622
+seconds. Neither faster inference nor preparation alone establishes sub-two-second speech.
+
+Low remains experimental: one action-taking turn promised a worker but made no native tool call.
+A repeated request obtained a real accepted worker receipt, but STT changed the requested shape
+to shade. The intended High control could not save and actually remained Low because embedded
+agent history reached MongoDB's document limit. Exclude that case from High comparisons. Preserve
+High defaults and record action correctness separately from a completed, spoken acknowledgement.
+
+Installed new-conversation deadline acceptance recorded exact release against the canonical
+conversation, kept its time-limit failure visible, emitted no preparation speech and allowed a
+correct ordinary Voice answer. A confirmed native abort whose receipt cannot be saved before a
+Core crash remains fail-closed; End and a new call recover it without losing conversation history.
+The receipt is never inferred from a missing job. Broader always-on, Telegram-launch, arbitrary
+approval/reconnect and perceptual audio reliability checks are not proved by these bounded cases.
+
+The final loaded candidate also answered a fresh arithmetic call correctly at the restored High
+setting and ended normally. It took 24.025 seconds to first received speech: 3.791 seconds before
+the native prompt, 19.801 seconds from that prompt to first raw answer delta, and 0.433 seconds
+from raw delta to received speech. These are observed boundaries, not isolated provider inference.
+The simple answer used 42,376 prompt tokens and 1,944 completion tokens. Do not select only the
+fastest warm sample as a guarantee. Normal browser Save and reload now retain model choices;
+504 ordered configuration versions were visible, and all 502 snapshots preceding the final UI
+save check remained byte-hash identical. The native history-capacity contract is owned by doc49.
+
+### Later concurrent-worker acceptance and native timing
+
+Two later local Call cases on Grok 4.7 Fast / High answered a simple question while a real
+background browser worker remained active, then delivered its file and a spoken callback.
+Useful speech started at **68.748 s** and **78.792 s** after input ended. These are functional
+concurrency passes and speed failures; they do not establish sub-two-second speech, statistical
+reliability, perceptual audio quality or endurance. A prior failed call that performed direct work
+and remained silent is retained as a failed case, not erased by the successful repeats.
+
+The first concurrent case separated these native stages:
+
+| Measured interval | Seconds | Meaning |
+|---|---:|---|
+| End of input to native request | 1.585 | Speech finalization and Core dispatch; nested timings must not be added again. |
+| Native request to prompt start | 1.032 | Queue, initialization and session setup. |
+| Prompt start to tool-discovery request | 28.957 | Native model/harness processing before its first discovery request. |
+| Tool discovery execution | 0.005 | The actual registry lookup, already ready before the model requested it. |
+| Discovery result to delegation request | 25.811 | Further native model/harness processing. |
+| Delegation execution | 0.926 | Real worker admission and receipt. |
+| Delegation receipt to eligible reply text | 9.896 | Native processing before the useful answer. |
+| Eligible text to first received audio | 0.535 | Streaming delivery and speech synthesis, before native final completion. |
+
+Those intervals include native reasoning and tool-selection work; they are not an isolated
+inference benchmark. Reducing the five-millisecond lookup cannot remove the two long native
+processing intervals. The later callback uses the existing authorized Call metadata and actual
+follow-up formatter to carry the selected voice provider's controls and current-call facts. The
+native callback contained those controls once, needed no control-syntax lookup, kept its authored
+speech control out of the written answer, and produced received speech 0.434 s after persistence.
+The callback's 29.452 s native execution remains a separate speed cost.
+
+A focused check of installed Grok 1.0.50 and the
+[pinned official MCP implementation](https://github.com/xai-org/grok-build/blob/2bdd1d6a6369de0e8c68132ea4539e9abd9e14a8/crates/codegen/xai-grok-tools/src/implementations/search_tool/mod.rs)
+found no supported eager-tool-definition switch. Grok exposes discovery through `search_tool`
+and `use_tool`; existing readiness, registry caching and exact native session reuse already apply.
+Official `use_tool` can dispatch a known qualified name, but that does not guarantee the installed
+model skips discovery. Do not add speculative flags, a parallel cache or a forced routing prompt.
+
+### Paired preparation-source evaluation
+
+The canonical Workbench bank links three positive, negative and adjacent cases to
+`voice.prebuild_context`. Exact frozen provisional and revised prompt sources ran on the same
+three sanitized inputs through the existing scheduler Main HTTP/SSE owner: six saved completions,
+all GPT-6.1 Sol High with no fallback. The provisional draft had a trailing compatibility marker;
+the final prompt uses structural silence. Opus reviewed the outputs against the rubrics: verified
+facts stayed separate from pending work, missing facts were not invented, and conflicting notes
+had no fabricated winner. The final outputs removed the visible marker. This is no regression
+plus a removed defect, not proof of increased intelligence or reliability.
+
+These are paired registered-source replays, not a Workbench EvalResults UI run. The Workbench
+no-live selection preview resolved all three linked cases and is not counted as model execution.
+The cases limit their synthetic reports to 100 words and supplied scenario evidence; production
+preparation has no such word limit. Broad awareness gathered from real memory, work state,
+computer/browser sessions and workers remains unevaluated. The real gathering case read one
+fictional file. Preparation retains those capabilities, but retained access is not proof of their
+quality across all use cases. Compare speed options against the observed default High spread
+of 13.882–24.025 seconds across the two checks, not one chosen baseline.
+
+
+### Optional direct-model Queen: historical feasibility evidence
+
+An optional direct model executor belongs to xPerfect's existing runtime and configuration, with
+Viventium as its conversation/voice client. Reuse existing worker admission, controls, context,
+role prompts/modules and callbacks. A direct Queen must use real work receipts, answer while
+independent workers run, and relay actual questions/results naturally through the same conversation.
+Do not replace the native defaults, introduce a second manager or depend on LibreChat for this option.
+Queen and worker configuration should share the existing provider/model/effort and supported tool
+controls; identical controls do not prove identical built-in tools.
+
+Private feasibility experiments used Grok 4.7 over Responses with a single-agent SDK. Six small,
+mostly cached arithmetic replies started final-answer text in 0.852–1.852 seconds. A real MCP file
+read produced a correct saved-versus-pending answer in 2.127 seconds; a retained-history follow-up
+took 0.989 seconds without another read. Six larger admitted-context replays (18,907 input tokens)
+answered correctly in 2.109–9.925 seconds to final text. Cache state varied and Low was not always
+faster than High. These are text clocks, not speech. The replay excludes native bootstrap/tool
+metadata and additional native history, so it does not isolate harness savings against the native
+43K–82K-token voice samples. Direct OpenAI and Anthropic live execution remain untested because
+configured API access was unavailable. Subscription and API credentials/billing are separate.
+
+The 35.955-second Main preparation sample spent 0.070 seconds in its actual file read. Its
+before/after native execution windows totalled 33.036 seconds; setup/admission/finalization account
+for the rest. Concurrent background memory work overlapped Main and must not be added serially.
+Do not add full preparation time to an early voice reply that already includes the residual wait.
+
+These early prototypes did not establish a selectable executor, work/control acceptance, role-module
+parity or end-to-end voice. Current delivered Direct configuration and its scoped acceptance evidence
+are owned by [the xPerfect capability](capabilities/glasshive.md#optional-direct-api-execution). The historical
+timings above do not override that later evidence or establish sub-two-second speech. Current pinned Sol, Grok and Opus models do not support a literal reasoning-OFF
+choice; expose only supported explicit effort settings, without silent substitution.
 
 <!-- VIVENTIUM-STABLE-REQUIREMENT-DECLARATIONS:START -->
 ## Stable requirement declarations

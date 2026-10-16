@@ -29,6 +29,7 @@
 | `03_Affective_State_Feelings_System_Spike.md` | Superseded | Earlier affective-state spike, retained only as a pointer to the active source of truth in `docs/requirements_and_learnings/54_Emotional_Cortex_And_Feeling_State.md` |
 | [`v0.5/`](v0.5/README.md) | Pending Decision | Complete V0.5 vision package: Life-centered cognitive layer, Viventium Sources, full-context GlassHive missions, conversation memory, Insights/night workers, editable architecture, interactive wireframe, and synthetic Life template |
 | `04_Viventium_Personal_Cognitive_System_Vision.md` | Redirect | Stable pointer retained for links to the earlier single-file proposal |
+| [Local Models and Native Harnesses](05_Local_Models_and_Native_Harnesses.md) | Experimental integration tested; delivery open | One native local endpoint for Main/workers; separates successful integration, failed cases and missing evidence. Linked host-worker QA owns the measurements. |
 
 ---
 

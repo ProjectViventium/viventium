@@ -718,6 +718,9 @@ Checked against `docs/requirements_and_learnings/01_Key_Principles.md` before lo
 
 ## Evidence Rules
 
+- Local-model research: [integration guidance](../../docs/research_and_future_plans/05_Local_Models_and_Native_Harnesses.md),
+  cases `GHHOST-027`–`029`, and the [14 October native xPerfect report](reports/2026-10-14-xperfect-local-models.md).
+  The report owns dated results; this index does not imply installed local-provider support.
 - Use synthetic task data only.
 - Do not paste raw CLI logs into this repo.
 - Replace local filesystem paths with placeholders such as `<workspace-root>` or `~/viventium`.

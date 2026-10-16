@@ -52,6 +52,9 @@ their exact loss, consumer, and safety gates pass. Runtime implementation detail
 
 ## Retained entrypoints
 
+- [Local models through native harnesses](research_and_future_plans/05_Local_Models_and_Native_Harnesses.md)
+  separates tested xPerfect integration from model quality, serving limits and installed delivery;
+  its linked QA report owns the dated measurements. This is experimental research, not release setup.
 - [Source setup](04_SETUP_GUIDE.md), [environment](05_ENVIRONMENT.md), and
   [troubleshooting](06_TROUBLESHOOTING.md) retain their detailed procedures.
 - [Runtime feature and QA map](requirements_and_learnings/45_Runtime_Feature_QA_Map.md)

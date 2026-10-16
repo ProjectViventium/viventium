@@ -114,3 +114,11 @@ def test_double_processing_mangles_html_tags():
     pass2 = markdown_to_html(pass1)
     assert "&lt;i&gt;" in pass2, "Double-processing should escape HTML tags"
     assert "<i>" not in pass2, "Double-processing should not preserve raw HTML tags"
+
+
+def test_markdown_to_html_preserves_code_blank_lines_and_escaped_content():
+    literal = "  [draft]  <soft>literal</soft>\n\n\nnext\n"
+    rendered = markdown_to_html("Before.\n\n\n```text\n" + literal + "```\n\n\nAfter.")
+    assert "  [draft]  &lt;soft&gt;literal&lt;/soft&gt;\n\n\nnext\n" in rendered
+    assert rendered.startswith("Before.\n\n<pre>")
+    assert rendered.endswith("</pre>\n\nAfter.")

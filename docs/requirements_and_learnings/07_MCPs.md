@@ -130,6 +130,10 @@
 
 ### GlassHive Capability Broker Projection
 
+- A broker capability list describes only its own invocation. A specialist, Main or worker must not
+  treat that list as the capabilities or results of other agents or workers. An absent tool means it
+  was not resolved or authorized for this invocation; it does not establish system-wide absence or
+  failed work. This clarification changes neither grants nor the participant declaration.
 - GlassHive workers launched from Viventium/LibreChat receive connected-account MCP access through a
   host-owned `glasshive-user-capabilities` broker MCP projected in `bootstrap_bundle_json`, not by
   copying provider OAuth/API tokens into the worker and not by having GlassHive read LibreChat
@@ -175,6 +179,11 @@
   exact blocker; it must not silently substitute memory, a different account, or a native connector.
 - The broker uses the same LibreChat MCP registry/auth/token-refresh path as normal MCP calls and
   re-checks user scope, current server policy, and current auth state on list/describe/invoke.
+- User connections skip token lookup only for a local no-URL transport explicitly marked as
+  not requiring OAuth and carrying no OAuth metadata. Remote, unknown and OAuth connections retain
+  stored-token lookup, refresh and challenge handling. A deferred remote server's cached
+  `requiresOAuth: false` is not proof that authentication was inspected. Keep the existing flow
+  synchronization guard; remove the unnecessary lookup instead of weakening its concurrency rules.
 - OAuth readiness distinguishes `missing_auth`, `unreadable_credential`, disabled/unavailable
   service, and ready state. An optional handoff whose every declared MCP is conclusively unavailable
   is removed from the current graph, and Main receives only the structured readiness facts so it can

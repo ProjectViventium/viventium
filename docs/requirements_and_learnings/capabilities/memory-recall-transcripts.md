@@ -49,6 +49,11 @@ Explicit model-authored conversational replies remain eligible for normal presen
 - `no relevant evidence found` means retrieval ran successfully; `no evidence retrieved in this
   run` is inconclusive. Provider failure is never flattened into absence.
 - Retrieved assistant chatter does not become new source evidence and cannot poison freshness.
+- Native background retrieval retains the authenticated tool's structured source artifacts through
+  the existing citation processor, attachment events, and canonical message persistence. Role
+  permission and exact message/conversation binding remain required. Model prose cannot create a
+  source receipt; secret-shaped text stays redacted. Silent, cancelled, and failed insights do not
+  publish sources. Replaying an accepted artifact does not duplicate it after reload.
 
 ## Transcript ingestion
 
@@ -61,6 +66,12 @@ Explicit model-authored conversational replies remain eligible for normal presen
 
 - **DATA-006:** A blocked transcript run is diagnosable and resumable without duplicate ingestion or
   silent loss.
+- Operational logs and their rotated/staged copies are excluded by the default source filters.
+  The filename rule `**/*.log.*` also excludes names such as `notes.log.md`; keep real
+  transcripts outside that log-copy naming pattern.
+  Private probes and scratch files use the existing configured `ignore_globs` list; runtime does
+  not guess their meaning from names or content. Approved exclusions use the existing stale-artifact
+  lifecycle; source files and index entries are never manually erased as a repair.
 - Transcript content is untrusted data for the configured model. Runtime may own deterministic file
   lifecycle and metadata but cannot infer meeting meaning with keyword or column heuristics.
 - Transcript summaries preserve provenance, speaker uncertainty, and source scope. Raw transcript

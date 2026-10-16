@@ -9084,3 +9084,107 @@ class TestNativeQuestionSpeechOffer(unittest.TestCase):
             self.assertIsNone(await llm.claim_native_input_speech_offer(event,'stream_voice_1',transport))
             self.assertFalse(transport.post_calls)
         asyncio.run(run())
+
+
+class TestCallPreparationAdmission(unittest.IsolatedAsyncioTestCase):
+    """Preparation shares ingress ownership and adds no provider/stream timeout change."""
+    async def _server(self, handler):
+        from aiohttp import web
+        app = web.Application()
+        app.router.add_post('/api/viventium/voice/chat', handler)
+        async def stream(_):
+            return web.Response(text='data: {"final":true}\n\n', content_type='text/event-stream')
+        app.router.add_get('/api/viventium/voice/stream/{stream_id}', stream)
+        runner = web.AppRunner(app)
+        await runner.setup()
+        site = web.TCPSite(runner, '127.0.0.1', 0)
+        await site.start()
+        return runner, 'http://127.0.0.1:' + str(site._server.sockets[0].getsockname()[1])
+
+    async def test_typed_busy_retries_exact_retained_body_until_receipt(self):
+        from aiohttp import web
+        from librechat_llm import _post_voice_admission_receipt
+        bodies = []
+        async def handler(request):
+            bodies.append(await request.json())
+            if len(bodies) == 1:
+                return web.json_response({'code': 'call_context_busy', 'retryable': True}, status=409)
+            return web.json_response({'streamId': 'same-source-receipt'})
+        runner, origin = await self._server(handler)
+        body = {'text': 'Keep exact input.', 'sourceEventId': 'voice:synthetic:input', 'streamId': 'same-source'}
+        try:
+            async with aiohttp.ClientSession() as session:
+                receipt = await _post_voice_admission_receipt(session, origin + '/api/viventium/voice/chat',
+                    headers={}, body=body, is_call_current=lambda: True)
+            self.assertEqual(receipt, {'streamId': 'same-source-receipt'})
+            self.assertEqual(bodies, [body, body])
+        finally:
+            await runner.cleanup()
+
+    async def test_unretryable_authority_error_never_reposts(self):
+        from aiohttp import web
+        from librechat_llm import _post_voice_admission_receipt
+        requests = []
+        async def handler(request):
+            requests.append(await request.json())
+            return web.json_response({'code': 'voice_turn_authority_unavailable', 'retryable': False}, status=409)
+        runner, origin = await self._server(handler)
+        try:
+            async with aiohttp.ClientSession() as session:
+                with self.assertRaisesRegex(RuntimeError, 'status 409'):
+                    await _post_voice_admission_receipt(session, origin + '/api/viventium/voice/chat',
+                        headers={}, body={'text': 'Retain.'}, is_call_current=lambda: True)
+            self.assertEqual(len(requests), 1)
+        finally:
+            await runner.cleanup()
+
+    async def test_call_owner_change_stops_preparation_retries(self):
+        from aiohttp import web
+        from librechat_llm import _post_voice_admission_receipt
+        current, requests = [True], []
+        async def handler(request):
+            requests.append(await request.json())
+            current[0] = False
+            return web.json_response({'code': 'call_context_busy', 'retryable': True}, status=409)
+        runner, origin = await self._server(handler)
+        try:
+            async with aiohttp.ClientSession() as session:
+                receipt = await _post_voice_admission_receipt(session, origin + '/api/viventium/voice/chat',
+                    headers={}, body={'text': 'Retain.'}, is_call_current=lambda: current[0])
+            self.assertEqual(receipt, {})
+            self.assertEqual(len(requests), 1)
+        finally:
+            await runner.cleanup()
+
+    async def test_per_call_preparation_adds_only_admission_budget(self):
+        from aiohttp import web
+        requests, transport_budgets = [], []
+        async def handler(request):
+            requests.append(await request.json())
+            await asyncio.sleep(0.08)  # Beyond the ordinary response deadline.
+            return web.json_response({'streamId': requests[-1]['streamId'], 'taskId': 'prep-ready',
+                'logical_turn_id': 'prep-ready', 'revision': 1})
+        runner, origin = await self._server(handler)
+        real_session = aiohttp.ClientSession
+        def tracking(*args, **kwargs):
+            transport_budgets.append(kwargs['timeout'].total)
+            return real_session(*args, **kwargs)
+        llm = LibreChatLLM(origin=origin, auth=LibreChatAuth(call_session_id='synthetic-call',
+            call_secret='synthetic'), timeout_s=0.03, preparation_timeout_s=1)
+        stream = None
+        try:
+            with patch('librechat_llm.aiohttp.ClientSession', side_effect=tracking):
+                stream = llm.chat(chat_ctx=ChatContext(items=[ChatMessage(id='early', role='user', content=['Retain early input.'])]))
+                async for _ in stream:
+                    pass
+            self.assertEqual(len(requests), 1)
+            self.assertEqual(requests[0]['text'], 'Retain early input.')
+            self.assertEqual(stream._presentation.logical_turn_id, 'prep-ready')
+            self.assertEqual(llm._timeout_s, 0.03)
+            self.assertIn(0.03, transport_budgets)  # Streaming retains its original budget.
+            self.assertIn(11.03, transport_budgets)  # Prep + bounded stop allowance, admission only.
+        finally:
+            if stream is not None:
+                await stream.aclose()
+            await llm.close_background_continuations()
+            await runner.cleanup()

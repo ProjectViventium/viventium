@@ -54,6 +54,8 @@ internals.
   browser action from the actual worker. Helper permission preflight and service health are
   supporting checks, not full computer-readiness evidence. Permissions do not authorize unrelated
   actions or remove purchase, submission, or other user-set boundaries.
+  Source-built development helpers that use ad hoc signing do not provide update-stable folder
+  consent; see the [documented source-build limitation](../50_Stable_Dev_Runtime.md).
 
 ### Lifecycle control
 
@@ -130,6 +132,13 @@ Native fallback startup appends to the existing server log without clearing prio
 - **ONB-010:** Repository migration preserves recoverable source and private state, classifies each
   delta, and reconciles reviewed changes before checking component pins, artifacts, installed
   runtime, and fresh QA. This is a migration gate; it does not authorize publication or activation.
+
+When development and public history differ, reconcile against the exact saved development source
+from the previous publication, the current development source, and current public main. A public
+commit may contain fixes never copied back into development; using that commit as the development
+base can silently remove them. Retain both intended changes, compare behavior when formatting
+differs, and carry the reviewed result into the active source before claiming delivery. Preserve
+the original source and private evidence; do not rewrite active history to make the trees agree.
 
 ### Release evidence
 

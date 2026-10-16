@@ -2538,19 +2538,19 @@ require_cmd() {
 }
 
 log_info() {
-  printf '%b[viventium]%b %s\n' "$CYAN" "$NC" "$1"
+  printf '%b[viventium]%b [%s] %s\n' "$CYAN" "$NC" "$(date -u '+%Y-%m-%dT%H:%M:%SZ')" "$1"
 }
 
 log_warn() {
-  printf '%b[viventium]%b %s\n' "$YELLOW" "$NC" "$1"
+  printf '%b[viventium]%b [%s] %s\n' "$YELLOW" "$NC" "$(date -u '+%Y-%m-%dT%H:%M:%SZ')" "$1"
 }
 
 log_error() {
-  printf '%b[viventium]%b %s\n' "$RED" "$NC" "$1"
+  printf '%b[viventium]%b [%s] %s\n' "$RED" "$NC" "$(date -u '+%Y-%m-%dT%H:%M:%SZ')" "$1"
 }
 
 log_success() {
-  printf '%b[viventium]%b %s\n' "$GREEN" "$NC" "$1"
+  printf '%b[viventium]%b [%s] %s\n' "$GREEN" "$NC" "$(date -u '+%Y-%m-%dT%H:%M:%SZ')" "$1"
 }
 
 ## === VIVENTIUM START ===
@@ -2695,6 +2695,85 @@ kill_pids() {
   local pids="$1"
   if [[ -z "$pids" ]]; then
     return 0
+  fi
+  if [[ -n "${2:-}" ]]; then
+    # Only authorized stack or kernel-verified runtime-listener Stop passes a PGID.
+    # Bind private Docker clients before their runtime parent exits.
+    "${PYTHON_BIN:-python3}" - "$pids" "$2" "$VIVENTIUM_CORE_DIR/scripts/viventium" <<'PY'
+import os, shutil, signal, subprocess, sys, time
+
+sys.path.insert(0, sys.argv[3])
+import parallel_work_release_gate as process_inspector
+
+seeds = {int(value) for value in sys.argv[1].split()}
+group = int(sys.argv[2])
+uid = os.getuid()
+if group <= 1 or os.getpid() in seeds or os.getppid() in seeds or any(pid <= 1 for pid in seeds):
+    raise SystemExit("Refusing invalid runtime stop scope")
+
+def process_table(pid=None):
+    command = ["ps", "-p", str(pid)] if pid is not None else ["ps", "-A"]
+    result = subprocess.run(command + ["-o", "uid=,pid=,ppid=,pgid=,stat=,lstart="],
+                            capture_output=True, text=True, timeout=3)
+    if result.returncode and (pid is None or result.stdout.strip()):
+        raise RuntimeError("Runtime stop process identity unavailable")
+    found = {}
+    for line in result.stdout.splitlines():
+        fields = line.split()
+        if len(fields) != 10:
+            raise RuntimeError("Runtime stop process identity malformed")
+        owner, number, parent, pgid = map(int, fields[:4])
+        if not fields[4].startswith("Z"):
+            found[number] = (owner, parent, pgid, " ".join(fields[5:10]))
+    return found
+
+table = process_table()
+owned = seeds & table.keys()
+if any(table[pid][0] != uid or table[pid][2] != group for pid in owned):
+    raise RuntimeError("Runtime stop seed is outside its authorized user or group")
+docker = shutil.which("docker")
+docker = os.path.realpath(docker) if docker else None
+def image(pid):
+    identity = process_inspector._live_process_image_and_argv(pid)
+    if identity is None:
+        # The stack receipt does not authorize guessing an unknown private child.
+        return None
+    return os.path.realpath(identity[0])
+
+clients = {pid for pid, row in table.items() if row[0] == uid and row[1] in owned
+           and row[2] == pid and docker is not None and image(pid) == docker}
+targets = set(owned) | clients
+frontier = clients
+while frontier:
+    children = {pid for pid, row in table.items() if row[0] == uid and row[1] in frontier} - targets
+    targets |= children
+    frontier = children
+
+# Existing stack seeds retain their receipt + UID/group/start authority. Kernel-image
+# inspection is required only for the additional private command descendants.
+images = {pid: image(pid) for pid in targets - owned}
+targets = owned | {pid for pid, executable in images.items() if executable is not None}
+
+def signal_bound(pid, signum):
+    fresh = process_table(pid).get(pid)
+    before = table[pid]
+    # Parent changes after TERM are expected. UID, start and group cannot change.
+    if fresh is None or (fresh[0], *fresh[2:]) != (before[0], *before[2:]):
+        return
+    if pid not in owned and image(pid) != images[pid]:
+        return
+    try:
+        os.kill(pid, signum)
+    except ProcessLookupError:
+        pass
+
+for pid in sorted(targets - owned) + sorted(owned):
+    signal_bound(pid, signal.SIGTERM)
+time.sleep(1)
+for pid in sorted(targets - owned) + sorted(owned):
+    signal_bound(pid, signal.SIGKILL)
+PY
+    return $?
   fi
   echo "$pids" | xargs kill >/dev/null 2>&1 || true
   sleep 1
@@ -2948,7 +3027,10 @@ kill_recorded_detached_launch_process_group() {
   fi
   if [[ -n "$pids" ]]; then
     log_warn "Stopping detached launch process group $recorded_pgid"
-    kill_pids "$pids"
+    if ! kill_pids "$pids" "$recorded_pgid"; then
+      log_error "Detached runtime stop could not verify its owned process identities"
+      return 1
+    fi
   fi
   clear_detached_launch_process_group
   RUNTIME_STOP_AUTHORIZED_PGID=""
@@ -3776,7 +3858,16 @@ kill_port_listeners() {
   fi
 
   log_warn "Stopping scoped processes that may own port $port"
-  kill_pids "${scoped_port_pids[*]}"
+  if [[ "${3:-false}" == "true" ]]; then
+    # The caller has verified this exact xPerfect runtime listener. Capture its
+    # private Docker children before the listener exits, including attached Stop.
+    local listener_pgid=""
+    listener_pgid="$(ps -p "${scoped_port_pids[0]}" -o pgid= 2>/dev/null | tr -d '[:space:]')"
+    [[ "$listener_pgid" =~ ^[0-9]+$ ]] || return 1
+    kill_pids "${scoped_port_pids[*]}" "$listener_pgid"
+  else
+    kill_pids "${scoped_port_pids[*]}"
+  fi
 }
 
 glasshive_local_listener_matches() {
@@ -3809,7 +3900,11 @@ stop_glasshive_services_listener_first() {
       runtime) port="$GLASSHIVE_RUNTIME_PORT"; scope="$GLASSHIVE_RUNTIME_DIR" ;;
     esac
     if glasshive_local_listener_matches "$port" "$service"; then
-      kill_port_listeners "$port" "$scope"
+      if [[ "$service" == "runtime" ]]; then
+        kill_port_listeners "$port" "$scope" true || return 1
+      else
+        kill_port_listeners "$port" "$scope"
+      fi
     fi
   done
   stop_pid_file_scoped "$GLASSHIVE_UI_PID_FILE" "$GLASSHIVE_UI_DIR"
@@ -8662,6 +8757,18 @@ start_scheduling_mcp_watchdog() {
   log_info "Started Scheduling Cortex MCP watchdog (pid: $watchdog_pid, interval: ${interval_s}s)"
 }
 
+telegram_bot_watchdog_exited() {
+  local exit_status="$1"
+  local exited_pid="$2"
+  if [[ -f "$TELEGRAM_BOT_WATCHDOG_PID_FILE" && ! -L "$TELEGRAM_BOT_WATCHDOG_PID_FILE" &&
+    -O "$TELEGRAM_BOT_WATCHDOG_PID_FILE" ]] &&
+    [[ "$(read_pid_file "$TELEGRAM_BOT_WATCHDOG_PID_FILE")" == "$exited_pid" ]]
+  then
+    rm -f "$TELEGRAM_BOT_WATCHDOG_PID_FILE"
+  fi
+  log_info "Telegram bot watchdog exited (status: $exit_status)"
+}
+
 start_telegram_bot_watchdog() {
   if [[ "$START_TELEGRAM" != "true" ]]; then
     return 0
@@ -8678,9 +8785,16 @@ start_telegram_bot_watchdog() {
   local failure_threshold="${VIVENTIUM_TELEGRAM_WATCHDOG_FAILURE_THRESHOLD:-3}"
 
   (
-    trap - EXIT
-    trap 'exit 0' INT TERM HUP
+    local watchdog_self_pid="${BASHPID:-}"
+    if [[ -z "$watchdog_self_pid" ]]; then
+      # macOS Bash 3.2 has no BASHPID; inspect the command-substitution parent's identity.
+      watchdog_self_pid="$(/bin/sh -c 'ps -o ppid= -p "$PPID"' | tr -d '[:space:]')"
+    fi
+    trap "telegram_bot_watchdog_exited \"\$?\" \"$watchdog_self_pid\"" EXIT
+    trap 'log_info "Telegram bot watchdog stopping by signal"; exit 0' INT TERM HUP
+    log_info "Telegram bot watchdog started (interval: ${interval_s}s, threshold: ${failure_threshold})"
     local consecutive_failures=0
+    local restart_status=0
     local telegram_pid=""
 
     while true; do
@@ -8701,7 +8815,15 @@ start_telegram_bot_watchdog() {
       if RESTART_SERVICES=true start_telegram_bot; then
         consecutive_failures=0
       else
-        log_warn "Telegram bot watchdog restart failed"
+        restart_status=$?
+        if [[ "$restart_status" == "78" ]]; then
+          log_error "Telegram bot recovery requires a complete runtime start; ending incompatible bot-only retries"
+          # The existing helper observes the missing bot/watchdog and uses its bounded,
+          # desired-state-aware launcher. That recovery restarts the whole runtime and
+          # can end active calls/turns; durable work uses normal recovery. Stop stays stopped.
+          exit 78
+        fi
+        log_warn "Telegram bot watchdog restart failed (status: $restart_status)"
         consecutive_failures="$failure_threshold"
       fi
     done
@@ -9643,6 +9765,7 @@ run_health_checks() {
 
 cleanup() {
   local exit_status=$?
+  log_info "Runtime launcher exited (status: $exit_status, detached: ${VIVENTIUM_DETACHED_START:-false}, handoff: ${STARTUP_HANDOFF_COMPLETE:-false})"
   if [[ "$exit_status" -ne 0 && "${STARTUP_HANDOFF_COMPLETE:-false}" != "true" ]]; then
     log_error "FATAL_STARTUP: launcher exited before core handoff (status ${exit_status})"
   fi
@@ -11690,6 +11813,27 @@ start_v1_agent() {
   return 0
 }
 
+prepare_telegram_bot_log() {
+  "$PYTHON_BIN" - "$VIVENTIUM_CORE_DIR/scripts/viventium" "$LOG_DIR/telegram_bot.log" <<'PYLOG'
+import sys
+from pathlib import Path
+sys.dont_write_bytecode = True
+sys.path.insert(0, sys.argv[1])
+from native_runtime import RuntimeError_, rotate_log
+# launchctl can truncate its output target. Retain the entire previous run first.
+path = Path(sys.argv[2])
+try:
+    if path.exists() or path.is_symlink():
+        rotate_log(path, maximum_bytes=1)
+except RuntimeError_ as error:
+    print(str(error), file=sys.stderr)
+    raise SystemExit(78)
+except OSError as error:
+    print(f"Telegram log preservation temporarily failed: {error.__class__.__name__}", file=sys.stderr)
+    raise SystemExit(1)
+PYLOG
+}
+
 start_telegram_bot() {
   rm -f "$TELEGRAM_BOT_DEFERRED_PID_FILE"
   rm -f "$TELEGRAM_BOT_DEFERRED_MARKER_FILE"
@@ -11782,13 +11926,15 @@ start_telegram_bot() {
   if [[ "$telegram_installed_component_required" == "true" ]] &&
     [[ -f "$TELEGRAM_COMPONENT_SELECTION_FILE" && ! -L "$TELEGRAM_COMPONENT_SELECTION_FILE" ]]
   then
-    if ! telegram_component_json="$(
+    if telegram_component_json="$(
       "$PYTHON_BIN" "$TELEGRAM_COMPONENT_TOOL" resolve \
         --app-support-dir "$VIVENTIUM_APP_SUPPORT_ROOT" \
         --selection-file "$TELEGRAM_COMPONENT_SELECTION_FILE"
     )"; then
-      log_error "Detached Telegram runtime component failed integrity verification"
-      return 1
+      :
+    else
+      log_error "Detached Telegram runtime component failed integrity verification; complete runtime recovery is required"
+      return 78
     fi
     telegram_dir="$(telegram_handoff_json_field "$telegram_component_json" telegram_root)"
     telegram_component_python="$(telegram_handoff_json_field "$telegram_component_json" python)"
@@ -11798,16 +11944,16 @@ start_telegram_bot() {
     if [[ -z "$telegram_dir" || -z "$telegram_component_python" ||
       -z "$telegram_component_execution_root" ]]
     then
-      log_error "Detached Telegram runtime component selection is incomplete"
-      return 1
+      log_error "Detached Telegram runtime component selection is incomplete; complete runtime recovery is required"
+      return 78
     fi
     telegram_use_installed_component=true
   elif [[ "$telegram_installed_component_required" == "true" ]] &&
     { [[ "$(uname -s)" == "Darwin" ]] || [[ -e "$TELEGRAM_COMPONENT_SELECTION_FILE" ]] ||
       [[ -L "$TELEGRAM_COMPONENT_SELECTION_FILE" ]]; }
   then
-    log_error "Detached Telegram runtime component selection is missing or unsafe"
-    return 1
+    log_error "Detached Telegram runtime component selection is missing or unsafe; complete runtime recovery is required"
+    return 78
   fi
   if [[ "$telegram_use_installed_component" != "true" ]]; then
     telegram_dir=$(resolve_telegram_dir)
@@ -12300,14 +12446,19 @@ EOF
   if [[ "$RESTART_SERVICES" == "true" ]]; then
     telegram_handoff_args+=(--takeover)
   fi
-  if ! telegram_handoff_json="$(
+  local telegram_handoff_status=0
+  if telegram_handoff_json="$(
     "$PYTHON_BIN" "$TELEGRAM_POLLER_HANDOFF_HELPER" "${telegram_handoff_args[@]}"
   )"; then
-    log_error "Telegram poller predecessor handoff could not be prepared"
+    :
+  else
+    telegram_handoff_status=$?
+    log_error "Telegram poller predecessor handoff could not be prepared (status: $telegram_handoff_status)"
     cleanup_current_telegram_launch_package || true
     restore_telegram_env
     popd >/dev/null
     popd >/dev/null
+    if [[ "$telegram_handoff_status" == "2" ]]; then return 78; fi
     return 1
   fi
   telegram_handoff_action="$(telegram_handoff_json_field "$telegram_handoff_json" action)"
@@ -12333,6 +12484,24 @@ EOF
   if [[ "$RESTART_SERVICES" == "true" ]]; then
     stop_telegram_launchctl_job
   fi
+  local telegram_log_status=0
+  if prepare_telegram_bot_log; then
+    :
+  else
+    telegram_log_status=$?
+    log_error "Telegram startup could not preserve its previous diagnostic log"
+    if [[ -n "$telegram_handoff_transaction" ]]; then
+      "$PYTHON_BIN" "$TELEGRAM_POLLER_HANDOFF_HELPER" rollback \
+        --state-dir "$TELEGRAM_POLLER_STATE_DIR" \
+        --transaction "$telegram_handoff_transaction" >/dev/null 2>&1 || true
+    fi
+    cleanup_current_telegram_launch_package || true
+    restore_telegram_env
+    popd >/dev/null
+    popd >/dev/null
+    return "$telegram_log_status"
+  fi
+  log_info "Starting Telegram bridge (backend: $telegram_backend)"
   local telegram_started_with_launchctl=false
   local telegram_launchctl_eligible=true
   if [[ "$(uname -s)" == "Darwin" ]]; then
@@ -12381,10 +12550,10 @@ EOF
   fi
   if [[ "$telegram_started_with_launchctl" != "true" ]]; then
     if detached_start_requested; then
-      nohup "${telegram_launch_program[@]}" >"$LOG_DIR/telegram_bot.log" 2>&1 < /dev/null &
+      nohup "${telegram_launch_program[@]}" >>"$LOG_DIR/telegram_bot.log" 2>&1 < /dev/null &
     else
       VIVENTIUM_TELEGRAM_READY_FILE="$TELEGRAM_BOT_READY_FILE" \
-        nohup "$telegram_python" bot.py >"$LOG_DIR/telegram_bot.log" 2>&1 < /dev/null &
+        nohup "$telegram_python" bot.py >>"$LOG_DIR/telegram_bot.log" 2>&1 < /dev/null &
     fi
     TELEGRAM_BOT_PID=$!
     if detached_start_requested; then
@@ -12393,11 +12562,14 @@ EOF
   fi
   TELEGRAM_STARTED_BY_SCRIPT=true
   printf '%s\n' "$TELEGRAM_BOT_PID" >"$TELEGRAM_BOT_PID_FILE"
-  if [[ -n "$telegram_handoff_transaction" ]] && ! "$PYTHON_BIN" \
-    "$TELEGRAM_POLLER_HANDOFF_HELPER" attach-candidate \
+  telegram_handoff_status=0
+  if [[ -n "$telegram_handoff_transaction" ]]; then
+    "$PYTHON_BIN" "$TELEGRAM_POLLER_HANDOFF_HELPER" attach-candidate \
       --transaction "$telegram_handoff_transaction" \
       --pid "$TELEGRAM_BOT_PID" \
-      --timeout "$telegram_attach_timeout" >/dev/null; then
+      --timeout "$telegram_attach_timeout" >/dev/null || telegram_handoff_status=$?
+  fi
+  if [[ "$telegram_handoff_status" != "0" ]]; then
     "$PYTHON_BIN" "$TELEGRAM_POLLER_HANDOFF_HELPER" rollback \
       --state-dir "$TELEGRAM_POLLER_STATE_DIR" \
       --transaction "$telegram_handoff_transaction" >/dev/null 2>&1 || true
@@ -12407,6 +12579,7 @@ EOF
     popd >/dev/null
     popd >/dev/null
     restore_telegram_env
+    if [[ "$telegram_handoff_status" == "2" ]]; then return 78; fi
     return 1
   fi
   local telegram_ready_json=""
@@ -12421,9 +12594,12 @@ EOF
   if [[ -n "$telegram_handoff_transaction" ]]; then
     telegram_ready_args+=(--transaction "$telegram_handoff_transaction")
   fi
-  if ! telegram_ready_json="$(
+  if telegram_ready_json="$(
     "$PYTHON_BIN" "$TELEGRAM_POLLER_HANDOFF_HELPER" "${telegram_ready_args[@]}"
   )"; then
+    :
+  else
+    telegram_handoff_status=$?
     rm -f "$TELEGRAM_BOT_PID_FILE"
     if [[ -n "$telegram_handoff_transaction" ]]; then
       "$PYTHON_BIN" "$TELEGRAM_POLLER_HANDOFF_HELPER" rollback \
@@ -12442,6 +12618,7 @@ EOF
     if [[ "$telegram_backend" == "livekit" ]]; then
       export LIVEKIT_AGENT_NAME="$previous_agent_name"
     fi
+    if [[ "$telegram_handoff_status" == "2" ]]; then return 78; fi
     return 1
   fi
   TELEGRAM_BOT_PID="$(telegram_handoff_json_field "$telegram_ready_json" pid)"
@@ -12449,10 +12626,12 @@ EOF
   if [[ -n "$telegram_handoff_transaction" ]]; then
     "$PYTHON_BIN" "$TELEGRAM_POLLER_HANDOFF_HELPER" commit \
       --transaction "$telegram_handoff_transaction" >/dev/null || {
+      telegram_handoff_status=$?
       log_error "Telegram bot became ready but its handoff could not be committed"
       popd >/dev/null
       popd >/dev/null
       restore_telegram_env
+      if [[ "$telegram_handoff_status" == "2" ]]; then return 78; fi
       return 1
     }
   fi

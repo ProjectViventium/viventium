@@ -305,6 +305,66 @@ def test_voice_markup_display_sanitizer_strips_each_xai_square_wrapper(tag):
     assert display_text == "Lead keep this tail."
 
 
+
+@pytest.mark.parametrize("fence", ["```", "~~~"])
+@pytest.mark.parametrize("closed", [True, False])
+def test_voice_display_preserves_literal_code_during_streaming(fence, closed):
+    literal = '  [draft]  [12]  <soft>literal</soft>  \\n  {SKIP_VOICE}'
+    code = fence + "text\n" + literal + ("\n" + fence if closed else "")
+    text = "<soft>Ready.</soft> [laughter]\n" + code
+
+    display = sanitize_telegram_display_text(text)
+    rendered = render_telegram_markdown(text, strip_voice_markup=True, streaming_preview=True)
+
+    assert display == "Ready. \n" + code
+    assert "[draft]" in rendered
+    assert "[12]" in rendered
+    assert "  " in rendered
+    assert "&lt;soft&gt;literal&lt;/soft&gt;" in rendered
+    assert "[laughter]" not in rendered
+
+
+def test_voice_display_preserves_literal_inline_code_and_json_backslashes():
+    literal = r'{"path":"C:\\temp\\notes","items":["[draft]","a\\b"]}'
+    text = "<soft>Ready.</soft> `" + literal + "` [laughter]"
+
+    assert sanitize_telegram_display_text(text) == "Ready. `" + literal + "`"
+    assert render_telegram_markdown(text, strip_voice_markup=True) == "Ready. <code>" + literal + "</code>"
+
+
+@pytest.mark.asyncio
+async def test_followup_preserves_literal_json_and_still_hides_voice_controls():
+    bridge = _make_bridge()
+    captured = {}
+
+    async def capture(chat_id, message, parse_mode=None):
+        captured.update(message=message, parse_mode=parse_mode)
+
+    bridge.set_on_message_callback(capture)
+    literal = r'{"path":"C:\\temp\\notes","items":["[draft]","a\\b"]}'
+    await bridge._send_followup_text("123", "<soft>Ready.</soft>\n```json\n" + literal + "\n```")
+
+    assert captured["parse_mode"] == "HTML"
+    assert literal in captured["message"]
+    assert "&lt;soft&gt;" not in captured["message"]
+
+
+@pytest.mark.parametrize("opening,closing", [
+    ('<emotion value="happy">', '</emotion>'),
+    ('<spell>', '</spell>'),
+    ('<soft>', '</soft>'),
+])
+def test_voice_wrappers_around_inline_literal_code_stay_hidden(opening, closing):
+    text = opening + "Keep `literal [draft]` here." + closing
+    assert sanitize_telegram_display_text(text) == "Keep `literal [draft]` here."
+    assert render_telegram_markdown(text, strip_voice_markup=True) == "Keep <code>literal [draft]</code> here."
+
+
+def test_stray_backtick_does_not_hide_following_voice_controls_or_citations():
+    text = "A stray ` stays literal [laughter] [12] \ue202turn0search0"
+    assert sanitize_telegram_display_text(text) == "A stray ` stays literal"
+    assert render_telegram_markdown(text, strip_voice_markup=True) == "A stray ` stays literal"
+
 def test_render_telegram_markdown_preserves_preescaped_text():
     text = "Already escaped\\. Still escaped\\! And list\\-item\\."
     rendered = render_telegram_markdown(text)
@@ -436,25 +496,26 @@ def test_extract_final_error_from_error_content_part():
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    "native_status,audio,valid,required,source,text,error,quiet",
+    "unfinished,audio,valid,required,source,text,error,quiet",
     [
-        ("completed", "skip", True, True, "model", "", False, True),
-        ("pending", "skip", True, True, "model", "", False, False),
-        (None, "skip", True, True, "model", "", False, False),
-        ("completed", "eligible", True, True, "model", "", False, False),
-        ("completed", "skip", False, True, "model", "", False, False),
-        ("completed", "skip", True, False, "model", "", False, False),
-        ("completed", "skip", True, True, "fallback", "", False, False),
-        ("completed", "skip", True, True, "model", "", True, False),
-        ("completed", "skip", True, True, "model", "A text-only answer.", False, False),
+        (False, "skip", True, True, "model", "", False, True),
+        (True, "skip", True, True, "model", "", False, False),
+        ("aborted", "skip", True, True, "model", "", False, False),
+        (False, "eligible", True, True, "model", "", False, False),
+        (False, "skip", False, True, "model", "", False, False),
+        (False, "skip", True, False, "model", "", False, False),
+        (False, "skip", True, True, "fallback", "", False, False),
+        (False, "skip", True, True, "model", "", True, False),
+        (False, "skip", True, True, "model", "A text-only answer.", False, False),
     ],
 )
 async def test_stream_completed_native_quiet_is_not_malformed(
-    monkeypatch, native_status, audio, valid, required, source, text, error, quiet,
+    monkeypatch, unfinished, audio, valid, required, source, text, error, quiet,
 ):
     bridge = _make_bridge()
     response = {
         "messageId": "native-quiet-message",
+        "user": "synthetic-owner", "unfinished": unfinished, "error": False,
         "text": text,
         "content": [{"type": "text", "text": text}],
         "metadata": {"viventium": {"deliveryDisposition": {
@@ -462,11 +523,12 @@ async def test_stream_completed_native_quiet_is_not_malformed(
             "required": required, "source": source,
         }}},
     }
-    if native_status is not None:
-        response["nativeResponse"] = {"status": native_status}
     if error:
         response.update(error=True, errorMessage="Provider rejected the request.")
     payload = {"final": True, "responseMessage": response}
+    if unfinished == "aborted":
+        response["unfinished"] = False
+        payload["aborted"] = True
 
     async def events(*, chunk_iter):
         yield payload
@@ -499,8 +561,11 @@ async def test_stream_completed_native_quiet_is_not_malformed(
         assert chunks == [{
             "type": "delivery_disposition",
             "delivery_disposition": response["metadata"]["viventium"]["deliveryDisposition"],
-            "required": True, "present": True,
+            "required": True, "present": True, "quiet_completion": True,
         }]
+    elif unfinished == "aborted":
+        assert len(chunks) == 1 and chunks[0]["type"] == "superseded"
+        assert chunks[0]["reason"] == "aborted"
     elif text:
         assert text in chunks
     elif error:
@@ -6766,9 +6831,10 @@ async def test_glasshive_dispatcher_backs_off_and_deduplicates_dependency_failur
     attempts = 0
     sleeps = []
 
-    async def fake_claim(*, limit):
+    async def fake_claim(*, limit, wait_s=0):
         nonlocal attempts
         assert limit == bridge.glasshive_delivery_batch_size
+        assert wait_s == bridge.glasshive_delivery_poll_s
         attempts += 1
         if attempts <= 3:
             raise RuntimeError("dependency unavailable")
@@ -8397,6 +8463,75 @@ async def test_worker_no_response_still_suppresses_attachments():
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("text", ["", "   "])
+@pytest.mark.parametrize("authorization", ["accepted", "denied", "renewal_lost"])
+async def test_worker_attachment_only_keeps_authority_and_receipt_without_text_or_voice(text, authorization):
+    bridge = _make_bridge()
+    events, statuses = [], []
+    attachments = [{"file_id": "accepted-file", "filename": "result.csv"}]
+
+    async def authorize(delivery):
+        events.append("authorize")
+        return None if authorization == "denied" else await _fake_glasshive_dispatch_permit(delivery)
+
+    async def renew(delivery, permit):
+        events.append("renew")
+        return None if authorization == "renewal_lost" else await _fake_glasshive_dispatch_permit_renewal(delivery, permit)
+
+    async def callback(chat_id, rendered, *, before_side_effect, attachments, **kwargs):
+        assert chat_id == 404
+        assert rendered == ""
+        assert kwargs.get("voice_audio") is None
+        assert attachments == [{"file_id": "accepted-file", "filename": "result.csv"}]
+        await before_side_effect()
+        events.append("file")
+        kwargs["on_message_ids"](["file-message"])
+        return {"message_ids": ["file-message"]}
+
+    async def mark(delivery, status, **kwargs):
+        statuses.append((status, delivery.get("telegramSentMessageIds")))
+        return True
+
+    async def release(delivery, permit):
+        events.append("release")
+        return True
+
+    bridge.set_on_message_callback(callback)
+    bridge._authorize_glasshive_delivery = authorize
+    bridge._renew_glasshive_delivery = renew
+    bridge._mark_glasshive_delivery_status = mark
+    bridge._release_glasshive_delivery = release
+    delivery = {"deliveryId": "file-only", "claimId": "claim", "telegramChatId": "404",
+        "event": "main.followup", "text": text, "attachments": attachments,
+        "deliveryControls": {"deliveryDisposition": {
+            "version": 1, "audio": "skip", "required": True, "valid": True, "source": "model"}}}
+    assert await bridge._deliver_glasshive_delivery(delivery) is (authorization == "accepted")
+    if authorization == "accepted":
+        assert events == ["authorize", "renew", "file", "renew"]
+        assert statuses == [("sent", ["file-message"])]
+    else:
+        assert "file" not in events
+        assert not any(status == "sent" for status, _ in statuses)
+
+
+@pytest.mark.asyncio
+async def test_empty_worker_followup_without_files_stays_silent():
+    bridge = _make_bridge()
+    bridge.set_on_message_callback(lambda *args, **kwargs: pytest.fail("empty callback sent"))
+    bridge._authorize_glasshive_delivery = lambda *args: pytest.fail("empty callback authorized")
+    statuses = []
+
+    async def mark(delivery, status, **kwargs):
+        statuses.append(status)
+        return True
+
+    bridge._mark_glasshive_delivery_status = mark
+    assert await bridge._deliver_glasshive_delivery({"deliveryId": "empty", "claimId": "claim",
+        "telegramChatId": "404", "text": "", "attachments": []}) is False
+    assert statuses == ["suppressed"]
+
+
+@pytest.mark.asyncio
 async def test_streamed_text_equality_does_not_suppress_new_followup_file_carrier():
     bridge = _make_bridge()
     bridge.followup_timeout_s = bridge.glasshive_timeout_s = 0.05
@@ -8650,3 +8785,17 @@ async def test_stream_response_final_attachment_carries_authenticated_native_fil
             "attachment": {"file_id": "file-1", "filename": "x.png", "filepath": "/images/u/x.png"},
         }
     ]
+
+
+@pytest.mark.parametrize("patch", [
+    {"aborted": True},
+    {"responseMessage": {"user": "owner", "messageId": "id", "unfinished": True}},
+    {"responseMessage": {"user": "owner", "messageId": "id", "error": True}},
+    {"responseMessage": {"user": "owner", "messageId": "id", "isCreatedByUser": True}},
+    {"responseMessage": {"messageId": "id"}},
+])
+def test_public_success_identity_rejects_non_completion(patch):
+    from TelegramVivBot.utils.librechat_bridge import _native_file_identity_from_final
+    payload = {"final": True, "responseMessage": {"user": "owner", "messageId": "id", "unfinished": False}}
+    payload.update(patch)
+    assert _native_file_identity_from_final(payload) is None

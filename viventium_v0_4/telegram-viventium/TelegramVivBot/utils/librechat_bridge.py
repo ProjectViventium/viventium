@@ -263,7 +263,10 @@ _CITATION_CLEANUP_RE = re.compile(
     re.IGNORECASE,
 )
 _BRACKET_CITATION_RE = re.compile(r"\[(\d{1,3})\](?=\s|$)")
-_MARKDOWN_CODE_SPAN_RE = re.compile(r"```[\s\S]*?```|`[^`\n]*`")
+_MARKDOWN_CODE_SPAN_RE = re.compile(
+    r"```[\s\S]*?(?:```|\Z)|~~~[\s\S]*?(?:~~~|\Z)|`[^`\n]*`",
+    re.MULTILINE,
+)
 _EM_DASH_RE = re.compile("—")
 _EM_DASH_OPENERS = "\"'“‘([{"
 # Voice-control markup is model-authored text for expressive TTS. It must not be
@@ -273,14 +276,14 @@ _VOICE_EMOTION_SELF_CLOSING_RE = re.compile(
     r'<emotion\s+value=["\']?[^"\'>]+["\']?\s*/>',
     re.IGNORECASE,
 )
-_VOICE_EMOTION_WRAP_RE = re.compile(
-    r'<emotion\s+value=["\']?[^"\'>]+["\']?\s*>([\s\S]*?)</emotion>',
+_VOICE_EMOTION_TAG_RE = re.compile(
+    r'<emotion\s+value=["\']?[^"\'>]+["\']?\s*>|</emotion>',
     re.IGNORECASE,
 )
 _VOICE_BREAK_RE = re.compile(r'<break\s+time=["\']?[^"\'>]+["\']?\s*/>', re.IGNORECASE)
 _VOICE_SPEED_RE = re.compile(r'<speed\s+ratio=["\']?[^"\'>]+["\']?\s*/>', re.IGNORECASE)
 _VOICE_VOLUME_RE = re.compile(r'<volume\s+ratio=["\']?[^"\'>]+["\']?\s*/>', re.IGNORECASE)
-_VOICE_SPELL_RE = re.compile(r"<spell>([\s\S]*?)</spell>", re.IGNORECASE)
+_VOICE_SPELL_RE = re.compile(r"</?spell>", re.IGNORECASE)
 _VOICE_BRACKET_RE = re.compile(r"\[([A-Za-z][A-Za-z' -]{1,40})\]")
 _XAI_TTS_CAPABILITIES_PATH = (
     Path(__file__).resolve().parents[3] / "shared" / "voice" / "xai_tts_capabilities.json"
@@ -527,13 +530,18 @@ def sanitize_telegram_text(
         lambda match: "" if _contains_glasshive_raw_tool_name(match.group(0)) else match.group(0),
         cleaned,
     )
-    cleaned = _CITATION_COMPOSITE_RE.sub(" ", cleaned)
+    # Internal tool transcripts still have their own exclusion above. Display
+    # cleanup must not reinterpret literal code as citations or speech controls.
+    return _apply_outside_markdown_code(cleaned, _sanitize_telegram_prose)
+
+
+def _sanitize_telegram_prose(text: str) -> str:
+    cleaned = _CITATION_COMPOSITE_RE.sub(" ", text)
     cleaned = _CITATION_STANDALONE_RE.sub(" ", cleaned)
     cleaned = _CITATION_CLEANUP_RE.sub(" ", cleaned)
     cleaned = _BRACKET_CITATION_RE.sub(" ", cleaned)
-    cleaned = _apply_outside_markdown_code(cleaned, _normalize_em_dashes_for_telegram)
-    cleaned = re.sub(r"[ \t]{2,}", " ", cleaned)
-    return cleaned
+    cleaned = _normalize_em_dashes_for_telegram(cleaned)
+    return re.sub(r"[ \t]{2,}", " ", cleaned)
 
 
 def _contains_glasshive_raw_tool_name(text: str) -> bool:
@@ -562,13 +570,17 @@ def _strip_tool_transcript_lines(text: str) -> str:
 def strip_voice_control_tags_for_display(text: str) -> str:
     if not text:
         return ""
+    return _apply_outside_markdown_code(text, _strip_voice_control_tags_from_prose).strip()
+
+
+def _strip_voice_control_tags_from_prose(text: str) -> str:
     cleaned = _VOICE_SPEAK_RE.sub("", text)
-    cleaned = _VOICE_EMOTION_WRAP_RE.sub(r"\1", cleaned)
+    cleaned = _VOICE_EMOTION_TAG_RE.sub("", cleaned)
     cleaned = _VOICE_EMOTION_SELF_CLOSING_RE.sub("", cleaned)
     cleaned = _VOICE_BREAK_RE.sub("", cleaned)
     cleaned = _VOICE_SPEED_RE.sub("", cleaned)
     cleaned = _VOICE_VOLUME_RE.sub("", cleaned)
-    cleaned = _VOICE_SPELL_RE.sub(r"\1", cleaned)
+    cleaned = _VOICE_SPELL_RE.sub("", cleaned)
     while True:
         updated = _VOICE_XAI_WRAPPER_RE.sub(lambda match: match.group("text") or "", cleaned)
         if updated == cleaned:
@@ -577,8 +589,7 @@ def strip_voice_control_tags_for_display(text: str) -> str:
     cleaned = _VOICE_XAI_ANGLE_TAG_RE.sub("", cleaned)
     cleaned = _VOICE_XAI_BRACKET_TAG_RE.sub("", cleaned)
     cleaned = _VOICE_BRACKET_RE.sub(_strip_voice_bracket_marker, cleaned)
-    cleaned = re.sub(r"[ \t]{2,}", " ", cleaned)
-    return cleaned.strip()
+    return re.sub(r"[ \t]{2,}", " ", cleaned)
 
 
 def apply_structured_delivery_controls(text: str, delivery_controls: Any) -> str:
@@ -740,7 +751,8 @@ def _verified_attachment_grants(
 def _native_file_identity_from_final(payload: dict[str, Any]) -> Optional[tuple[str, str]]:
     """Bind File receipts to the authenticated Core public final Message identity."""
     response = payload.get("responseMessage")
-    if (payload.get("final") is not True or not isinstance(response, dict)
+    if (payload.get("final") is not True or payload.get("aborted") is True
+            or not isinstance(response, dict)
             or response.get("unfinished") is True or response.get("error") is True
             or response.get("isCreatedByUser") is True):
         return None
@@ -2560,7 +2572,10 @@ class LibreChatBridge:
         consecutive_failures = 0
         while True:
             try:
-                claimed = await self._claim_glasshive_deliveries(limit=self.glasshive_delivery_batch_size)
+                claimed = await self._claim_glasshive_deliveries(
+                    limit=self.glasshive_delivery_batch_size,
+                    wait_s=interval_s,
+                )
                 if consecutive_failures:
                     logger.info(
                         "GlassHive delivery dispatcher dependency recovered after %s failed attempt(s)",
@@ -2568,7 +2583,8 @@ class LibreChatBridge:
                     )
                     consecutive_failures = 0
                 if not claimed:
-                    await asyncio.sleep(interval_s)
+                    if not getattr(self, "_glasshive_delivery_wait_supported", False):
+                        await asyncio.sleep(interval_s)
                     continue
                 for delivery in claimed:
                     await self._deliver_glasshive_delivery_bounded(delivery)
@@ -2593,6 +2609,7 @@ class LibreChatBridge:
         *,
         limit: int = 10,
         callback_id: Optional[str] = None,
+        wait_s: float = 0.0,
     ) -> list[dict[str, Any]]:
         if not self.base_url or not self.secret:
             return []
@@ -2605,7 +2622,11 @@ class LibreChatBridge:
         }
         if callback_id:
             payload["callbackId"] = callback_id
+        wait_ms = min(5000, max(0, int(wait_s * 1000)))
+        if wait_ms:
+            payload["waitMs"] = wait_ms
         timeout = httpx.Timeout(10.0, connect=5.0, read=10.0, write=5.0, pool=5.0)
+        claim_started_at = time.monotonic()
         async with httpx.AsyncClient(
             timeout=timeout,
             **_async_client_options_for_url(url),
@@ -2614,8 +2635,21 @@ class LibreChatBridge:
             if response.status_code != 200:
                 raise RuntimeError(f"GlassHive delivery claim failed ({response.status_code})")
             data = response.json()
+        if wait_ms:
+            self._glasshive_delivery_wait_supported = (
+                isinstance(data, dict) and data.get("waitSupported") is True
+            )
         deliveries = data.get("deliveries") if isinstance(data, dict) else None
-        return [item for item in deliveries if isinstance(item, dict)] if isinstance(deliveries, list) else []
+        claimed = [item for item in deliveries if isinstance(item, dict)] if isinstance(deliveries, list) else []
+        if claimed:
+            logger.info(
+                "GlassHive delivery claimed count=%s claim_ms=%.2f wait_requested_ms=%s wait_supported=%s",
+                len(claimed),
+                (time.monotonic() - claim_started_at) * 1000.0,
+                wait_ms,
+                getattr(self, "_glasshive_delivery_wait_supported", False),
+            )
+        return claimed
 
     async def _mark_glasshive_delivery_status(
         self,
@@ -3043,11 +3077,11 @@ class LibreChatBridge:
     async def _deliver_glasshive_delivery(self, delivery: dict[str, Any]) -> bool:
         chat_id = str(delivery.get("telegramChatId") or "").strip()
         text = str(delivery.get("fullText") or delivery.get("text") or "").strip()
-        if not chat_id or not text:
+        if not chat_id or (not text and not delivery.get("attachments")):
             await self._mark_glasshive_delivery_status(
                 delivery,
                 "suppressed",
-                reason="missing Telegram chat id or text",
+                reason="missing Telegram chat id or content",
             )
             return False
         if is_no_response_only(text):
@@ -3952,6 +3986,9 @@ class LibreChatBridge:
                 ]
                 payload_parse_mode = parse_mode
 
+            if not payloads and attachments:
+                # An accepted file does not need placeholder prose or synthesized speech.
+                payloads = [""]
             if not payloads:
                 if return_receipt:
                     return {"sent": False, "message_ids": []}
@@ -4998,10 +5035,13 @@ class LibreChatBridge:
                             if payload_has_glasshive_tool_call(payload):
                                 self._mark_glasshive_seen(stream_id)
 
-                            if payload.get("final") and payload.get("superseded") is True:
+                            if payload.get("final") and (
+                                payload.get("superseded") is True or payload.get("aborted") is True
+                            ):
                                 self._mark_stream_final(stream_id)
                                 yield {
                                     "type": "superseded",
+                                    **({"reason": "aborted"} if payload.get("aborted") is True else {}),
                                     "logical_turn_id": str(
                                         payload.get("logical_turn_id")
                                         or payload.get("logicalTurnId")
@@ -5069,11 +5109,10 @@ class LibreChatBridge:
                                     ),
                                 )
                                 disposition = disposition_event["delivery_disposition"]
-                                native = (response_payload.get("nativeResponse")
-                                          if isinstance(response_payload, dict) else None)
+                                # Core deliberately omits nativeResponse from public messages.
+                                # Accept silence only from a successful public final, never an abort.
                                 quiet_native_final = bool(
-                                    isinstance(native, dict)
-                                    and native.get("status") == "completed"
+                                    _native_file_identity_from_final(payload) is not None
                                     and disposition is not None
                                     and disposition["required"] is True
                                     and disposition["source"] == "model"
@@ -5171,6 +5210,7 @@ class LibreChatBridge:
                                 ):
                                     diagnosis = _diagnose_empty_response(payload)
                                     if quiet_native_final:
+                                        disposition_event["quiet_completion"] = True
                                         self._trace(
                                             "LibreChatBridge accepted quiet native final: stream_id=%s",
                                             stream_id,
@@ -6240,7 +6280,7 @@ class LibreChatBridge:
         delivery_controls: Optional[dict[str, Any]] = None,
         native_file_identity: Optional[tuple[str, str]] = None,
     ) -> Any:
-        if not text:
+        if not text and not attachments:
             return False
         # === VIVENTIUM START ===
         # Feature: No-response tag ({NTA}) should never be delivered to Telegram users.
@@ -6253,7 +6293,7 @@ class LibreChatBridge:
             covered_file_grants=_verified_attachment_grants(attachments, native_file_identity))
         parse_mode = "HTML"
         # === VIVENTIUM NOTE END ===
-        if not message:
+        if not message and not attachments:
             return False
         target_chat_id = self._resolve_telegram_chat_id(chat_id=chat_id, stream_id=stream_id)
         if target_chat_id is None:

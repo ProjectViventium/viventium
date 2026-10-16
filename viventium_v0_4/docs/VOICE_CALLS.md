@@ -535,11 +535,14 @@ Notes:
 - Local Whisper recognition feeds pywhispercpp in-memory 16 kHz mono float32 PCM and logs sanitized
   per-stage timings when voice latency logging is enabled. It does not write transcript text to the
   timing log.
-- `large-v3-turbo` defaults to `VIVENTIUM_STT_AUDIO_CTX=768`, `VIVENTIUM_STT_SINGLE_SEGMENT=true`,
-  and `VIVENTIUM_STT_NO_CONTEXT=true` only for short local LiveKit final chunks. The reduced context
-  is duration-gated by `VIVENTIUM_STT_REDUCED_AUDIO_CTX_MAX_AUDIO_S` (default `12.0`) so longer
-  chunks use pywhispercpp/whisper.cpp's default audio context. Set `VIVENTIUM_STT_AUDIO_CTX=0` to
-  restore the default audio context for every chunk.
+- Local Whisper uses full native audio context (`audio_ctx=0`) for every utterance and prewarm;
+  old reduced-context environment settings do not shrink it. `VIVENTIUM_STT_NO_CONTEXT=true`
+  prevents prior transcription from becoming an implicit decoder prompt.
+- `VIVENTIUM_STT_SINGLE_SEGMENT` defaults to `false`, the native multi-segment behavior. Forcing
+  a single output segment dropped the final question in a retained long-utterance comparison;
+  native multi-segment decoding preserved it on the same audio/model. The VAD adapter already
+  joins all native segments into one transcript. The existing explicit override remains available;
+  do not shorten valid speech or add a custom splitter to hide decoder loss.
 - Local Whisper routes default `VIVENTIUM_VOICE_WORKER_LOAD_THRESHOLD=inf`; CPU load during model
   warm-up is not a reliable overload signal and must not make LiveKit stop dispatching jobs to a
   healthy local worker.

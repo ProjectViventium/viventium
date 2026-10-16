@@ -41,6 +41,78 @@ Grok 4.7 Fast but offers Grok 4.7, a Fast request uses Grok 4.7 and reports that
 Grok uses its native ACP system rules for
 server-owned agent instructions and the existing private worker sign-in boundary.
 
+### Optional Direct API execution
+
+The same xPerfect provider catalog can select `direct-openai:gpt-6.1-sol`,
+`direct-anthropic:claude-opus-5-5`, or `direct-xai:grok-4.7`. Each recommends High;
+native defaults and supported alternatives remain unchanged. Direct is an executor choice for the
+existing Queen or ordinary workers, not another orchestrator. It uses the official single-agent
+SDK and the existing xPerfect host supervisor, account binding, MCP projections, history, work
+controls and callbacks. API credentials and API billing are separate from CLI subscriptions.
+An explicitly selected account must supply its own authorized key; an ambient key cannot replace it.
+
+Direct exposes only real configured tools. Native computer or shell work uses authorized MCP tools
+or the existing worker handoff. Shared context references do not imply free provider context or a
+transferable prompt cache. Retain protocol, tool, reasoning and message identifiers across turns.
+Internal commentary and skip-voice parts remain outside speech. Keep worker safety instructions
+and each role's complete, correctly ordered authority.
+
+Respect the admitted context owner and protocol. A repeated canonical Core snapshot is not another
+user turn to append indefinitely to SDK history. Delta input still needs its accepted prior state.
+Any history reduction must preserve actual user turns, files, native tool-call/result pairs and
+reasoning identifiers; a role label or output schema alone does not prove a stateless context.
+The Direct request projection keeps the first trusted Core archive copy and omits later exact
+duplicates only when admitted origin and content hashes match. It preserves the earlier request
+prefix, all unique content and the raw SDK journal. Unmarked legacy inputs remain unchanged. This
+reduces provider input; it does not compact the journal or prove a latency or reliability gain.
+
+Direct uses the shared native conversation-parts collector for streamed replies, terminal text and
+mixed speech dispositions. Final output must pass the owning schema and conversation controls;
+plain provider sampling does not make arbitrary text eligible for speech. Completed native tool
+rounds are checkpointed before the next provider request, preserving actual tool identifiers if
+generation stops. Do not fabricate tool results or automatically replay uncertain effects.
+
+Account selection and binding must require API-key authentication for a Direct executor while
+preserving native subscription choices. The existing host supervisor owns the execution deadline;
+an independent short HTTP read timeout must not cut off an otherwise authorized longer run.
+
+Core's active-work capsule can carry an exact compiler-authored DATA range through the existing
+Main-context metadata. For Direct, the current full roster stays visible. Only older consecutive
+identical bound rosters can be omitted from outgoing history; changed, unmarked or other-epoch
+inputs break coverage. Unique goals, files, tool returns and the raw journal remain intact. This
+complements exact static-archive projection and does not rewrite legacy history or native CLI
+sessions. Content-free block/byte counts use the existing Direct stage event.
+
+Stateful Direct OpenAI/xAI calls also send the official prompt-cache routing key, hashed with a
+versioned domain from the complete existing history scope. No key is sent for Anthropic, stateless
+or private machine-state calls. Server response storage remains disabled and retention is unchanged.
+A key is a routing hint, not a promised cache hit or speedup; fresh authorization is still required.
+
+Direct execution is host-only and starts cold by default. The existing worker startup settings can
+optionally keep 0–8 import-only SDK processes ready per worker, with 10–3600-second expiry. This
+reuses xPerfect's NativeWarmPool and aggregate 16-global/8-owner limits across Grok and Direct.
+Idle processes carry no account key, grant, history, tools or model request; each single-use admitted
+run receives its fresh authorized inputs. A ready existing Queen/worker can skip SDK imports; a new
+worker is cold unless it was already configured and ready. Missing readiness keeps the normal cold
+path. Fresh authentication, tools, history and client construction remain measured work, not provider
+KV-cache reuse. Default count is zero; an isolated import-only observation used about 113–133 MiB
+per idle process, so eight can use about 1 GiB before active work. This estimate varies by installed
+SDK/provider modules and platform. Source tests and isolated import checks are not end-to-end voice acceptance.
+Configured options must be sent faithfully or report an unsupported configuration; do not silently
+drop options to make the request pass.
+Grok 4.7 supports Low, Medium, High and XHigh reasoning, not disabled reasoning.
+
+Stop ends the local executor and its ability to make further tool calls. It does not prove that the
+provider stopped cloud inference or billing. Preserve accepted durable work, uncertain action
+receipts and late-output fences; do not automatically replay uncertain effects. No separate remote
+execution manager or indefinite GPU-capacity lock is required for that distinction.
+
+Source implementation is separate from installed-path acceptance. Provider availability, actual
+Queen/worker handoff, history, streaming, cancellation and affected Voice/Text/Telegram paths need
+candidate-bound evidence before claiming full parity. Shared API-key setup retains native CLI
+credential-artifact compatibility; an installed but failing native setup command can still block
+that shared connection path. Direct Docker placement and universal API-only setup are not delivered.
+
 ### Backlog
 
 OpenCode model and effort parity is deferred. Keep its current routes unchanged until a separate
@@ -49,6 +121,13 @@ request resumes that work.
 ### Non-goals
 
 - **GHM-005:** Implement the concrete provider path without speculative platform expansion.
+
+### Experimental local inference
+
+The [local-model research owner](../../research_and_future_plans/05_Local_Models_and_Native_Harnesses.md)
+records native xPerfect Main/worker feasibility and its limits. This is not an installed provider
+promise or a change to the defaults above. The existing host-worker cases `GHHOST-027`–`029` and
+their dated report own qualification; raw model speed is not provider, worker or offline acceptance.
 
 ### Identity and connections
 
@@ -92,6 +171,19 @@ request resumes that work.
 - **PW-057:** Descendants may inherit but never expand authority; a missing broker never permits a
   native bypass.
 
+Ordinary mission launches retain their reviewed connected-service permissions but defer server
+discovery. Their initial MCP catalog exposes the existing discovery helpers and resolved host
+tools; the worker chooses a service with `capability_describe` and invokes it through
+`capability_invoke`. Unrelated services must not delay the first model request. Successful discovery
+reuses the existing grant-and-server cache for describe and invoke, after current user, policy and stored-credential
+checks. A selected service still uses normal connection/authentication and can report unavailable.
+This saves eager startup and schema tokens; a genuinely needed service can add a discovery tool round.
+
+The explicit eager/deferred partition belongs to the durable authorization fingerprint, signed
+run grant, worker projection and visible instruction context. Existing authorizations without this
+partition keep their eager behavior on replay and Resume. Standalone operator and scheduled
+defaults and the conversation's explicitly declared tools remain unchanged.
+
 ### Native harness boundary
 
 - **GHU-005:** Use native harness capabilities inside the isolated workspace. The host does not copy
@@ -119,7 +211,9 @@ request resumes that work.
 - **PW-062 / PW-063 / PW-064:** One authoritative envelope returns text, sources, structured output,
   files, media, and artifacts exactly once. Results remain available at the origin and Active Work;
   unsupported rendering gets a stable handoff, and absent, duplicate, dead, or foreign artifacts
-  are never claimed.
+  are never claimed. A media-link caption for a canonical file in the same callback does not
+  create another attachment when its authorized download URL, hash, size and MIME type match.
+  Preserve distinct grants, callback origins and all intentional canonical filenames.
 
 ### Fallback and authority
 
@@ -154,3 +248,26 @@ wording. A reachable host endpoint alone does not pass.
 - [GlassHive Workstation Sandbox Runtime](../48_GlassHive_Workstation_Sandbox_Runtime.md)
 - [GlassHive Workflows Self Healing and Feature Requests](../51_GlassHive_Workflows_Self_Healing_and_Feature_Requests.md)
 - [GlassHive User Control Plane and Persistent Workspaces](../57_GlassHive_User_Control_Plane_and_Persistent_Workspaces.md)
+
+Declared provider model IDs must remain available when a fetched model catalog is cached. The
+shared catalog projection serves Main, Voice, fallback and model selectors, so a displayed
+capability label cannot hide an executable-model rejection. API connection readiness confirms
+configuration only; model access is checked on the actual request. Generic parameter controls
+follow the public endpoint drop list. Direct API controls do not claim native shell sandboxing
+or native tools. These contracts apply to all shared Agent model parameter surfaces.
+
+### Capability instructions and failed consultations
+
+A local orchestration facade is not the complete MCP server behind its historical tool ID.
+Project instructions from the exact declared callable surface. Do not load full source-server
+instructions merely because a facade ID retains an MCP suffix. Actual MCP tools still receive
+their server instructions, including when the same agent also has local facades.
+
+An explicitly rejected model request in a hidden specialist consultation returns through the
+existing scoped error handoff to its caller. Preserve the original user turn and the caller's
+own capabilities. The caller decides what remains possible. This is not an automatic retry,
+provider change, or replay of accepted actions. Tool failures, cancellation, source-integrity
+failures and fatal errors retain their distinct handling.
+
+These are capability and error-provenance contracts. They do not prescribe which requests the
+model should delegate or consult, and they do not prove full provider or channel parity.

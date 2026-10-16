@@ -16,6 +16,67 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 EVAL_SCRIPT = REPO_ROOT / "qa" / "prompt-architecture" / "evals" / "run-exact-model-evals.cjs"
 
 
+@pytest.mark.parametrize("rotation", ["existing_rotated", "rename", "replacement"])
+def test_exact_model_eval_reads_rotated_current_request_without_stale_replay(
+    tmp_path: Path, rotation: str,
+) -> None:
+    node_script = r"""
+const assert = require('assert');
+const fs = require('fs');
+const path = require('path');
+const Module = require('module');
+const logDir = process.argv[1];
+process.env.VIVENTIUM_EVAL_RUNTIME_LOG_DIR = logDir;
+const script = process.argv[2];
+// Expose the existing private capture function without changing execution policy.
+const subject = new Module(script, module);
+subject.filename = script;
+subject.paths = Module._nodeModulePaths(path.dirname(script));
+subject._compile(fs.readFileSync(script, 'utf8') +
+  '\nmodule.exports.captureForTest = capturePromptFrameCursor;\n', script);
+const harness = subject.exports;
+const expected = 'fedcba9876543210';
+const foreign = '0123456789abcdef';
+const active = path.join(logDir, 'debug-2026-10-15.log');
+const rotated = active + '.1';
+const trace = (request, time, tokens) => `${time} debug: [PromptFrameTraceTelemetry] ${JSON.stringify({
+  version: 2, time, family: 'main_run_create', surface: 'web',
+  requested_provider: 'hf554c0039ffbe0dc', requested_model: 'h6bd8f29788b203c2',
+  requested_effort: 'high', provider: 'hf554c0039ffbe0dc', model: 'h6bd8f29788b203c2',
+  effective_effort: 'high', fallback_used: false, fallback_reason: 'none',
+  agent_id_hash: 'b3a4dba3d4308b02', request_identity_hash: request,
+  layer_tokens: { main_instructions: tokens }, source_hashes: { agent_source: 'aaaabbbbccccdddd' },
+  raw_prompt: 'PRIVATE_PROMPT_SENTINEL',
+})}\n`;
+const stale = trace(expected, '2026-01-01T00:00:00.000Z', 9999);
+const original = process.argv[3] === 'existing_rotated' ? rotated : active;
+fs.writeFileSync(original, stale);
+const cursor = harness.captureForTest();
+if (process.argv[3] !== 'existing_rotated') fs.renameSync(active, rotated);
+const current = trace(expected, new Date().toISOString(), 321);
+const noise = trace(foreign, new Date().toISOString(), 12);
+if (process.argv[3] === 'replacement') fs.writeFileSync(active, current + stale);
+else fs.appendFileSync(rotated, current + stale);
+if (process.argv[3] !== 'replacement') fs.writeFileSync(active, noise);
+else fs.appendFileSync(active, noise);
+const evidence = harness.summarizePromptFrameDelta(cursor, expected);
+const parsed = JSON.parse(evidence);
+const exact = parsed.prompt_frames.filter(frame => frame.request_identity_hash === expected);
+assert.strictEqual(exact.length, 1, 'current frame missing or stale same-request frame replayed');
+assert.strictEqual(exact[0].layer_token_estimates.main_instructions, 321);
+assert.strictEqual(harness.completionRequestIdentity({ promptFrameEvidenceForJudge: evidence }, expected).known, true);
+assert.strictEqual(harness.completionRequestIdentity({ promptFrameEvidenceForJudge: evidence }, 'aaaaaaaaaaaaaaaa').known, false);
+assert(!evidence.includes('PRIVATE_PROMPT_SENTINEL'));
+process.stdout.write('OK');
+"""
+    result = subprocess.run(
+        ["node", "-e", node_script, str(tmp_path), str(EVAL_SCRIPT), rotation],
+        cwd=REPO_ROOT, capture_output=True, text=True, check=False,
+    )
+    assert result.returncode == 0, result.stderr
+    assert result.stdout == "OK"
+
+
 def test_chat_observation_failure_does_not_submit_accepted_work_again() -> None:
     node_script = r"""
 const assert = require('assert');
@@ -293,6 +354,34 @@ process.stdout.write('OK');
     result_run = subprocess.run(["node", "-e", script, str(EVAL_SCRIPT), str(state_dir), private_url], cwd=REPO_ROOT, capture_output=True, text=True)
     assert result_run.returncode == 0, result_run.stderr
     assert result_run.stdout == "OK"
+
+
+def test_native_grok_audit_keeps_typed_calls_results_and_session_identity() -> None:
+    script = r"""
+const assert = require('assert');
+const runner = require(process.argv[1]);
+const event=(session,update)=>({type:'grok.session.update',session_id:session,update});
+const start=(session,id,kind='execute')=>event(session,{sessionUpdate:'tool_call',toolCallId:id,
+  rawInput:{command:'synthetic computation'},_meta:{'x.ai/tool':{version:1,name:'run_terminal_command',kind}}});
+const end=(session,id,status='completed')=>event(session,{sessionUpdate:'tool_call_update',toolCallId:id,status,
+  content:[{type:'content',content:{type:'text',text:'synthetic result'}}]});
+const events=[start('one','same'),start('two','same'),end('two','same','failed'),end('one','same'),
+  end('one','same'),start('one','pending','other'),event('one',{sessionUpdate:'agent_message_chunk',content:{text:'not a tool'}})];
+const items=runner.nativeToolAuditItems(events);
+assert.strictEqual(items.filter(x=>x.eventType==='item.started').length,3);
+const results=items.filter(x=>x.eventType==='item.completed');
+assert.deepStrictEqual(results.map(x=>[x.sessionId,x.status]),[['two','failed'],['one','completed']]);
+assert.strictEqual(results[0].error,true);
+assert.strictEqual(results[1].output,'synthetic result');
+assert.strictEqual(results[1].arguments.command,'synthetic computation');
+assert.strictEqual(items.at(-1).type,'dynamic_tool_call');
+assert.throws(()=>runner.nativeToolAuditItems([end('missing','same')]),/start_missing/);
+assert.throws(()=>runner.nativeToolAuditItems([start('','same')]),/identity_missing/);
+process.stdout.write('OK');
+"""
+    result = subprocess.run(["node", "-e", script, str(EVAL_SCRIPT)], cwd=REPO_ROOT, capture_output=True, text=True)
+    assert result.returncode == 0, result.stderr
+    assert result.stdout == "OK"
 
 
 NATIVE_SURFACE_EVAL_SCRIPT = (
@@ -3828,8 +3917,8 @@ const bank = require(process.argv[1]);
 const executor = require(process.argv[2]);
 const family = bank.families.find((item) => item.id === 'main_compaction_fidelity');
 assert.strictEqual(family.runner, 'main_compaction');
-assert.strictEqual(Object.keys(family.sources).length, 11);
-assert.strictEqual(family.cases.length, 40);
+assert.strictEqual(Object.keys(family.sources).length, 16);
+assert.strictEqual(family.cases.length, 49);
 assert.ok(Buffer.byteLength(family.sources.long_tail.sourceTurns[0].userText) > 5 * 1024);
 assert.ok(Buffer.byteLength(family.sources.oversize_source.sourceTurns[0].userText) > 96 * 1024);
 assert.strictEqual(family.sources.tool_correction.sourceTurns.length, 2);
@@ -3838,7 +3927,7 @@ for (const testCase of family.cases) {
   const evidence = executor.caseEvidence(testCase, family);
   assert.ok(evidence.acceptedOlderTurns.length >= 1);
   assert.strictEqual(typeof evidence.sourceDigest, 'string');
-  if (testCase.fixture.compaction.mode === 'review') assert.ok(evidence.candidate);
+  if (testCase.fixture.compaction.mode === 'review') { assert.ok(evidence.candidate); assert.strictEqual(typeof testCase.fixture.compaction.expectedApproved, 'boolean'); }
 }
 assert.throws(() => executor.caseEvidence({fixture: {compaction: {sourceId: 'missing', mode: 'candidate'}}}, family), /invalid_compaction_fixture/);
 const rejected = '  {"version":1,"summary":"incomplete",  ';

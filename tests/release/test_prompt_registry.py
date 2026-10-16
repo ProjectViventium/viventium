@@ -7,6 +7,7 @@ import json
 import re
 import shutil
 import subprocess
+import sys
 
 import pytest
 import yaml
@@ -601,6 +602,7 @@ def _load_glasshive_instruction_namespace():
     namespace: dict[str, object] = {
         "os": os,
         "shutil": shutil,
+        "sys": sys,
         "worker_prompt_layer_producer": lambda _scope: lambda function: function,
     }
     exec(compile(ast.Module(body=selected_nodes, type_ignores=[]), str(GLASSHIVE_MCP_SERVER), "exec"), namespace)
