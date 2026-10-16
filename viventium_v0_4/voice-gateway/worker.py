@@ -2473,6 +2473,13 @@ def _validate_voice_session_claim(
     if call_state is None:
         raise RuntimeError("invalid canonical voice claim")
 
+    preparation_timeout_s = payload.get("preparationTimeoutS", 0)
+    if (isinstance(preparation_timeout_s, bool)
+            or not isinstance(preparation_timeout_s, (int, float))
+            or not math.isfinite(float(preparation_timeout_s))
+            or not 0 <= preparation_timeout_s <= 600):
+        raise RuntimeError("invalid canonical voice claim")
+
     state = payload.get("speakerSessionState")
     normalized_state = None
     if state is not None:
@@ -4930,7 +4937,7 @@ class ViventiumVoiceAgent(Agent):
         display_filter = VoiceControlDisplayFilter()
         # Reuse the native word/markup boundary, without a phrase-length wait or the
         # speech sanitizer: display keeps complete public URLs and literal code.
-        buffer = _VoiceTtsDeltaBuffer(native_streaming=lambda: True)
+        buffer = _VoiceTtsDeltaBuffer(native_streaming=lambda: True, preserve_text=True)
         async for delta in text:
             if isinstance(delta, TimedString):
                 # Renderer-aligned words already have their SDK boundaries. Preserve
@@ -7022,6 +7029,7 @@ async def entrypoint(ctx: JobContext) -> None:
     llm_impl = LibreChatLLM(
         origin=env.librechat_origin,
         auth=auth,
+        preparation_timeout_s=claimed.get("preparationTimeoutS", 0),
         voice_mode=True,
         voice_provider=_normalize_voice_provider(env.tts_provider),
         voice_accepts_inline_controls=_tts_provider_accepts_inline_voice_controls(

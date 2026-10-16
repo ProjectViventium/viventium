@@ -965,7 +965,9 @@ class _LinkRequiredRobot:
         _ = args, kwargs
 
 
-def test_get_viventium_response_always_voice_stays_text_mode_with_audio(monkeypatch):
+def test_get_viventium_response_always_voice_stays_text_mode_with_audio(monkeypatch, caplog):
+    timings = []
+    monkeypatch.setattr(tg_bot, "_tg_timing_log", lambda trace, stage, start, **fields: timings.append((stage, fields)))
     class _CaptureRobot:
         def __init__(self) -> None:
             self.kwargs = None
@@ -1030,6 +1032,8 @@ def test_get_viventium_response_always_voice_stays_text_mode_with_audio(monkeypa
     assert robot.kwargs["voice_mode"] is False
     assert robot.kwargs["input_mode"] == "text"
     assert len(context.bot.audios) == 1
+    assert any(stage == "tts_send" and "bytes=" in fields.get("extra", "") for stage, fields in timings)
+    assert "Failed to send voice response" not in caplog.text
     rendered = " ".join(str(item.get("text", "")) for item in context.bot.messages + context.bot.edits)
     assert "[laughter]" not in rendered
 
@@ -6494,3 +6498,43 @@ def test_ordinary_main_final_covers_only_verified_file_grants_and_keeps_preview_
     assert f'href="{ordinary}"' in final
     assert f'href="{adjacent}"' in final
     assert delivered_attachments == [attachment]
+
+@pytest.mark.parametrize("effect_ref", ["", "owned-work-ref"])
+@pytest.mark.parametrize("quiet", [False, True])
+def test_validated_quiet_completion_acknowledges_without_fake_message(monkeypatch, caplog, effect_ref, quiet):
+    caplog.set_level("INFO")
+    class Robot:
+        def __init__(self):
+            self.acks = []
+        async def ask_stream_async(self, *args, **kwargs):
+            yield {"type": "logical_turn", "logical_turn_id": "quiet-turn", "revision": 2}
+            if effect_ref:
+                yield {"type": "durable_effect", "effect_ref": effect_ref}
+            yield {"type": "delivery_disposition", "quiet_completion": quiet,
+                   "required": True, "present": True, "delivery_disposition": {
+                       "version": 1, "audio": "skip", "valid": True,
+                       "required": True, "source": "model"}}
+        async def ack_delivery_status(self, *args, **kwargs):
+            self.acks.append((args, kwargs))
+            return "recorded"
+        def reset(self, *args, **kwargs):
+            pass
+    async def noop(**kwargs):
+        pass
+    monkeypatch.setattr(tg_bot, "Users", types.SimpleNamespace(get_config=lambda *a, **k: False))
+    monkeypatch.setattr(tg_bot, "should_send_voice_reply", lambda **k: False)
+    monkeypatch.setattr(tg_bot, "send_librechat_attachments", noop)
+    context = _FakeContext()
+    robot = Robot()
+    asyncio.run(tg_bot.getViventiumResponse(
+        update_message=_FakeUpdateMessage(), context=context, title="", robot=robot,
+        message="synthetic request", chatid=111, messageid=222, convo_id="chat-1",
+        message_thread_id=None, trace_id="quiet-ack", telegram_message_id=222,
+        telegram_update_id=333))
+    assert not context.bot.messages
+    if quiet:
+        assert any("voice_decision=intentional_quiet" in record.message for record in caplog.records)
+        assert robot.acks == [(("quiet-turn", 2, "committed", "", []),
+                               {"effect_ref": effect_ref} if effect_ref else {})]
+    else:
+        assert robot.acks == []

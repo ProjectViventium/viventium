@@ -78,9 +78,50 @@ confusing upstream component boundaries.
   that dies after login must be relaunched with bounded exponential backoff, not left down until the
   next login. Helper **Stop** and **Quit** persist intentional `stopped` state; a later helper **Start**
   persists `running` state and resumes supervision. Helper reinstall, checkout activation, and upgrade
-  must preserve this state and unknown future helper-config fields. A developer checkout inside a
-  macOS-protected folder still requires the user's one-time operating-system folder approval before
-  the installed helper can execute it.
+  must preserve this state and unknown future helper-config fields. The running helper imports
+  CLI-persisted Start/Stop intent for both native and developer profiles only when repository,
+  App Support directory and runtime mode still match its approved binding. Routine intent reads
+  use the existing raw config decoder, without repeating checkout healing or logging. Startup
+  admission uses the live CLI operation or the existing private, repository-bound, fresh startup
+  claim with a matching owned process; a durable serving process-group receipt is not a startup
+  operation. That receipt remains the Stop ownership boundary. A developer checkout inside a
+  macOS-protected folder requires the user's operating-system folder approval before the installed
+  helper can execute it. The source helper installer currently uses an ad hoc signature: rebuilding
+  a changed helper can require consent again, even with the same bundle identifier and app path.
+  Update-stable permission identity requires stable certificate signing; the signed Native release
+  uses the existing Developer ID release path. Protected-folder opt-in selects the checkout; it does
+  not grant macOS access. Keep the selected checkout and complete its normal narrow folder consent.
+  See [Apple's code identity guidance](https://developer.apple.com/documentation/technotes/tn3127-inside-code-signing-requirements).
+
+
+- Telegram recovery keeps the existing owner chain: bot watchdog for ordinary process loss,
+  then the installed helper's bounded, desired-state-aware launcher when both the bot and its
+  watchdog have stopped. Automatic recovery remains in progress until the existing managed-health
+  owner confirms the enabled surfaces, including the Telegram bot, for the selected runtime.
+  Surviving old Web/API listeners alone cannot clear the helper's launch guard or mark recovery
+  healthy. Menu/Quit Stop and an exact-bound external stopped intent cancel the existing launch
+  task and release its guard. A cancelled wait does not record failure/healthy state, open a page,
+  or overwrite a later Start; delayed launch callbacks check their existing Task cancellation.
+  This does not depend on Stop messages appearing in the start log. Explicit Web opening still
+  uses early user-surface readiness and does not wait for intentionally deferred optional features. A surviving detached process group alone must not hide this failed
+  sidecar. A valid live startup claim still blocks another launch. A live bot or watchdog,
+  provider failure, or network failure does not authorize this wider recovery. Intentional
+  Stop remains stopped until explicit Start.
+  This recovery runs the existing whole-runtime restart: active calls, Main turns and workers
+  can be interrupted. Their existing durable recovery and result delivery must be proved; this
+  path does not promise an uninterrupted call or preserve an in-memory process.
+- A Telegram component selection or integrity refusal, or an incompatible handoff-helper
+  command interface, is not a transient bot failure. The bot-only watchdog ends with the
+  configuration-failure class after one attempt and preserves the integrity refusal; the
+  existing helper can then start through the current complete runtime owner. Recovery never
+  mixes an old shell function with a newly changed helper indefinitely. Develop in an inactive
+  candidate and use supported activation rather than editing the serving candidate in place.
+- Existing launcher lifecycle messages carry UTC timestamps, including watchdog start, retry,
+  refusal and exit. Before a new verified Telegram owner starts, the existing Native log
+  rotation retains the three prior bot runs; an already-running owner keeps its current log.
+  Empty or absent logs do not evict a prior failure. Direct bot launches append. An unsafe log
+  path refuses startup; a temporary rotation I/O failure remains retryable without truncation.
+  Diagnostic history must survive the next recovery attempt.
 
 Before a validated checkout activation stops the current app, it prepares the candidate's
 LibreChat dependencies and required package/client outputs through the same owner used by startup.
@@ -248,6 +289,16 @@ active runtime reports the sidecar as ready.
   start, restart and cleanup address only the compiler-selected dev RAG project. Shared RAG stays
   the default. Separate web authentication requires a compatible shared service or the existing
   private RAG option; copying production web secrets is not an isolation fix.
+- Receipt-authorized stack Stop and kernel-verified xPerfect runtime-listener Stop also capture
+  bounded Docker commands that entered private process sessions. Before the runtime exits, they
+  bind those direct children to the selected runtime,
+  same user, configured Docker executable, PID start identity and their observed descendants.
+  It rechecks these identities before each individual TERM/KILL, using the existing one-second
+  Stop grace. Original stack seeds retain their receipt plus UID/group/start authority; present
+  seeds outside that scope fail Stop without clearing its receipt. Missing private executable
+  proof leaves that private candidate untouched and does not block verified stack shutdown.
+  Foreign Docker commands and unrelated native sessions remain untouched. Child creation after
+  the Stop snapshot and abrupt parent death before timeout or Stop are outside this guarantee.
 - Native support-service PID files are hints, not authority. Stop must verify that the live PID still
   matches the expected MongoDB, Meilisearch, or LiveKit runtime identity before signalling it; stale
   or reused PIDs are removed without killing the unrelated process. Process identity inspection must

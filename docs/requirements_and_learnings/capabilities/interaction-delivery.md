@@ -31,6 +31,10 @@ truthful Main presentation without losing or repeating durable work.
 
 - **CC-043:** Presentation supersession never cancels or repeats committed effects, accepted
   missions, durable background work, or tool receipts.
+- A committed effect receipt is internal control data. It cannot authorize an obsolete
+  assistant reply or generate conversational text or speech. The existing superseded terminal
+  closes that stream; the surviving Main and normal worker follow-ups own useful conversation.
+  The durable effect, its replay fence and current mixed-answer authoring remain intact.
 
 ### Telegram input
 

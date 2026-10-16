@@ -146,7 +146,7 @@ atomic_traceability:
 current_owner_declarations:
   as_of: 2026-10-10
   rows: 289
-  sha256: 529e84e0c36f5073a96c5b7ac22c06dfd8f38598446a77b1a3d0710721a7252a
+  sha256: 7028cbb132e2bbbd52a57a26621240d5242669184fac0a353ffaf5e194a7603c
   canonicalization: >-
     sha256 of lexicographically sorted unique tab-separated requirement ID, repository-relative
     owning product-document path, and exact declaration behavior; rows are LF-joined with one

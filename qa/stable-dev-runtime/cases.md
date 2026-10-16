@@ -277,3 +277,24 @@ rows before claiming a pass when the feature behavior changes.
 Supporting release regressions: `tests/release/test_helper_hash_consumers.py`, `tests/release/test_launcher_reconciled_startup.py`. These automated checks do not replace the user-path acceptance above.
 
 `tests/release/test_macos_worker_access.py` verifies the shared macOS worker-access settings and runtime bindings; real OS permission and worker interaction remain separate acceptance.
+
+
+## Case SDR-017: Telegram recovery preserves diagnostics and owner intent
+
+- **Expected outcome:** Ordinary bot process loss is repaired by the existing bot watchdog.
+  Component-integrity/configuration refusals and incompatible helper arguments end bot-only
+  retries after one failed attempt. With a healthy Core, Telegram enabled, no live startup claim,
+  and neither bot nor watchdog alive, the existing helper may submit one bounded whole-runtime
+  restart. Active calls, Main turns and workers can be interrupted; durable recovery must retain
+  accepted work and deliver each result once.
+  Its desired-state supervisor and normal CLI lock remain the owners of that launch.
+- **Forbidden result:** Restart storms from unchanged version failures; bypassed integrity;
+  wider restart while a bot/watchdog or startup claim still owns recovery; a provider/network
+  error treated as permission to restart unrelated work; recovery after intentional Stop;
+  truncating the prior bot failure before preserving it.
+- **Evidence:** `test_telegram_lifecycle_recovery.py`, existing handoff/PID-reuse/intent tests,
+  timestamped start/retry/exit events and retained bot-log generations. Real acceptance must use
+  the installed helper and supported runtime activation, prove one Telegram reply after recovery,
+  and prove deliberate Stop stays stopped. Synthetic checks do not prove login/reboot recovery.
+- **Last run:** Implementation checks are recorded with the candidate-bound delivery. Real helper
+  recovery and Stop acceptance remain separate until exercised on that candidate.

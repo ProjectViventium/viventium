@@ -740,7 +740,8 @@ def _verified_attachment_grants(
 def _native_file_identity_from_final(payload: dict[str, Any]) -> Optional[tuple[str, str]]:
     """Bind File receipts to the authenticated Core public final Message identity."""
     response = payload.get("responseMessage")
-    if (payload.get("final") is not True or not isinstance(response, dict)
+    if (payload.get("final") is not True or payload.get("aborted") is True
+            or not isinstance(response, dict)
             or response.get("unfinished") is True or response.get("error") is True
             or response.get("isCreatedByUser") is True):
         return None
@@ -2560,7 +2561,10 @@ class LibreChatBridge:
         consecutive_failures = 0
         while True:
             try:
-                claimed = await self._claim_glasshive_deliveries(limit=self.glasshive_delivery_batch_size)
+                claimed = await self._claim_glasshive_deliveries(
+                    limit=self.glasshive_delivery_batch_size,
+                    wait_s=interval_s,
+                )
                 if consecutive_failures:
                     logger.info(
                         "GlassHive delivery dispatcher dependency recovered after %s failed attempt(s)",
@@ -2568,7 +2572,8 @@ class LibreChatBridge:
                     )
                     consecutive_failures = 0
                 if not claimed:
-                    await asyncio.sleep(interval_s)
+                    if not getattr(self, "_glasshive_delivery_wait_supported", False):
+                        await asyncio.sleep(interval_s)
                     continue
                 for delivery in claimed:
                     await self._deliver_glasshive_delivery_bounded(delivery)
@@ -2593,6 +2598,7 @@ class LibreChatBridge:
         *,
         limit: int = 10,
         callback_id: Optional[str] = None,
+        wait_s: float = 0.0,
     ) -> list[dict[str, Any]]:
         if not self.base_url or not self.secret:
             return []
@@ -2605,7 +2611,11 @@ class LibreChatBridge:
         }
         if callback_id:
             payload["callbackId"] = callback_id
+        wait_ms = min(5000, max(0, int(wait_s * 1000)))
+        if wait_ms:
+            payload["waitMs"] = wait_ms
         timeout = httpx.Timeout(10.0, connect=5.0, read=10.0, write=5.0, pool=5.0)
+        claim_started_at = time.monotonic()
         async with httpx.AsyncClient(
             timeout=timeout,
             **_async_client_options_for_url(url),
@@ -2614,8 +2624,21 @@ class LibreChatBridge:
             if response.status_code != 200:
                 raise RuntimeError(f"GlassHive delivery claim failed ({response.status_code})")
             data = response.json()
+        if wait_ms:
+            self._glasshive_delivery_wait_supported = (
+                isinstance(data, dict) and data.get("waitSupported") is True
+            )
         deliveries = data.get("deliveries") if isinstance(data, dict) else None
-        return [item for item in deliveries if isinstance(item, dict)] if isinstance(deliveries, list) else []
+        claimed = [item for item in deliveries if isinstance(item, dict)] if isinstance(deliveries, list) else []
+        if claimed:
+            logger.info(
+                "GlassHive delivery claimed count=%s claim_ms=%.2f wait_requested_ms=%s wait_supported=%s",
+                len(claimed),
+                (time.monotonic() - claim_started_at) * 1000.0,
+                wait_ms,
+                getattr(self, "_glasshive_delivery_wait_supported", False),
+            )
+        return claimed
 
     async def _mark_glasshive_delivery_status(
         self,
@@ -4998,10 +5021,13 @@ class LibreChatBridge:
                             if payload_has_glasshive_tool_call(payload):
                                 self._mark_glasshive_seen(stream_id)
 
-                            if payload.get("final") and payload.get("superseded") is True:
+                            if payload.get("final") and (
+                                payload.get("superseded") is True or payload.get("aborted") is True
+                            ):
                                 self._mark_stream_final(stream_id)
                                 yield {
                                     "type": "superseded",
+                                    **({"reason": "aborted"} if payload.get("aborted") is True else {}),
                                     "logical_turn_id": str(
                                         payload.get("logical_turn_id")
                                         or payload.get("logicalTurnId")
@@ -5069,11 +5095,10 @@ class LibreChatBridge:
                                     ),
                                 )
                                 disposition = disposition_event["delivery_disposition"]
-                                native = (response_payload.get("nativeResponse")
-                                          if isinstance(response_payload, dict) else None)
+                                # Core deliberately omits nativeResponse from public messages.
+                                # Accept silence only from a successful public final, never an abort.
                                 quiet_native_final = bool(
-                                    isinstance(native, dict)
-                                    and native.get("status") == "completed"
+                                    _native_file_identity_from_final(payload) is not None
                                     and disposition is not None
                                     and disposition["required"] is True
                                     and disposition["source"] == "model"
@@ -5171,6 +5196,7 @@ class LibreChatBridge:
                                 ):
                                     diagnosis = _diagnose_empty_response(payload)
                                     if quiet_native_final:
+                                        disposition_event["quiet_completion"] = True
                                         self._trace(
                                             "LibreChatBridge accepted quiet native final: stream_id=%s",
                                             stream_id,

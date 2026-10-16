@@ -3836,6 +3836,7 @@ async def _getViventiumResponse(
     delivery_disposition_required = False
     delivery_disposition_present = False
     delivery_audio_text = None
+    quiet_completion = False
     final_segments = []
     logical_turn_id = ""
     logical_turn_revision = None
@@ -4562,6 +4563,14 @@ async def _getViventiumResponse(
                             )
                         )
                         delivery_disposition_present = data.get("present") is True
+                        quiet_completion = bool(
+                            data.get("quiet_completion") is True
+                            and delivery_disposition_required
+                            and isinstance(delivery_disposition, dict)
+                            and delivery_disposition.get("valid") is True
+                            and delivery_disposition.get("source") == "model"
+                            and delivery_disposition.get("audio") == "skip"
+                        )
                         delivery_audio_text = None
                         if "audio_text" in data:
                             delivery_audio_text = data["audio_text"] if isinstance(data["audio_text"], str) else ""
@@ -4931,7 +4940,7 @@ async def _getViventiumResponse(
         voice_decision = "transport_error"
     if not text_delivery_succeeded:
         should_send_voice = False
-        voice_decision = "text_delivery_failed"
+        voice_decision = "intentional_quiet" if quiet_completion else "text_delivery_failed"
     disposition_valid = delivery_disposition is not None
     disposition_audio = (
         delivery_disposition["audio"] if disposition_valid else "missing"
@@ -5112,17 +5121,9 @@ async def _getViventiumResponse(
                                 base_ts=response_start_ts,
                                 extra=f"idx={i+1}/{len(chunks)} chars={len(chunk)} bytes={len(voice_bytes)}",
                             )
-                        # Small delay between chunks to ensure complete audio (prevents cutoff)
-                        if i < len(chunks) - 1:
-                            await asyncio.sleep(0.1)
                 
                 if all_audio_chunks:
-                    # Concatenate all audio chunks
-                    combined_audio = b"".join(all_audio_chunks)
-                    
-                    # Small delay to ensure audio is fully ready (prevents last 0.5s cutoff)
-                    await asyncio.sleep(0.2)
-                    
+                    # Synthesis has returned complete bytes; packaging validates each container.
                     media = await asyncio.to_thread(package_telegram_audio, all_audio_chunks)
                     audio_stream = BytesIO(media.data)
                     audio_stream.name = media.filename
@@ -5151,7 +5152,7 @@ async def _getViventiumResponse(
                         "[TG_VOICE] trace=%s audio_sent chunks=%s bytes=%s ms=%.1f",
                         trace_id,
                         len(all_audio_chunks),
-                        len(combined_audio),
+                        len(media.data),
                         (time.monotonic() - tts_start_ts) * 1000,
                     )
                     # === VIVENTIUM START ===
@@ -5159,14 +5160,14 @@ async def _getViventiumResponse(
                         trace_id,
                         "tts_send",
                         tts_start_ts,
-                        extra=f"chunks={len(all_audio_chunks)} bytes={len(combined_audio)}",
+                        extra=f"chunks={len(all_audio_chunks)} bytes={len(media.data)}",
                     )
                     _tg_deep_log(
                         trace_id,
                         "tts_send",
                         tts_start_ts,
                         base_ts=response_start_ts,
-                        extra=f"chunks={len(all_audio_chunks)} bytes={len(combined_audio)}",
+                        extra=f"chunks={len(all_audio_chunks)} bytes={len(media.data)}",
                     )
                     if send_voice_start_ts is not None:
                         _tg_deep_log(
@@ -5174,7 +5175,7 @@ async def _getViventiumResponse(
                             "telegram_send_voice",
                             send_voice_start_ts,
                             base_ts=response_start_ts,
-                            extra=f"bytes={len(combined_audio)}",
+                            extra=f"bytes={len(media.data)}",
                         )
                     # === VIVENTIUM END ===
             except Exception as e:
@@ -5201,14 +5202,15 @@ async def _getViventiumResponse(
     # === VIVENTIUM END ===
 
     presentation_refs = source_guard.presentation_refs()
-    if logical_turn_id and logical_turn_revision is not None and presentation_refs:
+    if (logical_turn_id and logical_turn_revision is not None
+            and (presentation_refs or quiet_completion)):
         delivery_ack_status = "unavailable"
         try:
             ack_args = (
                 logical_turn_id,
                 logical_turn_revision,
                 "committed",
-                presentation_refs[-1],
+                presentation_refs[-1] if presentation_refs else "",
                 presentation_refs,
             )
             if hasattr(robot, "ack_delivery_status"):

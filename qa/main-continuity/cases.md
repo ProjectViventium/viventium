@@ -40,6 +40,14 @@ text, changed owner/conversation/agent, and a superseding revision must prevent 
 Measure the source hydration queries and compaction calls, including the larger single-turn path.
 Reference retention with a truthful budget failure is safe degradation, not successful semantic recall.
 
+For detached private maintenance, verify that producer and reviewer use the authorized Main route,
+not a surface-specific Voice override. Record each admitted provider deadline and the actual stop
+owner. A shorter host timer must not cut off a still-authorized native request. Missing or invalid
+deadline metadata retains bounded legacy behavior. Prove lease renewal, single in-flight renewal,
+lease loss, foreground yield, timeout and timer cleanup without weakening the five-minute stale-holder
+bound or allowing stale promotion. A startup warning alone is not proof of a provider failure: compare
+actual native event progression with a bounded control on the same sealed execution path.
+
 
 Projection and source lifecycle coverage must include a late duplicate after compaction, 131 later
 acceptances and service reconstruction; deletion of the highest marker followed by epoch change

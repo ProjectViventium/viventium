@@ -63,6 +63,13 @@ previews, separately from final completion. Tool activity and empty previews do 
 clock. Stream receipt is supporting timing evidence; actual client-visible timing still requires
 the delivered browser or native-app path.
 
+The runner reads the current API debug log and its numbered rotations as well as private frame
+logs. Case cursors bind byte offsets to file device/inode identity, so a rename keeps its offset
+and a replacement starts a new file. Older timestamped lines are excluded from the captured case
+window. Exact request identity remains required; unrelated frames cannot supply a missing receipt.
+Only the existing public-safe telemetry fields enter the report. Compressed historical logs are
+not replayed as current case evidence.
+
 The `main_compaction_fidelity` family uses
 [evals/run-main-compaction-evals.cjs](evals/run-main-compaction-evals.cjs) to exercise the actual
 compactor assembly. Select `--variant=proposed` for current compiled/source artifacts or
@@ -82,9 +89,13 @@ normal Main continuation remain separate acceptance gates.
 The `worker_host_authority` family uses the existing exact-model runner's `worker_source`
 execution target. It replays the composed host/project/profile source through production
 `executeCortex` and the native provider, using each case's configured primary or fallback worker
-model and effort. Native tools remain available. Workbench requires exact observed instruction
-bytes, owner/session/message-bound native evidence, a native-call audit, and semantic judgment.
-This is source replay; it does not prove mission workspace setup or actual app/file operations.
+model and effort. Supported worker routes include Codex, Claude and Grok. The default replay
+contract requires native tools; a case may explicitly set `fixture.workerSource.nativeTools: false`
+for a tools-disabled semantic comparison on the same exact model and effort. That option uses the
+existing isolated, read-only background path with conversational text output. Workbench verifies
+the declared tools/access mode, exact instruction bytes, owner/session/message-bound native evidence,
+a native-call audit, and semantic judgment. Tools-disabled replay does not prove tool execution;
+neither replay proves mission workspace setup or actual app/file operations.
 
 A private old/proposed bank may declare `executionTarget.sourceSnapshot` with a private path and
 SHA-256. The snapshot retains the exact source text, its hashes, and composed frames; mismatched

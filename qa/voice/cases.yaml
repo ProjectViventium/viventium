@@ -3,6 +3,8 @@ capability: voice
 requirementOwner: docs/requirements_and_learnings/capabilities/voice.md
 statusPolicy: Run results belong in dated, candidate-bound reports.
 reports:
+  - qa/voice/reports/2026-10-14-native-overhead-and-livekit-reference.md
+  - qa/voice/reports/2026-10-14-fast-queen-and-call-context.md
   - qa/modern-playground-voice/reports/2026-10-03-voice-and-telegram-acceptance.md
   - qa/modern-playground-voice/reports/2026-09-30-native-harness-parity-and-observability.md
 sourceInventories:
@@ -59,7 +61,40 @@ journeys:
     requirements: [PW-052, CC-049, CORE-005]
     surfaces: [installed Voice Call]
     userAction: During an active Main generation, receive a current native question without sentence punctuation; hear it while the native provider waits.
-    expectedResult: The exact canonical question reaches TTS before provider resume, once per exact request. Stop, replacement, remote answer, expiry and disconnect deny stale speech. Auxiliary question text does not change provider response or resume accounting.
+    expectedResult: Main authors the human question from the current native offer before provider resume, once per exact request. Exact operation and offered response bindings stay in owner controls; raw internal permission text is not spoken. Stop, replacement, remote answer, expiry and disconnect deny stale speech. Auxiliary question text does not change provider response or resume accounting.
     degradedAndRecovery: An uncertain claim or connection produces no replay; an answered or replaced native request cannot gain authority from retained task state.
     persistenceAndCleanup: Request-specific receipt survives coalesced snapshots and process restart without claiming audible completion.
     evidence: [current native request read, atomic VoiceTask speech offer, paused TTS flush, actual audible question, provider resume accounting]
+  - id: optional-call-context-preparation
+    requirements: [VOICE-PREP-001, CORE-002, CORE-006, CORE-007, CORE-009]
+    surfaces: [installed Voice Call, linked chat, Telegram call launch, Prompt Workbench]
+    userAction: Enable preparation, open settings without starting, then start calls from new and existing conversations; speak during preparation and after it, use exact Stop or End, and reload.
+    expectedResult: Settings and Listen-Only invoke no Main. Actual Start admits one normal Main context turn with its configured route and fallback. A visible silent report and progress use existing surfaces; next Voice input uses the same admitted conversation and ordinary Voice override, with all authorized cognitive/tool capabilities retained.
+    degradedAndRecovery: Provider failure, approval, concurrent Main, deadline, cancelled preparation and restart remain truthful. Waiting input is retained by existing source ordering; stale preparation cannot reopen End or speak through reconnect. Other workers keep normal delivery.
+    persistenceAndCleanup: The Call binds its exact idempotent generation and absolute deadline; canonical result persists. Cancellation neither archives an existing chat nor cancels unrelated committed work. Keep raw prompts/evidence private.
+    evidence: [source-to-compiled prompt lineage, exact Main and Voice execution receipts, durable call/job/task/message joins, configured-model positive/negative/adjacent evaluations, browser progress and report, received silent/audio proof, startup and first/warm-turn timing]
+
+  - id: native-stream-no-polling-delay
+    requirements: [VOICE-PERF-002, CORE-005, CORE-006]
+    surfaces: [xPerfect streaming API, installed Voice Call]
+    userAction: Ask for a multi-part spoken reply, then Stop or replace its current turn.
+    expectedResult: Durable output wakes the current exact attempt without a fixed delivery sleep. Eligible text can stream before native completion; hidden text and stale output stay silent. Terminal and fallback transitions use the same wake mechanism.
+    degradedAndRecovery: Lost or cross-process hints use bounded reconciliation. Replaced and closed subscriptions reject queued old-generation hints. No hint grants source or effect authority.
+    persistenceAndCleanup: Subscriptions and file watches close; progress and result persistence remain authoritative. Record real observation passes, wait time and process CPU separately from isolated wake latency.
+    evidence: [source identity, generation race tests, affected native output tests, real received audio and native/text clocks, content-free observation summary, process CPU window]
+  - id: xperfect-livekit-reference
+    requirements: [VOICE-XP-LK-001, VOICE-PERF-002, CORE-005]
+    surfaces: [standalone xPerfect API, official LiveKit SDK, reference integration]
+    userAction: Follow the reference setup, hear a streamed answer, interrupt it, ask a new question and recall the prior topic.
+    expectedResult: Stable room and distinct turn identities preserve one native conversation. Typed audio decisions reach the SDK before text is discarded or spoken. Early stream close calls the exact existing native cancel endpoint once; terminal completion sends no cancel.
+    degradedAndRecovery: Missing or malformed speech decisions remain silent. Native cancellation keeps false or unknown capacity explicit. The SDK AEC warmup setting is documented because it can withhold initial user speech; an echo-free test uses the existing zero setting without changing hardware echo protection by assumption.
+    persistenceAndCleanup: Close the created room and owned clients. Do not claim Core memory, Feelings or permissions migrated through a base URL. Mark live in-flight cancellation, reconnect, background callbacks and unheard-tail history checks separately.
+    evidence: [actual SDK parser tests, current-run authorization tests, mixed range tests, received audio, complete interruption transcript, correct follow-up and context recall, cleanup receipt]
+  - id: native-process-warm-count
+    requirements: [VOICE-WARM-001, CORE-005, CORE-006, GOV-013]
+    surfaces: [xPerfect worker configuration, Queen and ordinary worker, native runtime]
+    userAction: Save zero and a supported positive warm count through the existing worker settings, reload, use the worker, interrupt an active native tool and continue the same conversation.
+    expectedResult: The count describes real initialized idle native processes and has one saved configuration owner. Queen and worker consume the same setting; model, effort, selected account, lane and current attempt stay exact. Zero preserves ordinary execution.
+    degradedAndRecovery: Unsupported profiles and account projections are explicit. Optional attach failure before session/prompt uses the same-model cold path; accepted prompts are never replayed. Failed starts, uncertain Stop, concurrent close, orphan recovery and PID reuse never silently release capacity or signal an unrelated process. Startup recovery runs even with zero, paused or unusable settings. Full Stop proof does not hold the runtime-wide process lock.
+    persistenceAndCleanup: Native tools and escaped descendants are proved stopped by the existing owner before resource release; saved conversation history survives clean eviction and active Stop. Idle expiry, pause, termination and shutdown leave no owned live process.
+    evidence: [saved configuration and reload, native status and process identities, model and effort receipts, cold and warm native clocks, exact Stop and next-turn history, restart and cleanup evidence]

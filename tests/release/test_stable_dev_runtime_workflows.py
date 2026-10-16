@@ -3619,3 +3619,187 @@ def test_local_worker_context_route_uses_owned_port_or_explicit_route(runtime_po
         env=environment, capture_output=True, text=True, check=True,
     )
     assert result.stdout == expected
+
+
+@pytest.mark.parametrize("consumer", ["detached", "listener"])
+@pytest.mark.parametrize("authorized", [True, False])
+def test_authorized_stack_stop_reaps_private_docker_descendants_only(tmp_path, authorized, consumer):
+    """Use the real command producer and Stop consumer, with disposable processes only."""
+    import time
+
+    sys.path.insert(0, str(REPO_ROOT / "scripts" / "viventium"))
+    import parallel_work_release_gate as inspector
+
+    kernel_identity = inspector._live_process_image_and_argv(os.getpid())
+    assert kernel_identity is not None
+    binary_dir = tmp_path / "bin"
+    binary_dir.mkdir()
+    docker = binary_dir / "docker"
+    docker.symlink_to(kernel_identity[0])
+    payload = tmp_path / "info.py"
+    payload.write_text(
+        "import json,os,pathlib,subprocess,sys,time\n"
+        "child=subprocess.Popen([sys.executable,'-c','import time;time.sleep(30)',sys.argv[1]])\n"
+        "pathlib.Path(sys.argv[1]).write_text(json.dumps({'cli':os.getpid(),'plugin':child.pid}))\n"
+        "time.sleep(30)\n"
+    )
+    producer = REPO_ROOT / "viventium_v0_4/xPerfect/runtime_phase1/src/workers_projects_runtime/docker_sandbox.py"
+    root_source = (
+        "import ast,os,pathlib,signal,subprocess,sys\n"
+        "signal.signal(signal.SIGTERM,lambda *args:None)\n"
+        "p=pathlib.Path(sys.argv[1]); tree=ast.parse(p.read_text())\n"
+        "node=next(n for n in ast.walk(tree) if isinstance(n,ast.FunctionDef) and n.name=='_docker')\n"
+        "ns={'os':os,'signal':signal,'subprocess':subprocess}\n"
+        "exec(compile(ast.Module(body=[node],type_ignores=[]),str(p),'exec'),ns)\n"
+        "ns['_docker'](None,[sys.argv[2],sys.argv[3]],timeout_sec=2,check=False,capture_output=True)\n"
+    )
+    env = dict(os.environ, PATH=str(binary_dir) + os.pathsep + os.environ["PATH"],
+               VIVENTIUM_CORE_DIR=str(REPO_ROOT), PYTHON_BIN=sys.executable)
+    marker, foreign_marker = tmp_path / "owned.json", tmp_path / "foreign.json"
+    root = subprocess.Popen([sys.executable, "-c", root_source, str(producer), str(payload), str(marker)],
+                            env=env, start_new_session=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    foreign = subprocess.Popen([str(docker), str(payload), str(foreign_marker)], env=env,
+                               start_new_session=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    unrelated = subprocess.Popen(["/bin/sleep", "30"], start_new_session=True)
+    processes = {}
+    try:
+        deadline = time.monotonic() + 8
+        while not (marker.exists() and foreign_marker.exists()) and time.monotonic() < deadline:
+            time.sleep(.01)
+        processes = json.loads(marker.read_text())
+        foreign_processes = json.loads(foreign_marker.read_text())
+        processes.update({"foreign_" + role: pid for role, pid in foreign_processes.items()})
+        launcher = FULL_STACK_LAUNCHER.read_text()
+        functions = "\n".join(extract_shell_function(launcher, name) for name in
+                              ("kill_pids", "kill_recorded_detached_launch_process_group", "kill_port_listeners"))
+        cleared = tmp_path / "cleared"
+        script = functions + '''
+read_detached_launch_process_group() { echo "$1_ROOT"; }
+current_process_group_id() { ps -o pgid= $$ | tr -d ' '; }
+runtime_process_group_pids() { echo "$1_ROOT"; }
+runtime_process_group_receipt_valid() { return "$2_AUTH"; }
+clear_detached_launch_process_group() { touch "$3_CLEAR"; }
+log_error() { echo "$*" >&2; }
+log_warn() { :; }
+kill_recorded_detached_launch_process_group
+'''
+        if consumer == "listener":
+            script = script.rsplit("kill_recorded_detached_launch_process_group", 1)[0] + '''
+viventium_port_listener_active() { return 0; }
+find_port_listener_pids() { echo "$1_ROOT"; }
+pid_matches_scope() { return "$2_AUTH"; }
+pid_matches_runtime_stop_identity() { return "$2_AUTH"; }
+pid_matches_trashed_scope_variant() { return 1; }
+kill_port_listeners 1234 synthetic-scope true
+'''
+        script = script.replace("$1_ROOT", str(root.pid)).replace("$2_AUTH", "0" if authorized else "1").replace("$3_CLEAR", str(cleared))
+        started = time.monotonic()
+        result = subprocess.run(["bash", "-c", script], env=env, capture_output=True, text=True, timeout=8)
+        assert time.monotonic() - started < 6
+        assert (result.returncode == 0) == (authorized or consumer == "listener"), result.stderr
+        assert cleared.exists() == (authorized and consumer == "detached")
+
+        def alive(pid):
+            result = subprocess.run(["ps", "-p", str(pid), "-o", "stat="], capture_output=True, text=True)
+            return bool(result.stdout.strip()) and not result.stdout.strip().startswith("Z")
+
+        assert alive(processes["cli"]) == (not authorized)
+        assert alive(processes["plugin"]) == (not authorized)
+        assert alive(foreign.pid) and alive(processes["foreign_plugin"])
+        assert unrelated.poll() is None
+        if authorized:
+            root.wait(timeout=2)
+        else:
+            assert root.poll() is None
+    finally:
+        # Every cleanup target belongs to this fixture; never query the installed stack.
+        for marker_file in (marker, foreign_marker):
+            if marker_file.exists():
+                for pid in json.loads(marker_file.read_text()).values():
+                    try:
+                        os.kill(pid, signal.SIGKILL)
+                    except ProcessLookupError:
+                        pass
+        for process in (root, foreign, unrelated):
+            if process.poll() is None:
+                process.kill()
+            process.wait(timeout=3)
+
+
+@pytest.mark.parametrize("changed", ["uid", "start", "group", "image", "unavailable",
+                                     "seed_uid", "seed_group", "mixed_seed_uid", "mixed_seed_group",
+                                     "seed_image_unavailable", "seed_absent"])
+def test_stack_stop_rechecks_process_binding_before_signal(changed):
+    """PID reuse, ownership changes and unavailable kernel identities cannot widen Stop."""
+    import ast
+    from types import SimpleNamespace
+
+    function = extract_shell_function(FULL_STACK_LAUNCHER.read_text(), "kill_pids")
+    program = function.split("<<'PY'\n", 1)[1].split("\nPY", 1)[0]
+    tree = ast.parse(program)
+    # Supply only synthetic process observations; exercise the production selection/signals.
+    tree.body = [node for node in tree.body if not isinstance(node, (ast.Import, ast.ImportFrom))]
+    seen, scans, images = [], [0], {}
+    rows = {10: [501, 10, 1, 10, "S", "Thu Oct 15 12:00:00 2026"],
+            20: [501, 20, 10, 20, "S", "Thu Oct 15 12:00:01 2026"],
+            30: [501, 30, 20, 20, "S", "Thu Oct 15 12:00:02 2026"],
+            40: [501, 40, 10, 40, "S", "Thu Oct 15 12:00:03 2026"]}
+
+    if changed == "seed_uid": rows[10][0] = 502
+    if changed == "seed_group": rows[10][3] = 11
+    if changed == "seed_absent": del rows[10]
+    if changed == "mixed_seed_uid": rows[40][0], rows[40][3] = 502, 10
+
+    def run(command, **kwargs):
+        scans[0] += 1
+        selected = rows.values() if command[1] == "-A" else ([rows[int(command[2])]] if int(command[2]) in rows else [])
+        output = []
+        for raw in selected:
+            row = list(raw)
+            if scans[0] > 1 and row[1] == 20:
+                if changed == "uid": row[0] = 502
+                if changed == "start": row[5] = "Thu Oct 15 12:00:09 2026"
+                if changed == "group": row[3] = 21
+            output.append(" ".join(map(str, row)))
+        return SimpleNamespace(returncode=0, stdout="\n".join(output))
+
+    def image(pid):
+        images[pid] = images.get(pid, 0) + 1
+        if (pid == 20 and changed == "unavailable") or (pid == 10 and changed == "seed_image_unavailable"):
+            return None
+        executable = "/test/docker" if pid == 20 else "/test/native"
+        if pid == 20 and changed == "image" and images[pid] > 2:
+            executable = "/test/foreign"
+        return Path(executable), (executable,)
+
+    namespace = {"os": SimpleNamespace(getuid=lambda: 501, getpid=lambda: 98, getppid=lambda: 99, path=os.path,
+                                        kill=lambda pid, sig: seen.append((pid, sig))),
+                 "sys": SimpleNamespace(argv=["stop", "10 40" if changed.startswith("mixed_seed") else "10", "10", "unused"], path=[]),
+                 "shutil": SimpleNamespace(which=lambda value: "/test/docker"),
+                 "subprocess": SimpleNamespace(run=run), "signal": signal,
+                 "time": SimpleNamespace(sleep=lambda value: None),
+                 "process_inspector": SimpleNamespace(_live_process_image_and_argv=image)}
+    if changed in {"seed_uid", "seed_group", "mixed_seed_uid", "mixed_seed_group"}:
+        with pytest.raises(RuntimeError, match="seed is outside its authorized user or group"):
+            exec(compile(tree, "<owned-stop>", "exec"), namespace)
+        assert seen == []
+    else:
+        exec(compile(tree, "<owned-stop>", "exec"), namespace)
+        assert not any(pid == 40 for pid, _ in seen)
+        if changed == "unavailable":
+            assert {pid for pid, _ in seen} == {10}
+        elif changed == "seed_absent":
+            assert seen == []
+        elif changed == "seed_image_unavailable":
+            assert {pid for pid, _ in seen} == {10, 20, 30}
+            assert 10 not in images
+        else:
+            assert not any(pid == 20 for pid, _ in seen)
+            assert {pid for pid, _ in seen} == {10, 30}
+
+
+def test_only_verified_xperfect_runtime_listener_enables_private_command_stop():
+    function = extract_shell_function(FULL_STACK_LAUNCHER.read_text(), "stop_glasshive_services_listener_first")
+    assert 'if glasshive_local_listener_matches "$port" "$service"; then' in function
+    assert 'if [[ "$service" == "runtime" ]]; then' in function
+    assert 'kill_port_listeners "$port" "$scope" true || return 1' in function

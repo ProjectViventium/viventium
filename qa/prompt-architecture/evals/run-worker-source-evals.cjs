@@ -10,16 +10,19 @@ const root = path.resolve(__dirname, "../../..");
 const lc = path.join(root, "viventium_v0_4/LibreChat");
 const requireLC = Module.createRequire(path.join(lc, "package.json"));
 const sha = (value) => crypto.createHash("sha256").update(value).digest("hex");
+const WORKER_PROFILE_FIELDS = Object.freeze({
+  "codex-cli": ["WPR_MODEL_CODEX_CLI", "WPR_CODEX_CLI_REASONING_EFFORT"],
+  "claude-code": ["WPR_MODEL_CLAUDE_CODE", "WPR_CLAUDE_CODE_EFFORT"],
+  "grok-build": ["WPR_MODEL_GROK_BUILD", "WPR_GROK_REASONING_EFFORT"],
+});
 
-function configuredWorkerRoute(slot, env = process.env) {
+function configuredWorkerRoute(slot, env = process.env, nativeTools = true) {
+  if (typeof nativeTools !== "boolean") throw new Error("invalid_worker_source_native_tools");
   if (!["primary", "fallback"].includes(slot)) throw new Error("invalid_worker_route_slot");
   const profile = env[slot === "primary" ? "GLASSHIVE_DEFAULT_WORKER_PROFILE" : "GLASSHIVE_DEFAULT_FALLBACK_WORKER_PROFILE"];
-  const fields = {
-    "codex-cli": ["WPR_MODEL_CODEX_CLI", "WPR_CODEX_CLI_REASONING_EFFORT"],
-    "claude-code": ["WPR_MODEL_CLAUDE_CODE", "WPR_CLAUDE_CODE_EFFORT"],
-  }[profile];
+  const fields = WORKER_PROFILE_FIELDS[profile];
   if (!fields || !env[fields[0]] || !env[fields[1]]) throw new Error("configured_native_worker_route_unavailable");
-  return { slot, profile, provider: "glasshive-harness", model: `${profile}:${env[fields[0]]}`, nativeModel: env[fields[0]], effort: env[fields[1]], access: "full" };
+  return { slot, profile, provider: "glasshive-harness", model: `${profile}:${env[fields[0]]}`, nativeModel: env[fields[0]], effort: env[fields[1]], access: nativeTools ? "full" : "read_only", nativeTools };
 }
 
 function readWorkerSource(target, bankPath) {
@@ -48,7 +51,10 @@ function readWorkerSource(target, bankPath) {
 }
 
 function sourceInstructions(source, profile) {
-  const names = ["harness", "project", "agents", profile === "codex-cli" ? "codex" : "claude"];
+  if (!WORKER_PROFILE_FIELDS[profile]) throw new Error("configured_native_worker_route_unavailable");
+  const names = ["harness", "project", "agents"];
+  if (profile === "codex-cli") names.push("codex");
+  if (profile === "claude-code") names.push("claude");
   if (names.some((name) => typeof source.frames?.[name] !== "string" || !source.frames[name].trim())) {
     throw new Error("worker_source_frame_missing");
   }
@@ -58,15 +64,17 @@ function sourceInstructions(source, profile) {
 function verifyNativeRun(record, route, instructions) {
   if (!record || record.state !== "completed") throw new Error("completed_native_worker_evidence_missing");
   const bundle = JSON.parse(record.bootstrap_bundle_json || "{}");
-  const observedEffort = bundle.env?.[route.profile === "codex-cli" ? "WPR_CODEX_CLI_REASONING_EFFORT" : "WPR_CLAUDE_CODE_EFFORT"];
-  if (record.model_id !== route.model || record.provider_route_model !== route.nativeModel || observedEffort !== route.effort || record.access_mode !== route.access || bundle.provider_capabilities?.native_tools !== true) {
+  const fields = WORKER_PROFILE_FIELDS[route.profile];
+  if (!fields) throw new Error("configured_native_worker_route_unavailable");
+  const observedEffort = bundle.env?.[fields[1]];
+  if (record.model_id !== route.model || record.provider_route_model !== route.nativeModel || observedEffort !== route.effort || record.access_mode !== route.access || bundle.provider_capabilities?.native_tools !== route.nativeTools) {
     throw new Error("native_worker_route_mismatch");
   }
   if (String(bundle.application_developer_instructions || bundle.developer_instructions || "") !== instructions
       || String(bundle.developer_instructions || "") !== instructions) {
     throw new Error("native_worker_source_not_observed");
   }
-  return { ...route, instructionsSha256: sha(instructions), runIdHash: sha(record.run_id), workerIdHash: sha(record.worker_id), state: record.state, nativeTools: true };
+  return { ...route, instructionsSha256: sha(instructions), runIdHash: sha(record.run_id), workerIdHash: sha(record.worker_id), state: record.state };
 }
 
 async function run(args, bank, cases, qaAuth) {
@@ -76,7 +84,7 @@ async function run(args, bank, cases, qaAuth) {
   if (familyIds.size !== 1) throw new Error("worker_source_requires_one_family");
   const family = bank.families.find((item) => familyIds.has(item.id));
   const source = readWorkerSource(family.executionTarget, args.promptBank);
-  const selected = cases.map((item) => ({ testCase: item, route: configuredWorkerRoute(item.fixture?.workerSource?.route || "primary") }));
+  const selected = cases.map((item) => ({ testCase: item, route: configuredWorkerRoute(item.fixture?.workerSource?.route || "primary", process.env, item.fixture?.workerSource?.nativeTools ?? true) }));
   requireLC("module-alias")({ base: path.join(lc, "api") });
   for (const name of ["anthropicOAuthPatch", "anthropicThinkingPatch", "openaiResponsesOutputPatch", "agentSchemaToolBindingPatch"]) require(path.join(lc, "api/server/services/viventium", name));
   const mongoose = requireLC("mongoose");
@@ -98,7 +106,7 @@ async function run(args, bank, cases, qaAuth) {
       sourceFiles: source.sources.map(({ path: name, sha256 }) => ({ path: name, sha256 })),
       bankHash: sha(fs.readFileSync(args.promptBank)), sharedExecutionSourceHash: sha(fs.readFileSync(path.join(lc, "api/server/services/BackgroundCortexService.js"))),
       liveResults: results, summary: { status: passed ? "passed" : judged ? "failed" : "partial", resultCount: results.length, completedCount: results.filter((item) => item.status === "completed").length },
-      scope: "Composed worker source replay through existing native provider, full native tools. Real mission materialization and app/file action are not exercised.", realUserQa: "not performed" };
+      scope: "Composed worker source replay through existing native provider; declared nativeTools is verified per case. Real mission materialization and app/file action are not exercised.", realUserQa: "not performed" };
     fs.writeFileSync(output, JSON.stringify(artifact, null, 2) + "\n", { mode: 0o600 });
     return artifact;
   };
@@ -123,7 +131,7 @@ async function run(args, bank, cases, qaAuth) {
         inputSha256: sha(JSON.stringify(messages.map((message) => message.content))), startedAt: new Date().toISOString(), status: "running" };
       results.push(row); checkpoint();
       try {
-        const response = await executeCortex({ agent, messages, runId, conversationId, req, res: createBackgroundRes(), contextMode: "minimal", completedResultPolicy: "internal", insightMode: "structured", executionTimeoutMs: args.timeoutMs });
+        const response = await executeCortex({ agent, messages, runId, conversationId, req, res: createBackgroundRes(), contextMode: "minimal", mainContextBinding: "isolated", completedResultPolicy: "internal", insightMode: "user_facing", nativeTools: route.nativeTools, executionTimeoutMs: args.timeoutMs });
         if (response.error || !response.insight || response.fallbackUsed) throw new Error(response.errorClass || response.error || "worker_source_response_unavailable");
         const native = harness.queryGlassHiveProviderRun(process.env, runId, { ownerId: qaAuth.userId, conversationId, agentId, nativeAuthority: true });
         row.observedRoute = verifyNativeRun(native, route, instructions);
@@ -134,7 +142,7 @@ async function run(args, bank, cases, qaAuth) {
         const events = fs.readFileSync(stdoutPath, "utf8").split(/\r?\n/).flatMap((line) => { try { return [JSON.parse(line)]; } catch { return []; } });
         row.nativeCalls = harness.nativeToolAuditItems(events);
         row.responseForJudge = response.insight;
-        row.postCaseEvidenceForJudge = harness.scrubForPublic(JSON.stringify({ scope: "read-only worker source replay", nativeAudit: row.nativeAudit, nativeCalls: row.nativeCalls }));
+        row.postCaseEvidenceForJudge = harness.scrubForPublic(JSON.stringify({ scope: "worker source replay", access: route.access, nativeTools: route.nativeTools, nativeAudit: row.nativeAudit, nativeCalls: row.nativeCalls }));
         row.status = "completed";
       } catch (error) { row.status = "failed"; row.error = String(error.message || error); }
       row.endedAt = new Date().toISOString(); checkpoint();

@@ -162,11 +162,14 @@ the host MCP client so it reloads the updated tool contract.
   smallest evidence that proves the result; and repeats an equivalent check only after a relevant
   output change or detected defect. This is a general harness rule, not a prompt-specific list of
   file types, providers, UI surfaces, QA phrases, model efforts, resource classes, or token limits.
-- When `glasshive-run/constraint-ledger.json` exists, workers must treat it as a canonical run
-  reminder before planning, delegation, source collection, and final delivery. Plans, specs, subagent
-  prompts, and delegation notes must carry source/date/auth/scope constraints forward literally; if
-  they conflict with the ledger, the worker should correct them before continuing. This protects the
-  user's explicit constraints without adding prompt-specific runtime rules.
+- Workers use the current run's admitted request, supplied context, and typed continuation authority
+  directly. Already supplied context does not require a duplicate ledger read. When required context
+  is missing, the recovery source is `glasshive-run/runs/<run_id>/constraint-ledger.json`. The current
+  ID comes from `context_manifest.run_id` in the native envelope, including warm workers;
+  standalone execution without an envelope can use `GLASSHIVE_RUN_ID`. The ledger ID must match,
+  and absent identity is missing context, never permission to guess. The workspace-wide latest ledger may belong
+  to another run and must not supply authority. Retained evidence does not replace later authorized
+  guidance. Plans, specs, subagent prompts, and delegation notes preserve the user's constraints.
 - Source/date/auth/scope constraints are evidence boundaries, not just labels to mention in the
   final report. If a constraint excludes a source, date, account, scope, or item, the worker must not
   use it to support facts, scoring, or deliverables; it may record the item only as rejected or
@@ -402,13 +405,18 @@ worker prompt files, and user-grade runs before claiming capability coverage.
 
 ### Run Constraint Ledger And Evidence
 
-Each worker run materializes a generic `glasshive-run/constraint-ledger.json` inside the workspace
-and mirrors it under `glasshive-run/runs/<run_id>/constraint-ledger.json`. The ledger is a
-conservative reminder extracted from structured tool inputs and the user's text. It captures the
-original request, explicit date/source/auth/scope constraints, required or forbidden outputs, seed
-entities or files, exclusion/flag-only rules, output-format expectations, and markers that the
-worker must not widen or soften. It is not a domain-specific planner and must not contain
-benchmark-specific rules.
+Each worker run materializes `glasshive-run/runs/<run_id>/constraint-ledger.json`. Dedicated workspace
+placement also retains a workspace-wide latest copy for diagnostics; common placement does not
+update that copy. The ledger preserves the complete admitted request and explicitly typed
+continuation authority. Runtime does not extract semantic requirements from prose. Models interpret
+the user's source/date/auth/scope and output constraints without widening them. Ledger generation,
+retention, and exact-run evidence checks remain independent of whether the model needs to read it.
+
+The native task envelope already carries the admitted instruction and selected context. Requiring
+each worker to reread a shared latest file added an unnecessary tool round and could introduce
+another run's constraints. The registered worker completion/host sources and standalone mirrors
+therefore use supplied context first and exact-run recovery only. This does not remove permissions,
+verification, context, or continuation support, and does not by itself prove a latency improvement.
 
 Each run also produces `glasshive-run/evidence.json` and a per-run mirror. Evidence includes run
 metadata, selected profile and execution mode, model/effort when known, redacted command argv,
@@ -1572,6 +1580,9 @@ LibreChat internals.
   Imported message files without a tool-call identity render once through the normal Web attachment
   UI, including saved Voice transcripts. Tool-owned files keep their existing placement. Local File
   attachments use the authenticated download route; unavailable receipts show no download action.
+  An authored file reference bound to that exact owner and message uses the existing authenticated
+  download action. It must not advertise a URL that fails when copied or opened without the
+  authenticated request. Ordinary external references remain links.
 - Native Codex and Claude conversation output currently becomes user-visible at completed assistant
   event granularity, not token granularity. Agent Builder control therefore buffers a private
   bounded envelope and does not expose answer-content deltas while graph control is active.

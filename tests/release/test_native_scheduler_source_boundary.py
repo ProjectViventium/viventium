@@ -59,6 +59,8 @@ def staging(tmp_path, monkeypatch):
         "viventium_v0_4/prompt-workbench/backend/prompt_workbench/__init__.py",
     ):
         write(repo / relative)
+    write(repo / "viventium_v0_4/shared/telegram_tts.py",
+          'RUNTIME_SUPPORT_FILES = ("shared/telegram_tts.py",)\n')
     write(repo / "components.lock.json", json.dumps({"components": [{"name": "LibreChat", "ref": pin}]}))
     git(repo, "add", ".")
     git(repo, "commit", "-qm", "Synthetic fixture")

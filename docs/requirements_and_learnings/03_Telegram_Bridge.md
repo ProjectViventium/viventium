@@ -29,6 +29,22 @@ not select the main Viventium Telegram bridge's model.
 - Nested supported Markdown inside block quotes must render as the intended Telegram HTML and must
   never expose internal formatter placeholders such as `PH0` or `PH2`.
 - Background follow-ups must preserve the same formatting rules as the main response.
+- A finished, successful empty Main response with a valid required model-authored audio skip is
+  intentional silence. Shared Cortex polling must preserve that empty result across Telegram,
+  gateway and scheduler consumers; it must not invent a deferred error, text or TTS after the
+  existing quiet acknowledgement. Malformed, failed, cancelled and unfinished responses retain
+  their existing error/recovery contract. Independent authorized worker/Cortex follow-ups remain
+  separate and can still deliver.
+- The existing callback-delivery claim can wait up to five seconds for a content-free wake hint.
+  A committed pending Telegram outbox row wakes that claim immediately; only its existing durable
+  claim, lease and dispatch authorization may deliver the result. Subscribe before the first
+  claim so a commit between the empty check and wait is not lost. Disconnect, Stop, timeout and
+  claim failure release the listener. Notifications are process-local hints: missed notifications,
+  another backend process, older backends and restarts retain bounded polling recovery. A backend
+  that supports waiting must not be followed by another fixed poll sleep.
+- Notification does not establish that every worker has finished. Existing conversation grouping,
+  receipt membership and callback adjudication fences remain authoritative. Do not remove a
+  coalescing wait on the assumption that all arrived results represent all in-flight Worker N.
 - Telegram must mirror LibreChat UX for new features, including scheduled prompts and background
   follow-ups.
 - Saved channel messages remain readable in Web: canonical text is shown when structured text is
@@ -952,8 +968,26 @@ account identifiers.
 Main answers, proactive worker answers, attachments and real errors keep their existing delivery
 contracts. When a user asks about a notice, model-authored explanatory or quoted text remains
 ordinary conversational content and may be spoken. No keyword/emoji filter suppresses it.
-An accepted native completion with no text or files and a valid, required model delivery
+An accepted public final with its authenticated assistant message identity, no text or files,
+no abort, unfinished or error state, and a valid, required model delivery
 disposition of `skip` is a quiet result. Telegram must not label it malformed or request a retry.
 Explicit errors, incomplete native responses, missing or invalid disposition, and unframed empty
 responses keep their error path. A spoken skip does not suppress a nonempty text-only answer.
+The adapter uses public final fields; private native snapshots are deliberately absent. It
+acknowledges validated quiet completion through the existing delivery acknowledgement, with the
+accepted work reference when present and no invented message reference. Failure and stale-source
+recovery retain their existing guards. Pending work alone is not a successful quiet completion.
+Buffered Telegram TTS proceeds to validated media packaging as soon as synthesis returns complete
+bytes; fixed post-synthesis sleeps cannot repair a partial container and add no safety.
 See `20_Memory_System.md` and Telegram voice acceptance case `TGVOICE-009`.
+
+### One-time native decisions belong to one request
+
+When an accepted task raises a new native permission or question, Main uses the current request
+identity and the conversation to decide what the user still needs to answer. A prior one-time
+approval applies only to its original request. A different pending request from the same worker
+must not disappear as a duplicate or as already approved. Main asks naturally in the current chat;
+the existing owner control validates the exact request before execution. An unchanged question
+already presented, a resolved request, and a superseded request remain silent. Test these cases
+together with the source-rendered prompt on the configured models. No status narration or automatic
+consent is added.

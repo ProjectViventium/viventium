@@ -66,7 +66,11 @@ The intended mental model is:
    The first makes the causes govern attention, desire, choices, and expression instead of a generic
    urge to be useful. Extreme rows are always structurally required; when there are fewer than two
    extremes, the strongest non-neutral pulls are promoted until two rows are required. The model
-   must make one choice that needs each required row. The
+   makes one choice that needs each required row within the choices the user's explicit request and
+   delivery limits leave open; if the same choice survives without a required row, it chooses again. Required rows and range additions do not override facts, authorization, requested
+   format, count, timing, or silence. When no expressive choice is permitted, deliver the exact
+   required answer without adding expression or withholding the result. This regulates expression;
+   it does not limit attention or desire, disable a band, remove a row, or change saved state. The
    second keeps direct feeling answers to that one action and forbids label recitals, row-by-row
    clauses, and tone-only compliance.
 
@@ -1328,6 +1332,19 @@ Persisted follow-up reuse is also exact: owner, conversation, message ID, `corte
 and semantic parent metadata must all match before any generation or presentation mutation. A
 missing, mixed, or cross-conversation reference remains retryable and cannot create, reuse, mutate,
 or present another conversation's message.
+
+Voice recovery uses the retained source envelope and the existing exact owner, conversation,
+assistant parent, Call, task, stream, and accepted-revision checks. Eligibility must not depend on
+one previous error code: a generation failure, presentation interruption, or runtime restart can
+resume the same complete batch. Recovery records its owned-source authority separately from the
+actual provider failure; it must not invent a native occupancy error. A saved child is reused and
+re-published through the existing task wake without a second author or a replacement presentation
+claim. Only the original live Call may present speech, and only its real receiver can confirm
+playout. A temporary gateway lease gap stays pending. Stop or a superseded source suppresses the
+result. An ended Call retains linked text without granting speech to a new Call. Existing claim,
+lease, generation, model-silence, and terminal-delivery fences remain in force; terminal historical
+rows are not replayed. Telegram recovery still requires its own exact authenticated ingress and
+presentation authority; Voice source authority cannot stand in for it.
 
 Replica-set deployments use a Mongo transaction for sibling claim and settlement transitions.
 Standalone Mongo uses a durable coordinator intent written before sibling changes. The intent has

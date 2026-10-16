@@ -685,9 +685,43 @@ function nativeToolAuditItems(events) {
   const items = [];
   const claudeCalls = new Map();
   const seenClaudeCalls = new Set();
+  const grokCalls = new Map();
+  const finishedGrokCalls = new Set();
   for (const event of events) {
     if (event?.item && typeof event.item === "object") {
       items.push({ eventType: event.type, ...event.item });
+      continue;
+    }
+    if (event?.type === "grok.session.update") {
+      const update = event.update;
+      if (!["tool_call", "tool_call_update"].includes(update?.sessionUpdate)) continue;
+      if (!event.session_id || !update.toolCallId) throw new Error("grok_native_tool_identity_missing");
+      const key = JSON.stringify([event.session_id, update.toolCallId]);
+      if (finishedGrokCalls.has(key)) continue;
+      const prior = grokCalls.get(key);
+      if (!prior && update.sessionUpdate === "tool_call_update") {
+        throw new Error("grok_native_tool_start_missing");
+      }
+      const metadata = update._meta?.["x.ai/tool"];
+      const kind = metadata?.kind || update.kind;
+      const type = { execute: "command_execution", read: "file_change", edit: "file_change",
+        delete: "file_change", fetch: "web_search" }[kind]
+        || prior?.type || "dynamic_tool_call";
+      const item = {
+        ...prior, id: update.toolCallId, sessionId: event.session_id, type,
+        tool: metadata?.name || prior?.tool,
+        arguments: update.rawInput ?? prior?.arguments,
+      };
+      grokCalls.set(key, item);
+      if (!prior) items.push({ eventType: "item.started", ...item });
+      if (!["completed", "failed"].includes(update.status)) continue;
+      const text = (Array.isArray(update.content) ? update.content : [])
+        .filter((part) => part?.type === "content" && part.content?.type === "text")
+        .map((part) => part.content.text).join("\n");
+      items.push({ ...item, eventType: "item.completed", status: update.status,
+        error: update.status === "failed", output: text, result: update.rawOutput ?? {} });
+      grokCalls.delete(key);
+      finishedGrokCalls.add(key);
       continue;
     }
     if (!["assistant", "user"].includes(event?.type)) continue;
@@ -2385,7 +2419,7 @@ function promptFrameLogFiles() {
     for (const entry of fs.readdirSync(runtimeLogDir, {
       withFileTypes: true,
     })) {
-      if (entry.isFile() && /^debug-\d{4}-\d{2}-\d{2}\.log$/.test(entry.name)) {
+      if (entry.isFile() && /^debug-\d{4}-\d{2}-\d{2}\.log(?:\.\d+)?$/.test(entry.name)) {
         files.push(path.join(runtimeLogDir, entry.name));
       }
     }
@@ -2395,9 +2429,11 @@ function promptFrameLogFiles() {
 
 function capturePromptFrameCursor() {
   const cursor = {};
+  Object.defineProperty(cursor, "capturedAtMs", { value: Date.now() });
   for (const filePath of promptFrameLogFiles()) {
     try {
-      cursor[filePath] = fs.statSync(filePath).size;
+      const stat = fs.statSync(filePath);
+      cursor[filePath] = { bytes: stat.size, inode: stat.ino, device: stat.dev };
     } catch (_error) {
       cursor[filePath] = 0;
     }
@@ -2491,28 +2527,40 @@ function summarizePromptFrameDelta(cursor, expectedRequestIdentityHash) {
     "placement",
     "trailingInstructionChars",
   ]);
+  const readInodes = new Set();
   for (const filePath of promptFrameLogFiles()) {
-    let start = cursor[filePath] || 0;
-    let end = 0;
+    let fd;
     try {
-      end = fs.statSync(filePath).size;
+      fd = fs.openSync(filePath, "r");
     } catch (_error) {
-      continue;
+      continue; // The writer may rotate between discovery and open.
     }
-    if (end <= start) {
-      continue;
-    }
-    if (start > end) {
-      start = 0;
-    }
-    const fd = fs.openSync(filePath, "r");
     try {
+      const stat = fs.fstatSync(fd);
+      const identity = `${stat.dev}:${stat.ino}`;
+      if (!stat.isFile() || readInodes.has(identity)) continue;
+      readInodes.add(identity);
+      // Reuse the native surface collector's inode/byte cursor contract. A rename
+      // preserves the old offset; a replacement at the same path starts at zero.
+      const prior = Object.values(cursor).find((entry) =>
+        entry && typeof entry === "object" && entry.inode === stat.ino &&
+        entry.device === stat.dev,
+      );
+      const pathOffset = cursor[filePath];
+      const offset = prior?.bytes ?? (typeof pathOffset === "number" ? pathOffset : 0);
+      const start = offset <= stat.size ? offset : 0;
+      const end = stat.size;
+      if (end <= start) continue;
       const buffer = Buffer.alloc(end - start);
       fs.readSync(fd, buffer, 0, buffer.length, start);
       for (const line of buffer.toString("utf8").split(/\r?\n/)) {
         if (!line.trim()) {
           continue;
         }
+        // A newly discovered copy/rotation must not replay an older request window.
+        const emittedAtMs = Date.parse(line.slice(0, 24));
+        if (Number.isFinite(cursor.capturedAtMs) && Number.isFinite(emittedAtMs) &&
+            emittedAtMs < cursor.capturedAtMs) continue;
         const runtimeRoute = line.match(
           /\[PromptFrameRouteTelemetry\]\s+(\{.*\}|\[.*\])\s*$/,
         );

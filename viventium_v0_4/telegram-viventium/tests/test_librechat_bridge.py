@@ -436,25 +436,26 @@ def test_extract_final_error_from_error_content_part():
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    "native_status,audio,valid,required,source,text,error,quiet",
+    "unfinished,audio,valid,required,source,text,error,quiet",
     [
-        ("completed", "skip", True, True, "model", "", False, True),
-        ("pending", "skip", True, True, "model", "", False, False),
-        (None, "skip", True, True, "model", "", False, False),
-        ("completed", "eligible", True, True, "model", "", False, False),
-        ("completed", "skip", False, True, "model", "", False, False),
-        ("completed", "skip", True, False, "model", "", False, False),
-        ("completed", "skip", True, True, "fallback", "", False, False),
-        ("completed", "skip", True, True, "model", "", True, False),
-        ("completed", "skip", True, True, "model", "A text-only answer.", False, False),
+        (False, "skip", True, True, "model", "", False, True),
+        (True, "skip", True, True, "model", "", False, False),
+        ("aborted", "skip", True, True, "model", "", False, False),
+        (False, "eligible", True, True, "model", "", False, False),
+        (False, "skip", False, True, "model", "", False, False),
+        (False, "skip", True, False, "model", "", False, False),
+        (False, "skip", True, True, "fallback", "", False, False),
+        (False, "skip", True, True, "model", "", True, False),
+        (False, "skip", True, True, "model", "A text-only answer.", False, False),
     ],
 )
 async def test_stream_completed_native_quiet_is_not_malformed(
-    monkeypatch, native_status, audio, valid, required, source, text, error, quiet,
+    monkeypatch, unfinished, audio, valid, required, source, text, error, quiet,
 ):
     bridge = _make_bridge()
     response = {
         "messageId": "native-quiet-message",
+        "user": "synthetic-owner", "unfinished": unfinished, "error": False,
         "text": text,
         "content": [{"type": "text", "text": text}],
         "metadata": {"viventium": {"deliveryDisposition": {
@@ -462,11 +463,12 @@ async def test_stream_completed_native_quiet_is_not_malformed(
             "required": required, "source": source,
         }}},
     }
-    if native_status is not None:
-        response["nativeResponse"] = {"status": native_status}
     if error:
         response.update(error=True, errorMessage="Provider rejected the request.")
     payload = {"final": True, "responseMessage": response}
+    if unfinished == "aborted":
+        response["unfinished"] = False
+        payload["aborted"] = True
 
     async def events(*, chunk_iter):
         yield payload
@@ -499,8 +501,11 @@ async def test_stream_completed_native_quiet_is_not_malformed(
         assert chunks == [{
             "type": "delivery_disposition",
             "delivery_disposition": response["metadata"]["viventium"]["deliveryDisposition"],
-            "required": True, "present": True,
+            "required": True, "present": True, "quiet_completion": True,
         }]
+    elif unfinished == "aborted":
+        assert len(chunks) == 1 and chunks[0]["type"] == "superseded"
+        assert chunks[0]["reason"] == "aborted"
     elif text:
         assert text in chunks
     elif error:
@@ -6766,9 +6771,10 @@ async def test_glasshive_dispatcher_backs_off_and_deduplicates_dependency_failur
     attempts = 0
     sleeps = []
 
-    async def fake_claim(*, limit):
+    async def fake_claim(*, limit, wait_s=0):
         nonlocal attempts
         assert limit == bridge.glasshive_delivery_batch_size
+        assert wait_s == bridge.glasshive_delivery_poll_s
         attempts += 1
         if attempts <= 3:
             raise RuntimeError("dependency unavailable")
@@ -8650,3 +8656,17 @@ async def test_stream_response_final_attachment_carries_authenticated_native_fil
             "attachment": {"file_id": "file-1", "filename": "x.png", "filepath": "/images/u/x.png"},
         }
     ]
+
+
+@pytest.mark.parametrize("patch", [
+    {"aborted": True},
+    {"responseMessage": {"user": "owner", "messageId": "id", "unfinished": True}},
+    {"responseMessage": {"user": "owner", "messageId": "id", "error": True}},
+    {"responseMessage": {"user": "owner", "messageId": "id", "isCreatedByUser": True}},
+    {"responseMessage": {"messageId": "id"}},
+])
+def test_public_success_identity_rejects_non_completion(patch):
+    from TelegramVivBot.utils.librechat_bridge import _native_file_identity_from_final
+    payload = {"final": True, "responseMessage": {"user": "owner", "messageId": "id", "unfinished": False}}
+    payload.update(patch)
+    assert _native_file_identity_from_final(payload) is None

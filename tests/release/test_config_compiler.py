@@ -12233,3 +12233,61 @@ def test_native_grok_interjection_hash_uses_canonical_extra_env_without_route_ch
     assert native["WPR_MODEL_GROK_BUILD"] == before["WPR_MODEL_GROK_BUILD"]
     assert native["WPR_GROK_REASONING_EFFORT"] == before["WPR_GROK_REASONING_EFFORT"]
     assert "WPR_GROK_REVIEWED_BINARY_SHA256" not in config_compiler.render_native_runtime_env(config, before)
+
+
+@pytest.mark.parametrize("enabled", [False, True])
+def test_call_preparation_config_reaches_core_and_native_behavior_artifacts(tmp_path, monkeypatch, enabled):
+    monkeypatch.setenv("VIVENTIUM_APP_SUPPORT_DIR", str(tmp_path / "app-support"))
+    config = minimal_compile_config()
+    config["voice"]["prebuild_context"] = {
+        "enabled": enabled, "prompt_id": "voice.prebuild_context", "timeout_s": 90,
+    }
+    env = config_compiler.render_runtime_env(config, config_compiler.build_agent_assignments(config))
+    assert env["VIVENTIUM_VOICE_PREBUILD_CONTEXT_ENABLED"] == ("true" if enabled else "false")
+    assert env["VIVENTIUM_VOICE_PREBUILD_CONTEXT_PROMPT_ID"] == "voice.prebuild_context"
+    assert env["VIVENTIUM_VOICE_PREBUILD_CONTEXT_TIMEOUT_S"] == "90"
+    config_compiler.render_service_envs(tmp_path, env)
+    core = config_compiler.parse_env_file(tmp_path / "service-env" / "librechat.env")
+    native = config_compiler.render_native_runtime_env(config, env)
+    for key in ["VIVENTIUM_VOICE_PREBUILD_CONTEXT_ENABLED", "VIVENTIUM_VOICE_PREBUILD_CONTEXT_PROMPT_ID", "VIVENTIUM_VOICE_PREBUILD_CONTEXT_TIMEOUT_S"]:
+        assert core[key] == native[key] == env[key]
+    models = {item["id"]: item for item in config_compiler.GLASSHIVE_PROVIDER_MODELS}
+    assert models["codex-cli:gpt-6.1-sol"]["recommendedEffort"] == "high"
+    assert models["codex-cli:gpt-6.1-sol"]["serviceTierChoices"] == ["default", "priority"]
+
+
+def test_call_preparation_default_is_inactive_and_does_not_reconfigure_main(tmp_path, monkeypatch):
+    monkeypatch.setenv("VIVENTIUM_APP_SUPPORT_DIR", str(tmp_path / "app-support"))
+    config = minimal_compile_config()
+    assignments = config_compiler.build_agent_assignments(config)
+    before = copy.deepcopy(assignments)
+    env = config_compiler.render_runtime_env(config, assignments)
+    assert env["VIVENTIUM_VOICE_PREBUILD_CONTEXT_ENABLED"] == "false"
+    assert env["VIVENTIUM_VOICE_PREBUILD_CONTEXT_TIMEOUT_S"] == "120"
+    assert assignments == before
+
+
+def test_direct_xperfect_selectors_preserve_native_defaults() -> None:
+    config = minimal_compile_config()
+    config["integrations"]["glasshive"] = {"enabled": True, "provider": {"enabled": True}}
+    capability = config_compiler.build_agent_provider_capabilities(config)["glasshive-harness"]
+    models = {model["id"]: model for model in capability["models"]}
+    for profile, model in [("direct-openai", "gpt-6.1-sol"),
+                           ("direct-anthropic", "claude-opus-5-5"),
+                           ("direct-xai", "grok-4.7")]:
+        selected = models[f"{profile}:{model}"]
+        assert selected["harnessProfile"] == profile
+        assert selected["executionBackend"] == "direct-api"
+        assert selected["workerNativeTools"] is False
+        assert selected["recommendedEffort"] == "high"
+        assert {"low", "high"}.issubset(selected["effortChoices"])
+    assert "none" not in models["direct-xai:grok-4.7"]["effortChoices"]
+    assert "max" in models["direct-openai:gpt-6.1-sol"]["effortChoices"]
+    assert models["direct-openai:gpt-6.1-sol"]["serviceTierChoices"] == ["default", "priority", "ultrafast"]
+    assert "xhigh" not in models["direct-anthropic:claude-opus-5-5"]["effortChoices"]
+    assert capability["models"][0]["id"] == "codex-cli:gpt-6.1-sol"
+    assert config_compiler.resolve_glasshive_provider_settings(config)["default_model"] == "codex-cli:gpt-6.1-sol"
+    assert capability["voice_pipeline_llm"] is True
+    assert capability["main_chat"] is True
+    assert capability["cortex_execution"] is True
+    assert "openclaw-general" in config_compiler.SUPPORTED_GLASSHIVE_WORKER_PROFILES

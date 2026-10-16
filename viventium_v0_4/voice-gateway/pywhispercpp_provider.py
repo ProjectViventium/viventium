@@ -131,7 +131,8 @@ def _transcribe_kwargs(
         "temperature": 0.0,
         "entropy_thold": 2.2,
         "no_context": _bool_env("VIVENTIUM_STT_NO_CONTEXT", True),
-        "single_segment": _bool_env("VIVENTIUM_STT_SINGLE_SEGMENT", True),
+        # Preserve native multi-segment decoding for complete long utterances.
+        "single_segment": _bool_env("VIVENTIUM_STT_SINGLE_SEGMENT", False),
         # Reduced context repeated speech in an exact-buffer native comparison.
         # Reset the cached model to its full native context on every transcription.
         "audio_ctx": 0,

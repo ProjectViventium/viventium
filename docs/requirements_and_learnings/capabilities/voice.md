@@ -127,8 +127,13 @@ change presentation only; they grant no tool or effect authority.
 - **PW-052:** Main speaks concise verified status or completion once. Files remain available in the
   linked chat or Active Work. Viventium never starts an unsolicited result call.
 
-Canonical Call transcript and linked-chat text retain complete public links, including file and
-workspace actions. An incomplete inline link stays as literal transcript text until it is complete;
+Canonical Call transcript and linked-chat text retain complete public links and authored email
+addresses, including file and workspace actions. Requested details supported by the conversation
+or verified results belong in that same written reply; Main does not ask again whether to send them.
+Speech keeps the existing short reference cues, without duplicating an offer or availability
+announcement. This presentation contract does not invent an address, reveal explicitly withheld
+information, or change silent/text-only delivery. The display path preserves exact reference bytes;
+only the speech path applies spoken boundary repairs. An incomplete inline link stays as literal transcript text until it is complete;
 its partial target is not clickable. Speech uses its existing artifact cleanup and selected renderer's streaming
 policy. Main uses the SDK's separate text and audio paths; its speech buffer applies only to TTS.
 Background completion display retains the full authored text while speech keeps the existing
@@ -253,6 +258,11 @@ operation. The observer stops once its known terminal callbacks are settled. Emp
 pending or unconfirmed delivery, foreign scope and superseded results keep the existing retry
 and deadline behavior; the settled receipt cannot authorize or repeat speech.
 
+Acceptance follows the requested outcome, not one announcement per worker. A successful Main-authored
+`{NTA}` decision is terminal when no new user-facing result is needed. Check the accepted callback
+identity and the actual delivered outcome; require completed audio presentation for every visible
+Voice follow-up, but never force another announcement of a result Main already delivered.
+
 ## Orchestration observability
 
 Voice retains the Main prompt, connected capabilities, Feelings snapshot, activation decisions,
@@ -287,7 +297,10 @@ Native Grok observations include receive time in UTC, monotonic elapsed millisec
 process, session-open and prompt-start markers. These distinguish observed setup and prompt time;
 they do not infer hidden reasoning, provider queue time, cache behavior or unavailable token usage.
 Enabled latency logging also separates request-local bundle copying from restart-authority
-reconciliation. Each Native interval records a fixed completed or failed status. Core records the
+reconciliation. Existing xPerfect admission observations separate handler entry, authorization,
+thread dispatch, session-lock wait, model selection, session/context preparation and the request
+write. Handler entry follows HTTP middleware and body validation. A stored row creation timestamp
+is assigned before its transaction and does not prove write completion or pure transport time. Each Native interval records a fixed completed or failed status. Core records the
 awaited initial message persistence sequence, the cumulative message-build prefix through
 continuity, and the local formatting, token-accounting and RAG interval before memory recall.
 The continuity prefix includes earlier preparation; the formatting interval is not pure
@@ -436,3 +449,134 @@ suffix wait for the canonical terminal artifact projection. Pending Markdown lin
 their target is known. Complete public URLs, code and literal text keep their existing behavior.
 The accepted-prefix fence remains strict. Only the terminal file carrier can publish artifact
 identity or access; missing or rejected files receive no invented carrier.
+
+### Optional call context preparation
+
+- **VOICE-PREP-001:** An owner may enable one silent, visible normal Main context-gathering turn at actual Call start, followed by the normal per-run Voice endpoint in the same conversation. Settings-only and Listen-Only start no model; source ordering, permissions, cancellation and unrelated worker delivery remain intact. [Detailed contract](../06_Voice_Calls.md#optional-preparation-for-fast-conversation).
+
+## Measured overhead and portable voice integration
+
+- **VOICE-PERF-002:** Measure the full call journey in separate clocks: call startup and optional
+  context preparation; text submission or physical speech end, endpoint detection and final transcript;
+  input ordering/admission; host context/authorization work; actual transport; xPerfect admission,
+  native process/session/tool setup or direct execution; first eligible answer text; output delivery
+  and first received speech. A broad request-preparation span must never be called network latency.
+  Show model, effort, preparation state, first/repeated turn, cache facts and correctness in plain
+  comparison headings. Include concrete examples and state what each measured boundary excludes.
+- The target for same-machine communication is sub-millisecond transport where supported. Remove
+  evidenced avoidable waits and repeated work; do not claim zero network/transaction cost, hide
+  required durable admission or weaken permissions, history, Feelings or tools to meet a headline.
+  Compare HTTP, MCP and event callbacks on equivalent work and authorization. A webhook is a
+  delivery pattern, not a zero-latency transport or a replacement for request/receipt ownership.
+- **VOICE-WARM-001:** Native process warming belongs to xPerfect and applies through the same
+  Queen/worker configuration pattern. A configurable count must mean actual ready idle native
+  processes, with declared provider support, account/model/worker scope, bounded resources, idle
+  expiry and exact Stop/recovery proof. Retained folders, containers or conversation history are
+  not proof of an initialized AI process or a warm provider inference cache. Report one-time startup,
+  per-turn initialization, session/tool binding and inference separately. Unsupported warming must
+  be explicit; never advertise a working setting backed only by readiness calls.
+- **VOICE-AWARE-002:** Optional call preparation starts with the existing documented Life context
+  and latest preparation report when available. Gather changed or missing facts and resolve evidence
+  chronology rather than rebuilding awareness from scratch. This is a source-owned prompt change,
+  using the existing scheduler/Main tools and memory workflows; it grants no new file-write or
+  external-action authority. Memory maintenance and background detection/work remain parallel and
+  do not become serial reply prerequisites. Show their overlapping time separately.
+- **VOICE-XP-LK-001:** xPerfect owns universal native/direct execution, warm configuration and work
+  controls. LiveKit is a supported integration target through the existing streaming API and official
+  SDK primitives, with small shared delivery handling. Do not add a LiveKit-specific orchestrator
+  or a LibreChat dependency. A bare integration must state which capabilities it receives and must
+  not claim Viventium-owned memory, Feelings or speaker authority was migrated. A support claim
+  requires an actual candidate-bound LiveKit path, streaming eligible text, silence for skip-voice
+  parts, authorized tool/worker behavior, interruption/recovery and documented setup evidence.
+- Continue streaming eligible public answer parts into preconnected TTS before final answer
+  completion. Internal activity, memory notices, reasoning and skip-voice parts stay out of speech.
+  Measure recognition and output quality alongside speed; arithmetic timing alone is not general
+  reliability, speaker attribution or glitch-free audio proof. Compare STT providers using the same
+  audio and physical end-of-speech clock, reporting model load and provider connection separately.
+
+### Latest isolated recognition comparison
+
+The same synthetic arithmetic audio was sent at real-time pace through the configured local
+Whisper large-v3-turbo and AssemblyAI u3-rt-pro adapters on the pinned LiveKit 1.5.10 SDK. Both
+returned the same correct full transcript in the original two attempts: physical speech-end to
+final transcript was 873/860 ms locally and 711/675 ms for AssemblyAI. A provenance-recorded repeat
+used the actual local instrumented adapter and cloud constructor settings. The last utterance
+finalized in 864/854 ms locally and 583/597 ms for AssemblyAI. In that repeat, AssemblyAI split the
+three-sentence clip into two final segments; local recognition produced one. Combined text was
+correct in all four cases. An early sentence final is not a completed whole request.
+
+Model construction is separate. These are isolated adapter comparisons, not full call,
+speaker-attribution, fastest-provider or natural-pause accuracy acceptance. An isolated real
+LiveKit reference call also exposed a separate 515 ms final-transcript-to-conversation hold. Its
+existing native minimum endpoint delay is configurable; a zero delay is appropriate only when the
+selected STT supplies an authoritative end-of-turn. Local VAD remains available for interruption.
+Do not disable semantic endpoint detection or change all provider defaults to win one timing test.
+
+### Invocation-fresh authority and call measurements
+
+Graph construction must not mint a speculative capability bundle that the mandatory current-attempt
+refresher will replace. Keep structural actor/tool context during construction; mint current authority
+at actual invocation. Direct consumers without that refresher retain their complete eager path.
+Background follow-ups retain the current runtime's native tool declarations through object copies,
+clear inherited Main capability credentials, then build their own scoped authorization. Empty, denied
+and non-workspace routes must never inherit Main's signed grant. This is not an authorization cache.
+
+An earlier loaded local High call completed the same synthetic count request in 22.676 seconds from
+physical speech end to received audio, with 45,646 input tokens. Its current-grant preparation took
+96.5 ms, durable admission 86.5 ms and HTTP-header wait 189.2 ms. These nested clock boundaries are not
+additional times to add to the full call. Native setup took 3.110 seconds; native prompt to first raw
+reply took 16.911 seconds. First raw text included a delivery header: the first spoken word arrived
+123.5 ms later, then reached TTS in 77.9 ms. A raw-header clock is not a first-word clock.
+
+A separate normal Call API request to agent/track subscription took 3.177 seconds, excluding login
+and the browser click. This is a one-time connection observation, not a per-turn charge or proof of
+all model readiness. The earlier 27.255-second call had a different context size and runtime load;
+the difference cannot be attributed wholly to one repair. See the owning QA report for limits.
+
+### Settled connection flows and warming scope
+
+A connection monitor must check retained terminal state immediately before waiting for a pending-state
+poll. Keep cancellation, failure, expiry, durable state and cross-process observation. Do not cache
+authorization or infer credential readiness from a generic log phrase. The shared flow monitor now
+checks at elapsed time zero; its owning 61-case bank and normal API package build passed. Pending
+flows keep their existing poll, and the cold new-handler branch returns its own completed result.
+
+Native warming is scoped to the exact saved worker. A new persisted conversation creates a different
+worker; a positive count on an older conversation does not warm that new conversation's first turn.
+The measured option supports host Grok with current/static account binding. Other native profiles
+and named per-attempt account bindings are explicit unsupported warming states. This does not
+remove those providers as ordinary endpoint choices.
+
+The final loaded High count-request repeat took 14.357 seconds from physical speech end to received
+audio: native setup 1.521 seconds, tool connection 538 ms, Core tool catalog 437 ms and native prompt
+to first raw response 9.592 seconds. All 23 scoped tools remained ready. It used 42,940 input and
+1,178 completion tokens, so the difference from earlier calls is not a controlled whole-call gain.
+Its credential flow was newly created; the repaired existing-COMPLETED branch is test-proven, not
+separately live-proven by that call. Under-two-second speech and glitch-free hardware audio remain
+unverified. [Evidence and limits](../../../qa/voice/reports/2026-10-14-native-overhead-and-livekit-reference.md).
+
+### Timing attribution and the Light boundary
+
+Report the stored-request timestamp separately from identity assignment, HTTP response headers,
+executor start, provider request, first raw event, first eligible word and received speech. These
+spans can overlap. A response-header interval includes server work; it is not a network benchmark.
+A raw provider event can contain a delivery declaration before any conversational word.
+
+Light can replace host-specific route, controller and graph setup with the existing xPerfect request
+contract when equivalent ownership is proved. It must preserve authenticated identity, current tool
+scope, continuity, files/history, memory, Feelings, cortices and durable cancellation/recovery.
+Removing a UI or changing HTTP to MCP/webhooks does not eliminate that work. Keep transport-only
+and full authorized admission measurements separate. Do not equate a tiny Direct text test with a
+full cognitive voice call or exclude interpreter/SDK import time from Direct startup.
+
+Native warm-process count is distinct from the number of durable background workers. Diagrams
+show Worker 1 … Worker N, subject to configured capacity and provider limits; two drawn examples
+must never become a two-worker product limit. Completed credential lookup should resolve without
+an intentional polling wait. Removing cold-flow synchronization requires equivalent concurrent
+ownership; do not trade duplicate credential refreshes or actions for a lower latency number.
+
+Foreground admission requests cancellation of older Main compaction under the existing interactive
+fence. Job and client preparation may run while cancellation settles; generation joins the same
+yield promise before model work starts. Native admission still owns actual provider capacity.
+The maintenance duration is overlapping work, not another duration to add to the reply timeline.
+Cancellation must not remove the current context, accepted work or the existing cleanup contract.

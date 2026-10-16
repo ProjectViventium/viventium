@@ -5,7 +5,7 @@ A Telegram bot interface that connects to the Viventium AI agent via LibreChat (
 ## Architecture
 
 ```
-Telegram User → Telegram Bot → LibreChat Agents → Viventium Agent → Tools/MCPs/LLMs
+Telegram User → Telegram Bot → Viventium Core → configured xPerfect agent → tools / workers
 ```
 
 All chat messages route through the LibreChat Agents pipeline (same brain as the web UI), which handles model selection, API routing, tools, and background cortices.
@@ -122,7 +122,7 @@ See `config.env.example` for all available options.
   message boundaries while copy-ready artifacts remain intact
 - ✅ **Image Support**: Send images, extract text, and process with Viventium
 - ✅ **Document Processing**: Extract text from PDFs and documents
-- ✅ **Multi-user Support**: Each Telegram user gets their own LiveKit room
+- ✅ **Multi-user Support**: Core binds each authorized Telegram user to their own conversation
 
 The `/call` exchange is non-cacheable. A browser-generated idempotency value permits only a
 same-browser retry after a lost response; a different replay is denied. Launch capabilities must
@@ -155,7 +155,7 @@ Uses the v1 LiveKit agent and is kept for backward compatibility.
 ### Residual API Usage
 
 Some features still use direct API calls for preprocessing:
-- **Voice Transcription**: Converts voice notes to text (uses OpenAI Whisper)
+- **Voice Transcription**: Converts voice notes to text using the linked user's current Listening route
 - **Image/Document Extraction**: Extracts text from files before sending to Viventium
 
 These are legitimate preprocessing steps that happen before data reaches Viventium.
@@ -165,9 +165,19 @@ These are legitimate preprocessing steps that happen before data reaches Viventi
 See [docs/TELEGRAM_VIVENTIUM_INTEGRATION.md](docs/TELEGRAM_VIVENTIUM_INTEGRATION.md) for detailed troubleshooting guide.
 
 Common issues:
-- **"thinking 💭" forever**: Check if Viventium agent is running
-- **No response**: Verify LiveKit server is running and agent is connected
-- **Connection errors**: Check `LIVEKIT_URL` matches your LiveKit server
+- **No response in the default Core/LibreChat mode**: Check the supported runtime status, bot
+  ownership, Core API reachability, configured agent admission and timestamped bot/watchdog logs.
+  Default text chat and Telegram audio attachments do not require a LiveKit room.
+- **Valid silent completion**: A successful public final with a required model-authored skip may
+  intentionally contain no message. The bridge acknowledges it without an error bubble or TTS;
+  accepted background work retains its existing result-delivery path.
+- **Bot-only recovery refused for incompatible components**: Restore the matching installed
+  component through the supported runtime preparation path. The existing helper can recover with
+  a whole-runtime restart; that can interrupt calls and active turns. Do not repeatedly restart
+  one bot against incompatible helpers.
+- **Voice note failure**: Check the current Listening/Speaking selection and classified provider or
+  media error. A provider failure is not an empty successful transcript.
+- **Legacy LiveKit backend only**: Verify the configured LiveKit server and dispatched legacy agent.
 
 ## Testing
 

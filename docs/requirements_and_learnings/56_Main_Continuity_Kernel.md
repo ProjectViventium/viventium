@@ -60,8 +60,10 @@ generation framing and real Voice/Text/Telegram acceptance remain separate deliv
 
 Required Main continuity must remain in the selected instruction context or fail with the existing
 typed source-context error. Every declared native graph route, including lazy handoffs and its
-configured graph fallbacks, uses the existing JSON `metadata.turn_context` carrier with the same
-128 KiB UTF-8 context bound. The factual converter removes the context header before transport
+configured graph fallbacks, uses the existing JSON `metadata.turn_context` carrier. Its default
+allocation is 128 KiB UTF-8. A larger allocation requires a positive complete-source fit against
+every declared route and uses only the proven remaining native body budget, up to the existing
+512 KiB hard ceiling. The factual converter removes the context header before transport
 and invocation hashing. Only Main applies its accepted-source manifest, authority stamps and
 invocation-fresh background-input guard; a specialist does not gain Main source authority. The
 selected provider, model, effort, stateless setting and surface permissions remain unchanged. Routes that
@@ -393,8 +395,12 @@ prompt words, or user identity.
 
 A compaction retry carries the exact rejected candidate together with its typed rejection,
 any existing validation or fidelity reason, and the unchanged accepted source. The candidate
-remains untrusted repair data. A repaired result must still pass the same size/schema and source-bound semantic review
-before promotion; failed attempts never replace accepted history.
+remains untrusted repair data. Rejection feedback describes the compaction process, not the
+conversation: it must not become conversation history. Repair the cited defect against source
+evidence and retain every other part of the rejected candidate unless source evidence requires
+a change. Actual conversation evidence about reviews remains eligible. A repaired result must
+still pass the same size/schema and source-bound semantic review before promotion; failed
+attempts never replace accepted history.
 
 A new generation must still carry its current visible turn when source-history deduplication has
 already admitted that turn. This also holds when the delta includes newly observed historical
@@ -452,11 +458,31 @@ Initial gates are:
 - overflow performs one compact-and-retry with the same authority/capability ceiling;
 - observed characters per token are calibrated per binding;
 - native cumulative usage is not assigned to one current message;
+- Direct billing retains the SDK run's summed usage. Resident-context pressure and byte/token
+  calibration use the last actual SDK model response's input usage, including its materialized
+  context and tool results. A missing or inconsistent last-response receipt uses the run input
+  total only as an explicit pressure upper bound; without that bound it uses the selected context
+  window. Ordinary tool results produced after the last model response also require the window
+  bound, because no observed request yet includes that tail. Upper bounds never calibrate bytes per token. Current epoch and measurement-order fences
+  apply when a later verified response replaces a bound; no history or usage rows are rewritten.
 - fallback never builds a separate uncapped history prompt.
+
+The TypeScript continuity owner compares typed `(callId, toolName)` identities from the exact
+claim source and candidate. Invented candidate identities fail the existing structural repair
+path before model review and again at fenced completion. The review receives exact matches,
+missing source pairs and source locations. Missing pairs may reflect an evidenced retirement;
+that remains model judgment. Exact matches prove identity bytes only: the independent model
+still checks each outcome against its own source, unfinished-work constraints, attribution and
+all other meaning. No text parser, review-reason override or extra retry bypasses that gate.
+
 
 The candidate compaction prompts are owned by `main.continuity_compaction` and
 `main.continuity_compaction_review` in Prompt Workbench. Both use the configured Main primary and
-fallback route with tools, recall, saved memory and Feelings isolated. A missing compiled prompt
+fallback route with tools, recall, saved memory and Feelings isolated. The authorized Main route is
+retained before a request-local Voice override. Internal generation and review use that Main tuple,
+including its parameters and fallback; the public Voice turn keeps its own configured route. A
+request-local snapshot avoids a new foreground lookup and retains the selection accepted for that
+request when configuration changes concurrently. A missing compiled prompt
 fails explicitly. The fidelity review runs only for compaction proposals. Its behavioral acceptance
 requires the calibrated exact-model evaluation in requirement 49, separate from deterministic
 source/candidate fencing, restart, concurrency and rendering tests. Candidate implementation and
@@ -485,9 +511,19 @@ local model evaluation do not close `MC-008` or the real long-conversation journ
   injection, unresolved RAG context, malformed media or unknown route cannot prove a conservative fit.
 - A reviewed prefix plus every newer row may be reused on a strictly positive conservative fit.
   A false or unavailable estimate keeps the existing reconciliation/admission path; it cannot
-  force compaction of stamped history or reject a turn. The 128 KiB Core bound applies to
-  `metadata.turn_context`, not historical base64 media. xPerfect owns its existing rendered-source
-  replay budget (192 KiB by default), including its truthful protected-source failure. Native
+  force compaction of stamped history or reject a turn. The default 128 KiB allocation applies to
+  `metadata.turn_context`, not historical base64 media; a proven remaining body allocation may
+  be larger. xPerfect owns its existing rendered-source
+  replay budget, including its truthful protected-source failure. Discovery exposes that same
+  model/config budget at minimum bytes-per-token calibration; it has no separate 192 KiB clamp.
+  Core allocates the remaining body space from the smallest advertised primary/fallback limit.
+  The stored summary contract remains bounded by 128 KiB. Actual native admission honors the
+  selected harness's effective half-window, explicit operator cap and existing 512 KiB hard
+  bound; a valid model/epoch-bound native observation can only reduce that window. The catalog
+  limit is not a guarantee for an unknown smaller session window. Native Codex GPT-6.1 Sol uses
+  its reported effective 475,000-token window; the Direct API route has its own catalog entry.
+  An oversized indivisible packet still fails typed; whole-source reduction and fidelity review
+  remain authoritative, with no source or candidate clipping. Native
   rendering carries image/file labels while the existing file broker retains the original bytes.
 - Legacy conversation continuity: when unstamped legacy history cannot fit the protected carrier,
   its oldest whole-turn prefix is reconciled into a reviewed semantic summary by the existing
@@ -719,8 +755,10 @@ an unaccepted proposal starts at half the default after process-local learning i
 or transport failure does not change that default. Promotion restores the default source target.
 An indivisible larger turn is supplied whole to the provider, whose actual input budget remains
 authoritative. The server allocates semantic output from the actual serialized consumer: the
-existing selected 16 KiB header or declared 128 KiB native body shared by Core and legacy
-conversation context. Current, recent, authority and framing costs are reserved before allocation.
+existing selected 16 KiB header consumer or native compaction output contract capped at
+128 KiB, shared by Core and legacy conversation context. The stored contract stays capped even
+when a turn has a larger proven body allocation. Current, recent, authority and framing costs
+are reserved before allocation.
 Core reserves its three actual recent full-text turns, including escaped tool/background evidence,
 the existing bounded pending-unavailable marker and reconciliation framing. Pending source keeps
 its existing bounded inclusion and guarded compaction policy. A reference-only capsule cannot
@@ -743,8 +781,8 @@ full Core, reviewed legacy continuity, current call and attempt authority. The e
 combiner then retains optional peer sections only within the remaining room. The admitted snapshot
 retains an optional work projection only when its whole capsule remains in that selection, so final
 attempt encoding cannot reintroduce an omitted peer. An optional peer cannot
-cause false source overflow or force recompression of accepted state. The 128 KiB carrier retains
-its existing all-peer reservation and serialization. Optional
+cause false source overflow or force recompression of accepted state. Native body allocations retain
+the existing all-peer reservation and serialization. Optional
 reply and active-work capsules keep their existing atomic retention policy.
 The retained outer contract binds that allocation to the lease, validator, prompt constraints,
 failure identity, semantic review and persisted replacement. All nine semantic fields and item
@@ -783,7 +821,25 @@ an otherwise admissible stage, its exact owner may renew it through the existing
 renewal matches the lease ID, source digest and prior expiry, never revives an expired or replaced
 lease, and is capped by both the existing five-minute stale-holder duration and the same enclosing
 deadline minus Main completion reserve. A missing enclosing deadline retains the original lease.
-No heartbeat, extra attempt, model call timeout or carrier ceiling is added.
+Foreground and scheduler-enclosed work keeps those existing bounds. Detached private structured
+maintenance with a real renewal store may use the exact admitted Native response deadline. Its
+successful authenticated response carries the stored deadline and request ID; missing, invalid,
+past or late admission metadata keeps the legacy guard. Core's guard ends at that deadline plus
+the existing execution guard grace, rather than imposing an earlier independent model deadline.
+Before detached stage dispatch, the same live claim may replenish its existing five-minute lease
+through CAS; an expired or replaced claim cannot start. Only an admitted stage then keeps its
+exact live claim current through existing lease-ID, source-digest
+and expected-expiry CAS. One unref timer renews at half the existing five-minute lease, with at most
+one renewal in flight; each expiry stays bounded by both deadline plus grace and the existing
+five-minute stale-holder window. A lease already covering the target needs no extension. Version-CAS
+contention is not ownership loss: before admission it keeps the old bounded guard; an active stage
+keeps its known live lease and checks again no later than its expiry. Only expiry or a genuine
+ownership failure cancels the stage. Actual
+ownership loss cancels and releases the exact Native request. Stage completion closes new renewal and settles pending CAS only within the last confirmed lease
+expiry or intentional cancellation; an unresolved CAS cannot hold cleanup forever. The same timer
+checks expiry even while CAS is pending, and late completion cannot restore an aborted stage. Process death stops renewal, so the existing
+five-minute crash expiry remains. Each producer and reviewer owns its own admitted deadline.
+This adds no new attempt, provider budget, model downgrade or carrier ceiling.
 An authenticated scheduler timeout uses the existing intentional generation cancel with the exact
 owner. Its Stop acknowledgement waits for the compactor child's native capacity release. A rejected or
 unresolved acknowledgement uses eight seconds of the existing ten-second scheduler cancel wait,
@@ -798,6 +854,15 @@ failure does not incur another model run; its degraded state stays explicit. Sma
 claims remain eligible. A typed whole-object, summary or carrier byte-size rejection moves directly to the existing
 smaller-source planner when it proves
 a smaller whole prefix; an indivisible claim retains bounded shape, fidelity and size repair.
+Same-source whole-proposal, summary, and carrier size repair can reuse its rejected draft inside
+the current claim. The complete rendered source, typed feedback and parsed draft must fit the
+existing native message serializer's conservative byte projection under the smallest cached
+admission floor of the configured route and its fallbacks. This reads discovery metadata only;
+it makes no provider call and raises no limit. Unknown or insufficient capacity retains numeric-only
+feedback and full-source regeneration. Native admission remains authoritative. The canonical prompt
+allows size repair to shorten wording throughout while retaining source-supported facts,
+qualifications and consequential identifiers, adding nothing. Other repairs retain their existing
+candidate behavior. Independent fidelity review and the existing attempt/deadline bounds remain required.
 Legacy conversation reconciliation can use the learned smaller target in the same wake only when the next whole-turn prefix has fewer source bytes and a different digest,
 within the existing six-claim turn bound and each store-owned lease. Transport, lease and
 indivisible-source failures end that wake. Promotion advances only the reviewed prefix watermark and never deletes
@@ -927,6 +992,12 @@ Provider fallback wrappers preserve the SDK's dynamic property accessors. A hand
 
 When a completed Phase B answer replaces an empty failed Main message, the existing promotion owner clears the message error flag with the visible error parts. The original failure remains in recovered-error metadata and native result records. Startup recovery also repairs a stale flag when that exact typed promotion already recorded the recovered error; it does not clear unrelated failed messages.
 
+A successful host-graph answer with an explicit newer message revision retires only the older
+nonfailed presentation receipt. The shared Message write binds the prior revision and exact
+receipt across transaction retries. A changed receipt aborts promotion and the existing follow-up
+owner publishes a separate child. Failed receipts and completed Native answers retain their
+authority.
+
 A failed pre-dispatch admission revokes its native authority. If a fresh read proves no
 native admission was persisted, release the exact job binding through the existing unsupported
 handoff so normal error delivery can finish the stream. An uncertain persisted admission stays
@@ -973,9 +1044,163 @@ record stays durable but cannot supply a stale summary; rejected recovery leaves
 
 A declared native Core protocol and stable session-authority route may carry the full owned
 message history through its existing JSON body courier. Admission uses the installed completion
-serializer and a conservative existing 128 KiB allocation for complete message evidence, Main
-instructions, full Core, peer context and attempt-authority reserves. It does not increase the
-native replay or model limits. Unknown, mixed and header-only routes retain the existing
+serializer and the smallest cached replay limit of every declared native route. The early
+whole-history fit check reserves the default 128 KiB for dynamic context. Final admission may
+allocate more only from the proven remaining body space after complete message evidence,
+attachments and framing are counted. Neither step increases native replay or model limits.
+Unknown, mixed and header-only routes retain the existing
 128-row and 32 KiB encoded-header bounds. A valid reviewed prefix and its existing tail-growth
 path are retained. An absent or stale prefix may travel whole when it fits; true overflow keeps
 the existing reviewed whole-prefix compaction path. Final native source identity and replay guards remain authoritative.
+
+
+
+### Native conversation history does not wait for opportunistic migration
+
+A transport-bound native Main route carries visible history as protected messages in its existing
+body courier. The 128 KiB default turn-context allowance is separate from the whole-history
+and model-window limits. Final native admission may use a larger proven remaining body allocation,
+while stored compaction contracts stay capped at 128 KiB. The early whole-history estimate is
+positive-only: a false or
+unavailable estimate cannot prove that the final native source cannot be carried.
+
+When the current transport and every declared alternate support the native source protocol and
+its complete projected replay fits the smallest declared native byte floor, conversation-prefix
+migration uses the existing per-domain idle deferral and bounded compaction runner. Authenticated
+model discovery exposes that floor from the same native budget owner at its minimum calibration.
+A redundant lower discovery clamp previously forced foreground reconciliation even when the
+complete source and required carrier fit native admission. Removing that clamp reuses the existing
+allocation and guards; it adds no reserve scan or alternate compaction path.
+The existing cached model loader discovers this capability even with a fixed model menu; model
+choices stay unchanged. Admission reads that cache only, costs the fields rendered by the native
+history reader, the existing final native turn-context byte cap, source/delivery framing and the
+selected upload ledger with its workspace paths. Reserving the final cap covers every later dynamic
+section and summary without trusting an earlier size forecast. Original messages, tool evidence and source-integrity guards remain unchanged;
+this sizing projection does not edit them. Static native system instructions are configured
+separately. The existing selected-history file resolver pins one owner/conversation/parent/selection
+promise per request for early sizing and later signed projection. Another request rechecks current
+File ownership/deletion; a rejected promise is removed. Missing model metadata, pending hydration, mixed carriers or an over-budget replay
+retain foreground reconciliation. Native admission remains the final source-integrity guard. Foreground assembly immediately retains the exact validated reviewed prefix plus every
+newer authorized row, or all original rows when no valid prefix exists. It never accepts an
+unfinished candidate, edits stored history, clips a tool result, or marks unreviewed source covered.
+Each background claim reloads its durable record; only a reviewed commit advances the prefix.
+Idle work uses its own background response and budget, without the finished request's scheduler
+deadline or abort signal.
+The same foreground fences, fresh active-call checks, Call End continuation, finite batch/deadline,
+and failure-stop policy apply. A lazy declared fallback need not initialize its tools merely to
+classify the current primary's native courier; its actual dispatch still checks source authority.
+
+Header-only, mixed or unproved routes retain required foreground reconciliation. Genuine aggregate
+turn-context overflow retains the existing foreground carrier recovery and reload; its limits and
+final source-integrity guards are unchanged. Native provider/model capacity remains authoritative;
+this change does not enlarge a context window or guarantee arbitrary history fits every provider.
+
+### Bounded idle continuation of reviewed legacy history
+
+Background accepted-turn maintenance and the existing Call End flush reuse the same claim runner
+for up to four claims within a shared twenty-minute deadline. A completed
+store-owned claim signals continuation only while its legacy cursor remains incomplete. The runner
+yields the event loop between claims, checks the existing interactive admission fence before each
+claim, and keeps the existing in-flight cancellation and native capacity-release checks. Required
+foreground carrier recovery still performs only its own claim.
+
+The finite idle batch also uses the existing authenticated Native admission receipt and claim
+heartbeat. It can replace the short per-stage guard only when the admitted Native deadline,
+existing execution-guard grace and Main completion reserve all fit inside that same enclosing
+batch deadline. A later producer or reviewer cannot reset the batch budget. A deadline that does
+not fit keeps the existing short stage guard; foreground recovery, unknown capabilities and
+claims without renewal retain their prior policy. Every renewal stays within the enclosing
+budget. Measured producer and reviewer durations remain unchanged. Native-capable background
+planning compares them with the enclosing budget while retaining the short initial guard inside
+the live claim lease and the measured review reserve. A stage already measured above that guard
+must also fit its previously accepted Native admission window; a declined receipt never becomes
+a planning allowance. Producer receipt admission also retains the measured review reserve.
+After reviewed progress, an insufficient budget for the next claim exhausts this batch and uses
+the same idle continuation owner. A concrete fidelity repair may also continue as described below;
+provider/review transport failures do not re-arm continuation.
+Foreground admission still cancels the exact maintenance attempt and waits for its capacity-release
+acknowledgment. Only independently reviewed output can promote the summary or advance a source cursor.
+
+A whole-proposal, summary or rendered-carrier byte overflow can use the same batch's next claim
+when the existing source planner proves a smaller whole prefix. The failed result carries its
+source digest, byte count, domain and learned smaller target. Before any next provider request,
+the new store-owned claim must belong to the same domain, have a different digest and contain
+strictly fewer source bytes. An unchanged or indivisible source releases that claim and stops;
+it never repeats model work merely because the target number decreased. Field/item errors,
+provider or review failures and cancellation do not qualify. These reductions consume the same
+four claims and deadline, yield to foreground admission, and retain every unreviewed source.
+Failure alone never re-arms an exhausted idle batch. Summary promotion and source-cursor movement
+still require the existing independent fidelity review.
+
+When an enclosing budget pauses a completed fidelity correction or a shrinking whole-proposal,
+summary, or carrier byte-size correction, the existing epoch/lease CAS may retain
+`pendingCompactionRepair`. Fidelity repair contains its structurally valid rejected candidate and
+reviewer feedback. Size repair contains only typed byte counts, the exact size issue and shrinking
+progress; it never stores an oversized draft. Both retain the exact source digest,
+configured route/output contract, source window and consumed attempt counters. The checkpoint is
+separate from accepted context and is never presented or spoken. Saving it requires a live exact
+lease and confirmed native capacity release. The existing semantic cap and four-size-attempt cap
+remain distinct and span batches. Malformed feedback, nonconvergence, exhaustion, cancellation,
+provider failures and unconfirmed release do not qualify. The store's acknowledgement alone lets
+the existing thirty-second idle deferral re-arm; no queue or timer is added.
+
+The next ordinary bounded batch reclaims the exact source prefix and legacy range. Append-only
+user turns remain pending instead of expanding the repair source; edits/deletions invalidate its
+source generation. Fidelity retains its same-route pinned contract within the same carrier class.
+Size feedback can resume only under the same route and compatible equal or tighter allocation;
+its issue is rebased to that current binding target. It restores both consumed attempts and the
+existing shrinking-size state, so another batch does not restart its attempt budget. The model
+receives the complete original source and exact typed feedback; a resumed size claim does not
+recover the prior transient draft. Any new rejected candidate is eligible for the same in-claim
+admission check. The canonical compaction prompt defines `maxJsonUtf8Bytes`
+as the whole serialized JSON limit, including all fields and JSON syntax/escaping. Individual
+field caps are additional constraints. Recompression protects the facts of prior valid state,
+not its narrative wording or layout. When the whole object is too large, the model shortens the
+summary narrative first, retaining qualifications and exact consequential identifiers. Facts
+belong in one place across the complete object, including the summary and category arrays,
+unless repetition is necessary for meaning or attribution. Related structured entries are merged rather than dropping pending work,
+corrections, decisions, recurrence outcomes, tool pairs or other protected facts to make room.
+The typed limits and independent fidelity review remain unchanged.
+
+Promotion still checks the complete current carrier and requires independent fidelity review.
+Pausing cannot weaken either check or advance a source cursor. Foreground pre-emption before a
+new attempt or transport retry is consumed preserves a matching checkpoint only after confirmed
+native release; it does not re-arm cancelled work. Source, route, carrier or incompatible budget
+mismatch, exhaustion and provider/transport failure clear the checkpoint. Promotion clears it
+normally. Each batch keeps its deadline; an explicitly inherited deadline never re-arms.
+
+After genuine size nonconvergence or exhaustion, the existing failed-claim owner suppresses the
+same source and configured route under an equal or tighter compatible output allocation. A larger
+allocation, changed source or route, or runtime reload permits reconsideration. Enclosing-budget
+pauses are not terminal exhaustion: their checkpoint carries progress instead of silently blocking
+memory. Suppression prevents repeated failed provider work; it does not claim that the backlog is
+complete. Approved memory and all original source remain available while maintenance is degraded.
+
+Provider or review failure, cancellation, contention, stale source, an exhausted deadline, or the
+four-claim cap stops the batch. After successful reviewed legacy progress exhausts only that batch
+budget, the existing per-domain Call/idle deferral owner re-arms one continuation after thirty idle
+seconds, without requiring another user turn. It waits while the existing foreground fence is held;
+required foreground recovery or a newer schedule discards the old timer. Before each historical
+background claim, the Call Session owner checks fresh owner/agent session status, expiry and fatal
+state across conversations. A new active or connecting call moves that work back to the existing
+Call End deferral, including when the idle timer was armed before the call began. An unavailable
+liveness read starts no maintenance claim. Ordinary memory admission and Feelings remain parallel.
+An inherited enclosing
+deadline is never extended by re-arming. Provider/review transport errors, cancelled work and source contention
+stop continuation. The current reviewed summary and durable source cursor remain available.
+This reuses the same bounded claims, source cursor and scheduling owner, not a second memory service
+or an automatic retry of failed provider work. Actual cursor movement and final historical
+completeness still require real-state acceptance.
+
+The positive Native history-fit estimate charges inline image/file content by the exact label
+that Native `_message_text` renders, rather than charging its base64 payload as replay text.
+The original wire, authorized upload ledger, Native image/file input bytes, media limits and
+source proofs remain unchanged. Unknown non-string media labels cannot prove a fit; actual
+text overflow and unknown route capacity retain foreground reconciliation. Historical attachment
+hydration must be included in sizing checks; raw persisted rows alone do not prove the live path.
+
+A label-only replay fit also retains Native inline image ingress: the existing24-image,
+32MiB aggregate and8MiB per-image limits, supported MIME signatures and valid base64 are
+checked before a positive estimate. Unknown or oversized inline inputs retain the existing
+foreground reconciliation path. This estimate may conservatively count duplicate images;
+the Native media owner remains authoritative for actual admission and deduplication.

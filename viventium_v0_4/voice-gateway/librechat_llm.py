@@ -315,6 +315,7 @@ class _VoiceTtsDeltaBuffer:
         max_chars: int = 48,
         sanitize_chunk: Optional[Callable[[str], str]] = None,
         native_streaming: Optional[Callable[[], bool]] = None,
+        preserve_text: bool = False,
     ) -> None:
         self._buffer = ""
         self._pending_markup_closers = ""
@@ -324,6 +325,7 @@ class _VoiceTtsDeltaBuffer:
         self._max_chars = max(self._min_first_chars, max_chars)
         self._sanitize_chunk = sanitize_chunk
         self._native_streaming = native_streaming
+        self._preserve_text = preserve_text
 
     @staticmethod
     def _is_orphan_punctuation(text: str) -> bool:
@@ -556,7 +558,7 @@ class _VoiceTtsDeltaBuffer:
         return text
 
     def _mark_emitted(self, text: str) -> str:
-        repaired = self._repair_boundary(text)
+        repaired = text if self._preserve_text else self._repair_boundary(text)
         # Boundary checks need only the last nonspace character and whether the
         # output ends in whitespace. Do not recopy completed speech at each word.
         boundary = self._last_emitted_text + repaired
@@ -566,7 +568,7 @@ class _VoiceTtsDeltaBuffer:
         return repaired
 
     def _prepare_output(self, text: str) -> str:
-        out = self._drop_leading_orphan_punctuation(text)
+        out = text if self._preserve_text else self._drop_leading_orphan_punctuation(text)
         numbered_prefix = self._NUMBERED_PREFIX_RE.match(out or "")
         if self._sanitize_chunk is not None and out:
             out = self._sanitize_chunk(out)
@@ -1732,6 +1734,32 @@ async def _shielded_abort_librechat_voice_stream(**kwargs: Any) -> None:
             raise
 
 
+async def _post_voice_admission_receipt(
+    session: aiohttp.ClientSession,
+    url: str,
+    *,
+    headers: dict[str, str],
+    body: dict[str, Any],
+    is_call_current: Callable[[], bool],
+) -> dict[str, Any]:
+    """Retry only a typed pending ingress receipt inside its existing caller budget."""
+    while is_call_current():
+        async with session.post(url, headers=headers, json=body) as response:
+            if response.status < 400:
+                return await response.json()
+            try:
+                payload = await response.json()
+            except Exception:
+                payload = None
+            if (response.status == 409 and isinstance(payload, dict)
+                    and payload.get("code") == "call_context_busy"
+                    and payload.get("retryable") is True):
+                await asyncio.sleep(0.25)
+                continue
+            raise RuntimeError(f"LibreChat voice chat failed: status {response.status}")
+    return {}
+
+
 class LibreChatLLM(llm.LLM):
     """
     A LiveKit Agents LLM implementation backed by LibreChat's voice gateway endpoints.
@@ -1743,6 +1771,7 @@ class LibreChatLLM(llm.LLM):
         origin: str,
         auth: LibreChatAuth,
         timeout_s: float = 120.0,
+        preparation_timeout_s: float = 0.0,
         voice_mode: bool = True,
         voice_provider: str = "cartesia",
         voice_runtime_context: Optional[dict[str, Any]] = None,
@@ -1758,6 +1787,7 @@ class LibreChatLLM(llm.LLM):
         self._origin = origin.rstrip("/")
         self._auth = auth
         self._timeout_s = float(timeout_s)
+        self._preparation_timeout_s = max(0.0, min(float(preparation_timeout_s), 600.0))
         self._voice_mode = bool(voice_mode)
         self._voice_provider = voice_provider or "cartesia"
         self._voice_runtime_context = voice_runtime_context
@@ -4092,6 +4122,10 @@ class _LibreChatLLMStream(llm.LLMStream):
         post_sent_at: Optional[float] = None
         first_token_at: Optional[float] = None
 
+        # Preparation has its own bounded startup budget; model/SSE timeout stays unchanged.
+        preparation_budget_s = self._llm_impl._preparation_timeout_s
+        admission_budget_s = self._timeout_s + (preparation_budget_s + 10.0 if preparation_budget_s else 0.0)
+        admission_timeout = aiohttp.ClientTimeout(total=admission_budget_s)
         timeout = aiohttp.ClientTimeout(total=self._timeout_s)
         async with aiohttp.ClientSession(timeout=timeout) as session:
             try:
@@ -4143,17 +4177,17 @@ class _LibreChatLLMStream(llm.LLMStream):
                     # Preserve original source POST order through the retained
                     # predecessor receipt. Core owns author and effect admission.
                     async with (
-                        asyncio.timeout(self._timeout_s if self._timeout_s > 0 else None),
-                        aiohttp.ClientSession(timeout=timeout) as admission_session,
+                        asyncio.timeout(admission_budget_s if admission_budget_s > 0 else None),
+                        aiohttp.ClientSession(timeout=admission_timeout) as admission_session,
                     ):
                         async def post_receipt() -> dict[str, Any]:
                             nonlocal stream_id, task_id, post_sent_at, listen_only
                             hop_trace.record("gateway_dispatch", time.time() * 1000.0)
                             logger.info("[VoiceHop] %s", hop_trace.log_payload("gateway_dispatch"))
-                            async with admission_session.post(
-                                chat_url,
+                            payload = await _post_voice_admission_receipt(
+                                admission_session, chat_url,
                                 headers=headers,
-                                json={
+                                body={
                                     "text": user_text,
                                     "streamId": self._request_id,
                                     "voiceMode": self._llm_impl._voice_mode,
@@ -4169,12 +4203,11 @@ class _LibreChatLLMStream(llm.LLMStream):
                                     **speaker_post_context,
                                     "sourceEventId": self._presentation.source_event_id,
                                 },
-                            ) as resp:
-                                if resp.status >= 400:
-                                    raise RuntimeError(
-                                        f"LibreChat voice chat failed: status {resp.status}"
-                                    )
-                                payload = await resp.json()
+                                is_call_current=lambda: (
+                                    not self._llm_impl._speaker_delivery_closing
+                                    and self._llm_impl._auth.call_session_id == self._auth.call_session_id
+                                ),
+                            )
                             if (self._llm_impl._speaker_delivery_closing
                                     or self._llm_impl._auth.call_session_id != self._auth.call_session_id):
                                 return payload
@@ -4279,7 +4312,7 @@ class _LibreChatLLMStream(llm.LLMStream):
                 try:
                     # The foreground remains bounded. A waiting source keeps its
                     # existing ordered courier and authentic eventual receipt.
-                    async with asyncio.timeout(self._timeout_s if self._timeout_s > 0 else None):
+                    async with asyncio.timeout(admission_budget_s if admission_budget_s > 0 else None):
                         await asyncio.shield(admission_task)
                 except TimeoutError:
                     if listen_only or (isinstance(stream_id, str) and stream_id and task_id):

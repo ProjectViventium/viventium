@@ -406,6 +406,22 @@ properties:
         type: string
       tts_provider_fallback:
         type: string
+      prebuild_context:
+        type: object
+        description: Opt-in context gathering by the normal Main before the call's Voice endpoint responds.
+        properties:
+          enabled:
+            type: boolean
+            default: false
+          prompt_id:
+            type: string
+            minLength: 1
+            default: voice.prebuild_context
+          timeout_s:
+            type: integer
+            minimum: 1
+            maximum: 600
+            default: 120
       fast_llm_provider:
         type: string
         description: Legacy ignored field. Voice-call LLM selection comes from the agent's explicit Voice Call LLM fields, otherwise the agent primary LLM is used.

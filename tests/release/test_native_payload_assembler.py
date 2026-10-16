@@ -4743,6 +4743,39 @@ def test_native_runtime_accepts_reviewed_host_grok_hash_without_container_opt_in
         runtime.load_native_runtime_env(path)
 
 
+@pytest.mark.parametrize("owner,untracked", [
+    ("parent", False), ("component", False), ("parent", True), ("component", True),
+])
+def test_scheduler_payload_rejects_changed_support_before_staging(tmp_path: Path, monkeypatch, owner, untracked) -> None:
+    assembler = load_native_assembler(monkeypatch)
+    repo = tmp_path / "release"
+    source = repo / "viventium_v0_4/LibreChat"
+    relative = ("viventium_v0_4/shared/transport.py" if owner == "parent"
+                else "viventium/source_of_truth/prompts/response.md")
+    root = repo if owner == "parent" else source
+    target = root / relative
+    target.parent.mkdir(parents=True)
+    target.write_text("synthetic source\n")
+    monkeypatch.setattr(assembler, "selected_component_pin", lambda *_: "a" * 40)
+
+    def command(arguments):
+        if "rev-parse" in arguments:
+            return "a" * 40
+        if "ls-files" in arguments or "ls-tree" in arguments:
+            return relative if str(root) == arguments[2] and not untracked else ""
+        if "status" in arguments:
+            return (" M " + relative) if str(root) == arguments[2] and relative in arguments else ""
+        raise AssertionError(arguments)
+
+    monkeypatch.setattr(assembler, "command_output", command)
+    def staging_must_not_start(*_args, **_kwargs):
+        raise AssertionError("Changed support source reached payload staging")
+    monkeypatch.setattr(assembler, "copy_safe", staging_must_not_start)
+    with pytest.raises(assembler.AssemblyError, match="Scheduling (support source|source differs)"):
+        assembler.stage_scheduling(repo, Path(sys.executable), Path("uv"), tmp_path / "out",
+                                   source_date_epoch=1, local_qa_worktree=False)
+
+
 def test_scheduler_payload_carries_exact_shared_speech_library(tmp_path: Path, monkeypatch) -> None:
     assembler = load_native_assembler(monkeypatch)
     source = REPO_ROOT / "viventium_v0_4/LibreChat"
@@ -4758,6 +4791,8 @@ def test_scheduler_payload_carries_exact_shared_speech_library(tmp_path: Path, m
             return ""
         if "ls-files" in arguments:
             return "\n".join(paths)
+        if "ls-tree" in arguments:
+            return ""
         raise AssertionError(arguments)
     monkeypatch.setattr(assembler, "command_output", command)
     def dependencies(arguments, **_kwargs):

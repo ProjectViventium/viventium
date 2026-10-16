@@ -2560,102 +2560,6 @@ def test_helper_logs_are_opened_owner_only_without_following_symlinks() -> None:
     assert "FileHandle(forWritingTo: logURL)" not in source
 
 
-def test_helper_detached_launch_classifier_handles_live_and_untrusted_receipts(
-    tmp_path: Path,
-) -> None:
-    source = HELPER_SOURCE.read_text(encoding="utf-8")
-
-    def extract_function(name: str) -> str:
-        start = source.index(f"private nonisolated static func {name}")
-        opening_brace = source.index("{", start)
-        depth = 0
-        for index in range(opening_brace, len(source)):
-            if source[index] == "{":
-                depth += 1
-            elif source[index] == "}":
-                depth -= 1
-                if depth == 0:
-                    return source[start : index + 1]
-        raise AssertionError(f"unterminated Swift function: {name}")
-
-    functions = "\n\n".join(
-        extract_function(name)
-        .replace("private nonisolated static func ", "func ", 1)
-        .replace("self.", "")
-        for name in (
-            "hasNoSymlinkComponents",
-            "privateOwnedRegularFile",
-            "detachedLaunchProcessGroupRunning",
-        )
-    )
-    harness = tmp_path / "DetachedLaunchProbe.swift"
-    executable = tmp_path / "detached-launch-probe"
-    harness.write_text(
-        "import Darwin\nimport Foundation\n\n"
-        f"{functions}\n\n"
-        "guard CommandLine.arguments.count == 3 else { exit(2) }\n"
-        "print(detachedLaunchProcessGroupRunning(\n"
-        "    appSupportDir: CommandLine.arguments[1],\n"
-        "    runtimeProfile: CommandLine.arguments[2]\n"
-        "))\n",
-        encoding="utf-8",
-    )
-    subprocess.run(
-        ["xcrun", "swiftc", str(harness), "-o", str(executable)],
-        check=True,
-        text=True,
-        capture_output=True,
-    )
-
-    app_support = Path(
-        tempfile.mkdtemp(prefix=".helper-launch-test-", dir=REPO_ROOT.resolve())
-    )
-    try:
-        receipt = app_support / "state" / "runtime" / "isolated" / "detached-launch.pgid"
-        receipt.parent.mkdir(parents=True)
-        process = subprocess.Popen(
-            ["/bin/sleep", "30"],
-            start_new_session=True,
-        )
-        process_group = os.getpgid(process.pid)
-
-        def probe() -> str:
-            completed = subprocess.run(
-                [str(executable), str(app_support), "isolated"],
-                check=True,
-                text=True,
-                capture_output=True,
-            )
-            return completed.stdout.strip()
-
-        try:
-            receipt.write_text(f"{process_group}\n", encoding="utf-8")
-            receipt.chmod(0o600)
-            assert probe() == "true"
-
-            receipt.chmod(0o604)
-            assert probe() == "false"
-
-            receipt.unlink()
-            real_receipt = app_support / "real-receipt"
-            real_receipt.write_text(f"{process_group}\n", encoding="utf-8")
-            real_receipt.chmod(0o600)
-            receipt.symlink_to(real_receipt)
-            assert probe() == "false"
-
-            receipt.unlink()
-            receipt.write_text(f"{process_group}\n", encoding="utf-8")
-            receipt.chmod(0o600)
-            assert probe() == "true"
-        finally:
-            os.killpg(process_group, signal.SIGKILL)
-            process.wait(timeout=5)
-
-        assert probe() == "false"
-    finally:
-        shutil.rmtree(app_support)
-
-
 def test_helper_stack_launch_is_single_flight_for_the_full_health_wait() -> None:
     source = HELPER_SOURCE.read_text(encoding="utf-8")
     start = source.split("private func startStack(", 1)[1].split(
@@ -2666,9 +2570,9 @@ def test_helper_stack_launch_is_single_flight_for_the_full_health_wait() -> None
     assert "guard !self.stackLaunchInProgress" in start
     assert "self.stackLaunchInProgress = true" in start
     assert start.count("self.stackLaunchInProgress = false") >= 4
-    assert "private nonisolated static func detachedLaunchProcessGroupRunning(" in source
-    assert '"detached-launch.pgid"' in source
-    assert "kill(-processGroup, 0)" in source
+    assert "private nonisolated static func runtimeStartupClaimActive(" in source
+    assert '"state/runtime/startup-in-progress"' in source
+    assert "self.runtimeStartupClaimActive(" in source
 
 
 def test_helper_log_opener_migrates_legacy_owner_owned_mode_before_rejecting_it() -> None:
@@ -2743,3 +2647,272 @@ def test_scheduler_speech_materialization_has_native_library_layout(tmp_path: Pa
         "assert not any(name in sys.modules for name in ('config','bot','livekit'))"
     )], cwd=target, check=True, capture_output=True,
         env={**os.environ, "PYTHONDONTWRITEBYTECODE": "1"})
+
+
+def _helper_swift_block(source: str, declaration: str) -> str:
+    start = source.index(declaration)
+    opening = source.index("{", start)
+    depth = 0
+    for index in range(opening, len(source)):
+        if source[index] == "{":
+            depth += 1
+        elif source[index] == "}":
+            depth -= 1
+            if depth == 0:
+                return source[start:index + 1]
+    raise AssertionError(f"Unterminated Swift declaration: {declaration}")
+
+
+def test_helper_refreshes_cli_intent_for_matching_dev_and_native_bindings(tmp_path: Path) -> None:
+    source = HELPER_SOURCE.read_text()
+    method = "refreshRuntimeDesiredState" if "func refreshRuntimeDesiredState(" in source else "refreshNativeDesiredState"
+    body = _helper_swift_block(source, f"private func {method}(")
+    body = body.replace("private func ", "func ", 1).replace("Self.loadPersistedConfig()", "Self.persisted").replace("Self.loadConfig()", "Self.persisted")
+    types = "\n".join(_helper_swift_block(source, name).replace("private ", "", 1) for name in (
+        "enum RuntimeDesiredState:", "struct RuntimeSupervisionState:", "private struct HelperConfig:"))
+    cancel = _helper_swift_block(source, "private func cancelStackLaunch(").replace("private func ", "func ", 1)
+    harness = tmp_path / "IntentProbe.swift"
+    harness.write_text("import Foundation\n" + types + "\nfinal class Probe {\n"
+        "static var persisted: HelperConfig?\nvar config: HelperConfig?\nvar runtimeSupervision = RuntimeSupervisionState.defaultRunning\nvar stackLaunchTask: Task<Void,Never>?\nvar stackLaunchInProgress = false\n" + cancel + "\n" + body + "\n}\n" + r'''
+func config(_ mode: Bool?, _ state: RuntimeDesiredState, _ root: String = "/synthetic/runtime", _ support: String = "/synthetic/support") -> HelperConfig {
+    var intent = RuntimeSupervisionState.defaultRunning; intent.desiredState = state
+    return HelperConfig(repoRoot: root, appSupportDir: support, allowProtectedRepoRoot: nil,
+        showInStatusBar: true, nativeRuntime: mode, computerAccessSetupShown: true, runtimeSupervision: intent)
+}
+for mode: Bool? in [nil, false, true] {
+    let probe = Probe(); probe.config = config(mode, .stopped); probe.runtimeSupervision.desiredState = .stopped
+    Probe.persisted = config(mode, .running); probe.METHOD()
+    precondition(probe.runtimeSupervision.desiredState == .running, "CLI Start must refresh this runtime mode")
+    Probe.persisted = config(mode, .stopped); probe.METHOD()
+    precondition(probe.runtimeSupervision.desiredState == .stopped, "CLI Stop must refresh this runtime mode")
+    Probe.persisted = nil; probe.METHOD()
+    precondition(probe.runtimeSupervision.desiredState == .stopped, "Missing config must not change intent")
+    for foreign in [config(mode, .running, "/another/runtime"), config(mode, .running, "/synthetic/runtime", "/another/support"), config(mode == true ? false : true, .running)] {
+        Probe.persisted = foreign; probe.METHOD()
+        precondition(probe.runtimeSupervision.desiredState == .stopped, "Foreign binding must not change intent")
+    }
+}
+print("intent-pass")
+'''.replace("METHOD", method))
+    executable = tmp_path / "intent-probe"
+    subprocess.run(["xcrun", "swiftc", str(harness), "-o", str(executable)], check=True, capture_output=True, text=True)
+    completed = subprocess.run([str(executable)], capture_output=True, text=True)
+    assert completed.returncode == 0, completed.stderr[-1500:]
+    assert completed.stdout.strip() == "intent-pass"
+
+
+def test_helper_startup_classifier_uses_cli_and_claim_not_serving_group(tmp_path: Path) -> None:
+    source = HELPER_SOURCE.read_text()
+    new_contract = "func runtimeStartupClaimActive(" in source
+    names = ["hasNoSymlinkComponents", "privateOwnedRegularFile", "cliOperationStillRunning", "cliOperationCommand", "inFlightStackState"]
+    names += ["runtimeStartupClaimActive", "runSystemProcess"] if new_contract else ["detachedLaunchProcessGroupRunning"]
+    functions = "\n".join(_helper_swift_block(source, "private nonisolated static func " + name)
+        .replace("private nonisolated static func ", "func ", 1).replace("self.", "") for name in names)
+    call = 'inFlightStackState(appSupportDir: CommandLine.arguments[1], repoRoot: CommandLine.arguments[2])' if new_contract else 'inFlightStackState(appSupportDir: CommandLine.arguments[1], runtimeProfile: "isolated")'
+    harness = tmp_path / "StartupProbe.swift"
+    harness.write_text('import Darwin\nimport Foundation\nenum StackState: String { case starting, stopping }\n' + functions + '\nprint(' + call + '?.rawValue ?? "idle")\n')
+    executable = tmp_path / "startup-probe"
+    subprocess.run(["xcrun", "swiftc", str(harness), "-o", str(executable)], check=True, capture_output=True, text=True)
+    support = Path(tempfile.mkdtemp(prefix=".helper-admission-test-", dir=REPO_ROOT.resolve()))
+    script = support / "synthetic-repo/bin/viventium"
+    script.parent.mkdir(parents=True); script.write_text("#!/bin/bash\nsleep 60\n"); script.chmod(0o700)
+    process = subprocess.Popen(["/bin/bash", str(script)], start_new_session=True)
+    root = str(script.parent.parent)
+    def probe() -> str:
+        return subprocess.run([str(executable), str(support), root], check=True, capture_output=True, text=True).stdout.strip()
+    try:
+        group = support / "state/runtime/isolated/detached-launch.pgid"
+        group.parent.mkdir(parents=True); group.write_text(str(process.pid)); group.chmod(0o600)
+        assert probe() == "idle", "A durable serving owner group is not a startup claim"
+        lock = support / "state/cli-operation.lock"; lock.mkdir()
+        (lock / "pid").write_text(str(process.pid)); (lock / "command").write_text("start")
+        assert probe() == "starting"
+        (lock / "command").write_text("stop"); assert probe() == "stopping"
+        (lock / "pid").unlink()
+        claim = support / "state/runtime/startup-in-progress"
+        def write_claim(pid=process.pid, repo=root, age=0):
+            claim.unlink(missing_ok=True)
+            claim.write_text(f"{pid}\n{repo}\n{int(time.time())-age}\n"); claim.chmod(0o600)
+        write_claim(); assert probe() == "starting"
+        write_claim(repo="/another/repo"); assert probe() == "idle"
+        write_claim(age=1801); assert probe() == "idle"
+        write_claim(age=-60); assert probe() == "idle"
+        write_claim(); claim.chmod(0o604); assert probe() == "idle"
+        write_claim(); duplicate=support/"claim-hardlink";os.link(claim,duplicate)
+        assert probe() == "idle"; duplicate.unlink()
+        claim.unlink(); target=support/"claim-target"; target.write_text(f"{process.pid}\n{root}\n{int(time.time())}\n");target.chmod(0o600);claim.symlink_to(target)
+        assert probe() == "idle"
+    finally:
+        os.killpg(os.getpgid(process.pid), signal.SIGKILL); process.wait(timeout=5); shutil.rmtree(support)
+
+
+def test_helper_direct_compile_fallback_invokes_compiler(tmp_path: Path) -> None:
+    installer = (REPO_ROOT / "scripts/viventium/install_macos_helper.sh").read_text()
+    fallback = installer.split('echo "[viventium] SwiftPM helper build failed; retrying with direct swiftc compile"', 1)[1]
+    body = fallback.split("<<'PY'\n", 1)[1].split("\nPY\n", 1)[0]
+    compiler = tmp_path / "compiler"
+    compiler.write_text(f"#!{sys.executable}\nimport sys, json\nprint(json.dumps(sys.argv[1:]))\n")
+    compiler.chmod(0o700)
+    source = tmp_path / "Sources/ViventiumHelperApp.swift"
+    result = subprocess.run([sys.executable, "-c", body, "5", str(compiler),
+        "/synthetic/sdk", "arm64-apple-macosx13.0", str(source), str(tmp_path / "helper")],
+        capture_output=True, text=True)
+    assert result.returncode == 0, result.stderr
+    command = json.loads(result.stdout)
+    assert command == ["-parse-as-library", "-sdk", "/synthetic/sdk", "-target",
+        "arm64-apple-macosx13.0", str(source), str(source.with_name("LifeSetup.swift")),
+        "-o", str(tmp_path / "helper")]
+
+
+def test_helper_supervised_wait_requires_managed_readiness_but_web_open_stays_early(tmp_path: Path) -> None:
+    source = HELPER_SOURCE.read_text()
+    waiter = _helper_swift_block(source, "private nonisolated static func waitForHealthyStack(")
+    typed_policy = "requireManagedReadiness:" in waiter
+    waiter = waiter.replace("private nonisolated static func ", "func ", 1).replace("self.", "")
+    snapshot = _helper_swift_block(source, "private struct StackHealthSnapshot").replace("private ", "", 1)
+    extra = ", requireManagedReadiness: true" if typed_policy else ""
+    harness = tmp_path / "ManagedReadinessProbe.swift"
+    harness.write_text("import Foundation\nstruct RuntimePorts {}\n" + snapshot + r'''
+var snapshotCalls = 0
+var webCalls = 0
+func stackHealthSnapshot(runtime: RuntimePorts, appSupportDir: String? = nil) async -> StackHealthSnapshot {
+    precondition(appSupportDir == "/synthetic/support", "Managed readiness needs the selected runtime owner")
+    snapshotCalls += 1
+    return StackHealthSnapshot(apiReady: true, frontendReady: true, playgroundReady: false,
+        requiresPlayground: false, optionalSurfacesReady: snapshotCalls > 1)
+}
+func userFacingSurfaceHealthy(runtime: RuntimePorts) async -> Bool { webCalls += 1; return true }
+func cliOperationStillRunning(appSupportDir: String) -> Bool { false }
+func launchFailureMarkerSeen(startLogURL: URL?, startLogOffset: UInt64) -> Bool { false }
+''' + waiter + r'''
+@main struct Main {
+    static func main() async {
+        let completed = await waitForHealthyStack(runtime: RuntimePorts(), appSupportDir: "/synthetic/support",
+            timeoutSeconds: 10, allowEarlyFailure: falsePOLICY)
+        precondition(completed && snapshotCalls == 2 && webCalls == 0,
+            "Old Core readiness cannot complete supervised recovery while managed surfaces are absent")
+        snapshotCalls = 0; webCalls = 0
+        let web = await waitForHealthyStack(runtime: RuntimePorts(), appSupportDir: "/synthetic/support",
+            timeoutSeconds: 10, allowEarlyFailure: false)
+        precondition(web && webCalls == 1 && snapshotCalls == 0,
+            "Explicit Web opening must preserve early user-surface readiness")
+        print("managed-readiness-pass")
+    }
+}
+'''.replace("POLICY", extra))
+    executable = tmp_path / "managed-readiness-probe"
+    subprocess.run(["xcrun", "swiftc", "-parse-as-library", str(harness), "-o", str(executable)],
+        check=True, capture_output=True, text=True)
+    result = subprocess.run([str(executable)], capture_output=True, text=True, timeout=15)
+    assert result.returncode == 0, result.stderr[-1500:]
+    assert result.stdout.strip() == "managed-readiness-pass"
+    start = source.split("private func startStack(", 1)[1].split("private func stopStack", 1)[0]
+    assert "requireManagedReadiness: supervisedLaunch" in start
+
+
+def test_helper_health_wait_exits_on_task_cancellation(tmp_path: Path) -> None:
+    source = HELPER_SOURCE.read_text()
+    waiter = _helper_swift_block(source, "private nonisolated static func waitForHealthyStack(")
+    waiter = waiter.replace("private nonisolated static func ", "func ", 1).replace("self.", "")
+    snapshot = _helper_swift_block(source, "private struct StackHealthSnapshot").replace("private ", "", 1)
+    harness = tmp_path / "CancelledWaitProbe.swift"
+    harness.write_text("import Foundation\nstruct RuntimePorts {}\n" + snapshot + r'''
+func stackHealthSnapshot(runtime: RuntimePorts, appSupportDir: String? = nil) async -> StackHealthSnapshot {
+    StackHealthSnapshot(apiReady: true, frontendReady: true, playgroundReady: false,
+        requiresPlayground: false, optionalSurfacesReady: false)
+}
+func userFacingSurfaceHealthy(runtime: RuntimePorts) async -> Bool { false }
+func cliOperationStillRunning(appSupportDir: String) -> Bool { false }
+func launchFailureMarkerSeen(startLogURL: URL?, startLogOffset: UInt64) -> Bool { false }
+''' + waiter + r'''
+@main struct Main {
+    static func main() async {
+        let started = Date()
+        let wait = Task { await waitForHealthyStack(runtime: RuntimePorts(), appSupportDir: "/synthetic/support",
+            timeoutSeconds: 2, allowEarlyFailure: false, requireManagedReadiness: true) }
+        try? await Task.sleep(for: .milliseconds(20))
+        wait.cancel()
+        let ready = await wait.value
+        precondition(!ready && Date().timeIntervalSince(started) < 0.5,
+            "Stop cancellation must release the old wait, without a log marker or timeout")
+        print("cancel-pass")
+    }
+}
+''')
+    executable = tmp_path / "cancelled-wait-probe"
+    subprocess.run(["xcrun", "swiftc", "-parse-as-library", str(harness), "-o", str(executable)],
+        check=True, capture_output=True, text=True)
+    result = subprocess.run([str(executable)], capture_output=True, text=True, timeout=5)
+    assert result.returncode == 0, result.stderr[-1500:]
+    assert result.stdout.strip() == "cancel-pass"
+
+
+def test_helper_cancelled_start_completion_cannot_clear_a_new_start(tmp_path: Path) -> None:
+    source = HELPER_SOURCE.read_text()
+    start = _helper_swift_block(source, "private func startStack(")
+    completion = _helper_swift_block(start.split("started = await Self.waitForHealthyStack(", 1)[1], "await MainActor.run {")
+    cancel = (_helper_swift_block(source, "private func cancelStackLaunch(").replace("private func ", "func ", 1)
+        if "private func cancelStackLaunch(" in source else
+        # Isolate the old completion defect even after supplying the intended Stop cancellation.
+        "func cancelStackLaunch() { stackLaunchTask?.cancel(); stackLaunchTask = nil; stackLaunchInProgress = false }")
+    types = "\n".join(_helper_swift_block(source, name) for name in (
+        "enum RuntimeDesiredState:", "struct RuntimeSupervisionState:"))
+    harness = tmp_path / "StaleCompletionProbe.swift"
+    harness.write_text("import Foundation\nimport AppKit\n" + types + r'''
+struct RuntimePorts {}
+struct Config {}
+actor Gate {
+    var ready = false
+    var held: CheckedContinuation<Void,Never>?
+    func wait() async { if !ready { await withCheckedContinuation { held = $0 } } }
+    func release() { ready = true; held?.resume(); held = nil }
+}
+@MainActor final class Probe {
+    var stackLaunchTask: Task<Void,Never>?
+    var stackLaunchInProgress = true
+    var runtimeSupervision = RuntimeSupervisionState.defaultRunning
+    let runtimeSupervisionStableHealthSeconds: TimeInterval = 300
+    var writes = 0
+    func persistRuntimeSupervision() { writes += 1 }
+    func recordSupervisedLaunchFailure() { writes += 1 }
+    func refreshState(force: Bool) { writes += 1 }
+    func log(_ message: String) { writes += 1 }
+    func openBrowser(path: String?) { writes += 1 }
+    static func startFailureGuidance(runtime: RuntimePorts, startLogURL: URL?, startLogOffset: UInt64) -> String { "" }
+''' + cancel + r'''
+    func finish() async {
+        let started = true, supervisedLaunch = true, openWhenReady = false
+        let launchReason = "synthetic-old-start", openPath: String? = nil
+        let runtime = RuntimePorts(), config = Config(), startLogURL: URL? = nil, startLogOffset: UInt64 = 0
+''' + completion + r'''
+    }
+}
+@main struct Main {
+    static func main() async {
+        let gate = Gate()
+        let (probe, old, fresh) = await MainActor.run {
+            let probe = Probe()
+            let old = Task { await gate.wait(); await probe.finish() }
+            probe.stackLaunchTask = old
+            probe.cancelStackLaunch()
+            precondition(!probe.stackLaunchInProgress && probe.stackLaunchTask == nil, "Stop must release its launch owner")
+            let fresh = Task<Void,Never> { _ = try? await Task.sleep(for: .seconds(10)) }
+            probe.stackLaunchTask = fresh; probe.stackLaunchInProgress = true
+            return (probe, old, fresh)
+        }
+        await gate.release(); await old.value
+        await MainActor.run {
+            precondition(probe.stackLaunchInProgress && probe.stackLaunchTask != nil && probe.writes == 0,
+                "Cancelled completion must not change a newer Start, mark it healthy, or rewrite stopped intent")
+        }
+        fresh.cancel(); await fresh.value
+        print("stale-completion-pass")
+    }
+}
+''')
+    executable = tmp_path / "stale-completion-probe"
+    subprocess.run(["xcrun", "swiftc", "-parse-as-library", str(harness), "-o", str(executable)],
+        check=True, capture_output=True, text=True)
+    result = subprocess.run([str(executable)], capture_output=True, text=True, timeout=5)
+    assert result.returncode == 0, result.stderr[-1500:]
+    assert result.stdout.strip() == "stale-completion-pass"

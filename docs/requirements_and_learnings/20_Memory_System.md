@@ -1508,3 +1508,54 @@ The writer still reads the exact complete native graph evidence and retains sour
 configuration, admission and cancellation fences. Anchor-only tool metadata is not a substitute for
 complete graph evidence. Unavailable evidence remains a typed failure; saving is never claimed from
 an unverified cache. User-requested save failures remain visible through the existing truthful receipt.
+The answer comparison uses the same harness-activity projection as native finalization. A legacy
+activity `think` part and its equivalent structured activity are one source, even when Phase B
+persists concurrently. Changed answer text, tool input/results, activity summaries, native identity,
+or source ownership still reject the evidence; presentation changes never grant new authority.
+
+
+### Native conversation context uses the remaining aggregate budget
+
+A native request carries the accepted Main summary, any reviewed conversation-prefix summary,
+recent original messages, and current tools/Feelings/call state together. A fixed partition inside
+that request must not force synchronous maintenance when the full native request can carry those
+sources unchanged. The selected native routes' discovered replay budget owns this decision.
+
+After history preparation, Core uses the existing native formatter and conservative byte estimator
+to reserve original messages, UTF-8/JSON escaping, headings, source metadata, and authorized
+attachments. Only a positive result across the configured native primary and fallbacks can allocate
+the remaining body capacity to context above the conservative 128 KiB partition. All current peer
+sections and attempt authority still count against that allocation. Unknown budgets, mixed routes,
+and unprepared media keep the existing conservative path. The exact allocation is pinned for the
+turn's retries and fallbacks; native final aggregate admission remains authoritative. The native
+body's existing absolute ceiling is not a request budget or a reason to enlarge one. No source is
+truncated, silently discarded, or reclassified as a current instruction.
+
+The immutable attempt allocation also governs late background-result appends at final dispatch.
+The existing private authority-header courier carries that byte limit and removes it before the
+native API boundary. A late append must fit the pinned limit; the absolute body ceiling cannot
+override it. Newly produced accepted and conversation summaries retain the stable 128 KiB
+compaction-consumer ceiling, less their required peers. Spare capacity for carrying existing
+sources must not increase the size allowed for future stored summaries.
+
+An isolated compaction producer or fidelity reviewer can also receive a typed request-size
+rejection because its complete source-plus-candidate packet is larger than the consumer output.
+When the existing source owner proves a smaller whole prefix exists, the bounded idle runner uses
+that same reduction path for the rejected packet. The rest stays pending; the next claim must show
+a different digest, the same domain, fewer source bytes, and a smaller target. Cancellation, ordinary
+provider failures, unknown reduction, and an indivisible source do not trigger this retry. A reduced
+proposal still requires the unchanged independent fidelity review before promotion. Deadlines and
+claim caps do not increase.
+
+For a typed whole-proposal, summary, or carrier byte overflow, same-source correction supplies
+the original complete evidence, unchanged output constraints, and the existing typed size feedback.
+It omits only the rejected draft: repeating that unaccepted draft can overflow the next input
+packet even when the original evidence fits. The registered compaction prompt distinguishes this
+regeneration from a repair with an explicit candidate. Other structural and semantic repairs retain
+their candidate. This does not depend on implicit native session history, advance a cursor, increase
+attempts, or bypass the independent fidelity review. Exact-model old/new cases and the installed
+reviewed compaction remain separate evidence gates.
+
+Evidence must distinguish deterministic byte-preservation/size/recovery tests from the installed
+Telegram, Chat, and Voice acceptance checks; passing allocation tests does not prove those surfaces
+or a latency target.

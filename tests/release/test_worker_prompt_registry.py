@@ -34,6 +34,10 @@ values = {
  'conversationFiles': b.conversation_file_delivery_instructions(),
 }
 print(json.dumps({'hashes':{k:hashlib.sha256(v.encode()).hexdigest() for k,v in values.items()},
+ 'runBoundLedgerRecovery':{k:'glasshive-run/runs/<run_id>/constraint-ledger.json' in values[k]
+   and 'do not reread a duplicate ledger' in values[k]
+   and 'read it before planning, delegation, source collection, and final delivery' not in values[k]
+   for k in ['completion','project','harness','agents','run']},
  'registeredTextReachedRun':'Changed registered completion.' in values['run'],
  'registeredTextReachedHarness':'Changed registered capabilities.' in values['harness'],
  'registeredSafetyReachedAll':all('Changed registered safety.' in values[key] for key in ['project','harness']),
@@ -70,6 +74,14 @@ def test_registered_initial_bodies_match_explicit_standalone_compatibility():
         registered = render_prompt(prompt_id, registry).rstrip('\n')
         registered += '\n' if standalone.endswith('\n') else ''
         assert registered == standalone
+
+
+@pytest.mark.parametrize('managed', [False, True])
+def test_worker_frames_use_current_context_and_only_exact_run_ledger_recovery(tmp_path, managed):
+    result = probe(write_bundle(tmp_path) if managed else None, managed=managed)
+    assert result.returncode == 0, result.stderr
+    frames = json.loads(result.stdout)['runBoundLedgerRecovery']
+    assert frames and all(frames.values()), frames
 
 
 def test_managed_source_preserves_standalone_mission_frames(tmp_path):
@@ -143,9 +155,7 @@ def test_workbench_exposes_sources_and_exact_consumer_relationships(monkeypatch)
     detail = prompt_service.get_prompt('worker.conversation_file_delivery')
     assert entries['worker.conversation_file_delivery']['ownerLayer'] == 'glasshive_worker'
     assert detail['rendered'].strip() == detail['body'].strip()
-    assert {row['selector'] for row in prompt_service.related_config_for_prompt('worker.conversation_file_delivery')} == {
-        '_worker_prompt', '_conversation_file_delivery_instructions', '_request_attachment_context'
-    }
+    assert {row['selector'] for row in prompt_service.related_config_for_prompt('worker.conversation_file_delivery')} == {'_worker_prompt', '_conversation_file_delivery_instructions', '_request_attachment_context', '_host_mission_instruction'}
     assert prompt_service._config_source_path('viventium_v0_4/xPerfect/runtime_phase1/src/workers_projects_runtime/auth.py') is None
     assert prompt_service._config_source_path('viventium_v0_4/GlassHive/runtime_phase1/src/workers_projects_runtime/bootstrap.py') is None
 
@@ -232,6 +242,7 @@ def test_registered_grok_tool_access_fact_uses_current_compiler_and_workbench(mo
         "_worker_prompt", "native_profile_tool_access_instructions",
         "conversation_output_schema", "conversation_output_contract_instructions",
         "_grok_conversation_output_schema", "grok_native_authority_instructions",
+        "minimal_conversation_output_schema",
     }
     bundle = build_prompt_bundle(PROMPTS)
     assert bundle["prompts"]["worker.grok_mcp_tool_access"]["body"].strip() == detail["body"].strip()

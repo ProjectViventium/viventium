@@ -5640,6 +5640,7 @@ remote_tunnel_surface_healthy() {
 
 runtime_pid_file_running() {
   local pid_file_name="${1:-}"
+  local require_runtime_owner="${2:-false}"
   [[ -n "$pid_file_name" ]] || return 1
 
   local runtime_profile="${VIVENTIUM_RUNTIME_PROFILE:-isolated}"
@@ -5654,7 +5655,11 @@ runtime_pid_file_running() {
     [[ -f "$candidate" ]] || continue
     pid="$(tr -d '[:space:]' <"$candidate" 2>/dev/null || true)"
     if pid_is_running "$pid"; then
-      return 0
+      if [[ "$require_runtime_owner" != "true" ]] ||
+        { pid_matches_repo_scope "$pid" && pid_matches_runtime_process_group "$pid"; }
+      then
+        return 0
+      fi
     fi
   done
 
@@ -5698,6 +5703,14 @@ optional_install_surfaces_healthy() {
     return 1
   fi
   return 0
+}
+
+telegram_recovery_owner_missing() {
+  # A live bot or watchdog still owns bridge recovery. Provider/network failures do not
+  # permit a wider restart. The helper calls launch only while its desired state is running.
+  runtime_env_true "START_TELEGRAM" "false" &&
+    ! runtime_pid_file_running "telegram_bot.pid" &&
+    ! runtime_pid_file_running "telegram_bot_watchdog.pid" true
 }
 
 runtime_optional_surfaces_healthy() {
@@ -5878,13 +5891,17 @@ launch_stack_detached() {
       return 0
     fi
   fi
-  if detached_launch_process_group_running; then
-    echo "Viventium is already starting."
-    return 0
-  fi
   if type runtime_start_claim_active >/dev/null 2>&1 && runtime_start_claim_active; then
     echo "Viventium is already starting."
     return 0
+  fi
+  if detached_launch_process_group_running; then
+    if [[ "$core_surfaces_healthy" == "0" ]] && telegram_recovery_owner_missing; then
+      echo "Telegram bridge and its recovery owner are stopped; repairing through the current runtime owner."
+    else
+      echo "Viventium is already starting."
+      return 0
+    fi
   fi
   if [[ "$core_surfaces_healthy" == "0" ]]; then
     echo "Viventium core surfaces are running, but enabled sidecars need startup. Repairing..."

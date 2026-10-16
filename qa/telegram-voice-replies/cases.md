@@ -287,3 +287,20 @@ rows before claiming a pass when the feature behavior changes.
 | `TGVOICE-UC-007` | With Smart voice for text enabled, request a copy-ready synthetic email, ordinary conversation, and an explicitly spoken reminder. | `docs/requirements_and_learnings/03_Telegram_Bridge.md` / `TGVOICE-006` | Telegram Desktop, Prompt Workbench | Visible text/audio, clean persisted message, voice-decision log, prompt lineage, exact-model eval | Email stays complete and text-only; conversation and explicitly spoken reminder still receive one audio attachment; no controls are visible | PASS 2026-07-22: all three real Telegram Desktop paths matched visible delivery, sanitized logs, and persistence evidence ([report](reports/2026-07-22-smart-delivery-controls.md)) |
 | `TGVOICE-UC-008` | Ask for a friendly two-beat reply, then a copy-ready artifact, and reopen the chat. | `docs/requirements_and_learnings/03_Telegram_Bridge.md` / `TGVOICE-007` | Telegram Desktop, logs, DB/history | Bubble count/content, final audio attachment, one persisted logical turn, refresh/reopen result | Natural beats may split into at most three complete bubbles; artifacts stay intact; one clean turn persists with at most one audio | PARTIAL 2026-07-22: real main-turn split, intact email artifact, reopen, logs, and persistence pass; proactive and attachment-plus-split paths remain partial ([report](reports/2026-07-22-smart-delivery-controls.md)) |
 | `TGVOICE-UC-009` | With audio enabled, send a natural synthetic preference, wait for memory and worker results, restart before a pending worker finishes, then request an explanation of the former notice. | `20_Memory_System.md`, `03_Telegram_Bridge.md` / `TGVOICE-009` | Telegram Desktop, actual delivered voice note, redacted logs, durable memory and shared cursor | Current loaded source identity, status/key count/safe error codes, provider-payload checks, restart and cursor-fault regressions | Memory bookkeeping stays in logs; Main and worker text/audio remain complete; an authored quotation is allowed; restart does not lose the worker result. | PARTIAL 2026-10-09: 341 owning bridge checks and current native text/audio plus quiet unchanged receipt pass; audible playback was not assessed |
+
+## `TGVOICE-010` - Public Quiet Completion And Cancellation
+
+- Requirement: `03_Telegram_Bridge.md` public completion and delivery acknowledgement contract.
+- Steps: Use the real Telegram surface for accepted background work with a model-chosen empty
+  skip final; inspect the public projection, exact input acknowledgement and later worker result.
+  Repeat valid quiet without work, nonempty text-only, missing/invalid disposition, failure,
+  cancellation, stale revision and restart. Exercise normal audio and inspect its send timing.
+- Expected: Valid quiet is acknowledged without a fabricated bubble or audio, retaining the exact
+  accepted work reference. The worker result arrives once without rerunning work. Aborted output
+  is retired through the existing non-commit path. Nonempty text-only remains visible. Normal
+  audio uses packaged bytes and records successful send timing without fixed completion sleeps.
+- Forbidden: Private native state in the public response, a false retry message, a success ACK for
+  cancelled/incomplete/failed input, duplicate work or spoken internal bookkeeping.
+- Evidence: Actual public projection, bot delivery and Core state, byte-verified file/audio delivery,
+  restart receipt and exact loaded artifact. Deterministic tests support but do not replace this.
+- Last run: NOT RUN for the current batch; acceptance remains required after load.
