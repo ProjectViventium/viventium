@@ -517,6 +517,12 @@ local model evaluation do not close `MC-008` or the real long-conversation journ
   replay budget, including its truthful protected-source failure. Discovery exposes that same
   model/config budget at minimum bytes-per-token calibration; it has no separate 192 KiB clamp.
   Core allocates the remaining body space from the smallest advertised primary/fallback limit.
+  A known native replay budget checks the existing reviewed conversation projection without first
+  loading Core under the default carrier. That early fixed-carrier load is unused by the known-budget
+  estimate and can otherwise hide a valid reviewed prefix. Unknown budgets retain the existing
+  carrier resolver. Final admission still allocates from the complete selected source and all declared
+  routes; it re-renders accepted Core, includes the reviewed conversation capsule and peers, and fails
+  closed on missing capacity or overflow. No stored summary, source, fidelity or native limit changes.
   The stored summary contract remains bounded by 128 KiB. Actual native admission honors the
   selected harness's effective half-window, explicit operator cap and existing 512 KiB hard
   bound; a valid model/epoch-bound native observation can only reduce that window. The catalog
@@ -1074,7 +1080,11 @@ A redundant lower discovery clamp previously forced foreground reconciliation ev
 complete source and required carrier fit native admission. Removing that clamp reuses the existing
 allocation and guards; it adds no reserve scan or alternate compaction path.
 The existing cached model loader discovers this capability even with a fixed model menu; model
-choices stay unchanged. Admission reads that cache only, costs the fields rendered by the native
+choices stay unchanged. A cached menu does not prove successful capability discovery: a later normal
+catalog read retries only a missing native discovery through the same authenticated owner. Concurrent
+identical requests share that recovery. A successful catalog, including one with no admission floor,
+is reused without another fetch; absent floors still fail closed. No turn allocates an invented budget.
+Admission reads that cache only, costs the fields rendered by the native
 history reader, the existing final native turn-context byte cap, source/delivery framing and the
 selected upload ledger with its workspace paths. Reserving the final cap covers every later dynamic
 section and summary without trusting an earlier size forecast. Original messages, tool evidence and source-integrity guards remain unchanged;
@@ -1259,3 +1269,7 @@ A label-only replay fit also retains Native inline image ingress: the existing24
 checked before a positive estimate. Unknown or oversized inline inputs retain the existing
 foreground reconciliation path. This estimate may conservatively count duplicate images;
 the Native media owner remains authoritative for actual admission and deduplication.
+
+Active local pre-native preparation retains its existing job, logical-turn and source-author ownership
+through the existing cleanup tick. Passive reconnects and stopped, completed or replaced owners cannot
+renew that ownership. Once native dispatch binds a deadline, retention does not extend it.
