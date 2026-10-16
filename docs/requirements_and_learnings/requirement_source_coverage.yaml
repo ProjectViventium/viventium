@@ -144,9 +144,9 @@ atomic_traceability:
     records). Neither proves purged follow-ups or every task ever created under the project.
 
 current_owner_declarations:
-  as_of: 2026-10-10
+  as_of: 2026-10-16
   rows: 289
-  sha256: 7028cbb132e2bbbd52a57a26621240d5242669184fac0a353ffaf5e194a7603c
+  sha256: ae8f08d364e7c54bdfc0d6c69ed899d8d38dc6c209656603d28dcb6dccdc6184
   canonicalization: >-
     sha256 of lexicographically sorted unique tab-separated requirement ID, repository-relative
     owning product-document path, and exact declaration behavior; rows are LF-joined with one

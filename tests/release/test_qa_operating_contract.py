@@ -1425,10 +1425,10 @@ def test_requirement_source_coverage_ledger_is_private_safe_and_resolves() -> No
                 "\t".join((match.group(1), _relative(path), match.group(2)))
             )
     current_declarations = data["current_owner_declarations"]
-    assert current_declarations["as_of"] == date(2026, 10, 10)
+    assert current_declarations["as_of"] == date(2026, 10, 16)
     assert current_declarations["rows"] == 289
     assert current_declarations["sha256"] == (
-        "7028cbb132e2bbbd52a57a26621240d5242669184fac0a353ffaf5e194a7603c"
+        "ae8f08d364e7c54bdfc0d6c69ed899d8d38dc6c209656603d28dcb6dccdc6184"
     )
     assert current_declarations["canonicalization"] == atomic[
         "required_owner_declaration_canonicalization"
