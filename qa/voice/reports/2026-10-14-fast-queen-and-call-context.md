@@ -1,5 +1,7 @@
 # Fast Queen and optional Call context — local candidate
 
+<!-- qa-evidence-exempt: Historical experiment and benchmark record, with explicit failed and unrun boundaries; it is not a current full acceptance report. Current Voice cases own completion. -->
+
 QA: blast-radius. Development evidence only; no publication claim.
 
 Requirements: [VOICE-PREP-001](../../../docs/requirements_and_learnings/06_Voice_Calls.md#optional-preparation-for-fast-conversation), CORE-005, CC-049, CORE-015.

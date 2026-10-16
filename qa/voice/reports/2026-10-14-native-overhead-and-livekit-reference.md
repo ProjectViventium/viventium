@@ -1,5 +1,7 @@
 # Native overhead and LiveKit reference evidence
 
+<!-- qa-evidence-exempt: Historical engineering measurements and standalone reference experiments; it is not a current full acceptance report. Current Voice cases retain loaded user-path gates. -->
+
 QA scope: blast-radius. Local development candidate; not a public release or full voice acceptance.
 
 ## Requirement and result

@@ -227,6 +227,8 @@ release_tests:
     qa_owner: qa/telegram-runtime/cases.md
   tests/release/test_telegram_lazy_startup_contract.py:
     qa_owner: qa/telegram-runtime/cases.md
+  tests/release/test_telegram_lifecycle_recovery.py:
+    qa_owner: qa/stable-dev-runtime/cases.md
   tests/release/test_telegram_launchctl_ownership.py:
     qa_owner: qa/telegram-runtime/cases.md
   tests/release/test_telegram_media_prereqs.py:

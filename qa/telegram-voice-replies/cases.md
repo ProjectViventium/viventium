@@ -303,4 +303,4 @@ rows before claiming a pass when the feature behavior changes.
   cancelled/incomplete/failed input, duplicate work or spoken internal bookkeeping.
 - Evidence: Actual public projection, bot delivery and Core state, byte-verified file/audio delivery,
   restart receipt and exact loaded artifact. Deterministic tests support but do not replace this.
-- Last run: NOT RUN for the current batch; acceptance remains required after load.
+- Last run: NOT RUN — cataloged 2026-10-16; acceptance remains required after load.

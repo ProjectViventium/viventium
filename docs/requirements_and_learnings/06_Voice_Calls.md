@@ -106,6 +106,9 @@ background-cortex behavior.
   Main decides what work serves the user's goal using the existing prompts and capabilities. Call
   mode must not impose a blanket foreground-tool exclusion. Foreground tools and consultants stay
   interruptible/cancellable; no result is claimed before its authoritative evidence returns.
+  When foreground work requires waiting, Main can give a brief natural spoken progress update
+  when useful, honoring requests for silence or strict output. It must not claim an action or
+  result before its receipt or evidence.
   Nonblocking background work can surface later value through the existing Phase-B path.
 - Provider-bound Anthropic histories must drop malformed thinking blocks before execution.
 - Voice input mode must be propagated to main agents and background cortices.

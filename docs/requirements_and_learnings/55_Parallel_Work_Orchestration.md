@@ -786,7 +786,9 @@ Parallel Work extends rather than replaces the existing logical-turn revision co
 - Supersession revokes only the exact owner-scoped provider operation. It cannot infer authority
   from a display title, provider name, prompt text, or conversation-wide mutable state.
 - Main makes the direct/delegate/steer decision in the same inference. There is no router model or
-  added classification round trip.
+  added classification round trip. Requested independent work uses the same durable handoff even
+  when its result must return in the current conversation or live call. The reply channel does not
+  require Main to perform that work inline.
 - A provider adapter may project the declared atomic delegation and Active Work tools into Main's
   native structured tool-call surface, but that authority is bound to the authenticated
   conversation lane. Mission roots and native children never receive peer-mission spawn authority.

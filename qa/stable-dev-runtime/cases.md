@@ -292,9 +292,9 @@ Supporting release regressions: `tests/release/test_helper_hash_consumers.py`, `
   wider restart while a bot/watchdog or startup claim still owns recovery; a provider/network
   error treated as permission to restart unrelated work; recovery after intentional Stop;
   truncating the prior bot failure before preserving it.
-- **Evidence:** `test_telegram_lifecycle_recovery.py`, existing handoff/PID-reuse/intent tests,
+- **Evidence:** `tests/release/test_telegram_lifecycle_recovery.py`, existing handoff/PID-reuse/intent tests,
   timestamped start/retry/exit events and retained bot-log generations. Real acceptance must use
   the installed helper and supported runtime activation, prove one Telegram reply after recovery,
   and prove deliberate Stop stays stopped. Synthetic checks do not prove login/reboot recovery.
-- **Last run:** Implementation checks are recorded with the candidate-bound delivery. Real helper
-  recovery and Stop acceptance remain separate until exercised on that candidate.
+- Last run: NOT RUN — cataloged 2026-10-16; real helper recovery and Stop acceptance
+  remain separate until exercised on the candidate. Existing implementation checks are supporting evidence.
