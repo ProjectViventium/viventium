@@ -96,6 +96,19 @@ truthful Main presentation without losing or repeating durable work.
 - **PW-111:** A recoverable provider or bridge condition remains pending after stream close; one
   recovery creates one final presentation instead of a committed generic error.
 
+### Finished reply after connection expiry
+
+- A completed host reply, whether produced through Direct or a native handoff, remains recoverable
+  from its existing saved Message after the temporary job expires. Recovery uses the exact saved
+  source, owner, conversation, revision, text and files. It does not rerun the model or its tools.
+- The private completion receipt is saved with the final answer. A partial message, Stop,
+  acknowledgment alone, or an old branch is not proof of completion. Changed or deleted source,
+  payload, attachment or ownership must fail the same recovery check on Web, Telegram and Voice.
+  Acknowledgment is idempotent and bound to that exact presentation. Native-owned completed
+  responses keep their existing replay authority; host recovery cannot restore revoked authority.
+- An unavailable recovery proof must not make ordinary answer persistence fail. Keep the existing
+  Stop, supersession and native publication controls; real persistence failures still fail.
+
 ## Non-goals
 
 - Do not infer authoring or supersession scope from provider, adapter, or channel names.
@@ -110,7 +123,7 @@ truthful Main presentation without losing or repeating durable work.
 - QA: `qa/main-continuity/`, `qa/agent-streaming-usage/`, `qa/no-response/`,
   `qa/citation-rendering/`, and `qa/agent-config-continuity/`
 - Durable journeys: `qa/interaction-delivery/cases.yaml` (`cross-surface-supersession`,
-  `main-natural-response`)
+  `main-natural-response`, `finished-reply-after-connection-expiry`)
 
 Acceptance includes rapid cross-surface input, false and stable Voice interruption, callback
 completion, concurrent conversation isolation, restart and reload, transcription failure, and a

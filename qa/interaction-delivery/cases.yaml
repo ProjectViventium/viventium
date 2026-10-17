@@ -25,3 +25,11 @@ journeys:
     degradedAndRecovery: Provider unavailable, timeout, rate limit, and isolation conflict each surface once as a typed state; a conflict is never treated as success and never triggers a resubmission with a new conversation.
     persistenceAndCleanup: Reload and restart preserve the conversation and answer; the synthetic conversation is removed through the supported owner path.
     evidence: [visible answer and URL, turn identity count, provider session and project counts, message rows, served client identity, send-to-first-visible timing]
+  - id: finished-reply-after-connection-expiry
+    requirements: [CORE-001, CC-043, CC-047, HARD-021, PW-111]
+    userAction: Complete a harmless Direct reply and a native handoff reply, then reconnect after the temporary job is absent.
+    surfaces: [Web, Telegram, Voice]
+    expectedResult: The exact saved final text and authorized files are recovered once, without a new provider request or repeated tool effect.
+    degradedAndRecovery: Partial, stopped, active or failed replies and changed source, ownership, revision, payload or files cannot become a recovered success. Concurrent acknowledgment and reconnect keep the exact presentation identity.
+    persistenceAndCleanup: Reload and restart retain the same answer and acknowledgment; public reads and client writes cannot expose, forge or clear the private completion receipt.
+    evidence: [visible recovered answer, final save transaction, source and payload identity, provider request count, attachment authorization, acknowledgment race and reload receipts]

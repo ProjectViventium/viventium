@@ -766,17 +766,23 @@ an unaccepted proposal starts at half the default after process-local learning i
 or transport failure does not change that default. Promotion restores the default source target.
 An indivisible larger turn is supplied whole to the provider, whose actual input budget remains
 authoritative. The server allocates semantic output from the actual serialized consumer: the
-existing selected 16 KiB header consumer or native compaction output contract capped at
-128 KiB, shared by Core and legacy conversation context. The stored contract stays capped even
-when a turn has a larger proven body allocation. Current, recent, authority and framing costs
-are reserved before allocation.
+existing selected header consumer or the positively validated current native body allocation,
+shared by Core and legacy conversation context. The entire semantic JSON remains capped at
+128 KiB. Its allocation is the smaller of that ceiling and the selected carrier minus actual
+mandatory reserves; the exact rendered carrier must also fit. Current, recent, authority and
+framing costs are reserved before allocation. A larger transport allocation does not increase
+semantic or correction-draft storage ceilings. Unknown, mixed, unprepared or smaller routes retain
+the existing conservative admission contract; no future-route fit is promised.
 Core reserves its three actual recent full-text turns, including escaped tool/background evidence,
 the existing bounded pending-unavailable marker and reconciliation framing. Pending source keeps
 its existing bounded inclusion and guarded compaction policy. A reference-only capsule cannot
 substitute for full source unless the message courier actually delivers that source.
 The former 12 KiB Core bound is a conservative legacy-allocation floor, not a separate full-source
-ceiling. Legacy allocation hydrates Core once and reserves the larger of that floor and its actual
-serialized bytes. Final Main admission reuses that request's exact identity/version and hydrated
+ceiling. Legacy allocation prices the exact planned remaining history with the same current-route native
+estimator used by Core, then hydrates Core and reserves the larger of that floor and its actual
+serialized bytes. A legacy maintenance claim with an unavailable peer allocation reports a typed
+degraded result without blocking an otherwise fitting current turn. Required foreground source
+admission remains fail closed. Final Main admission reuses that request's exact identity/version and hydrated
 source snapshot under the selected carrier's remaining space, including the final legacy capsule,
 peer sections, attempt authority and separators. It is a pinned request snapshot, not a fresh read
 after another turn commits. Ordinary recent-source growth within the existing aggregate transport
@@ -787,7 +793,13 @@ aggregate carrier overflow returns a typed budget state with full hydrated sourc
 reviewed summary retained. Admission reuses the existing foreground compactor once and reloads;
 a summary-only claim is permitted when that exact state needs reallocation. Failure blocks source
 admission explicitly. Both domains share the selected carrier; neither can claim its full allowance
-without reserving the other mandatory sections. On the 16 KiB carrier, allocation first reserves
+without reserving the other mandatory sections. Their existing independent leases and compare-and-set
+owners do not make two peer snapshots atomic: concurrent or back-to-back promotions can change the
+combined fit. The next admission rechecks the full current pair, retains both accepted sources, and
+uses existing required-context recovery or fails typed before dispatch. This preexisting boundary
+is not a guarantee that every concurrent pair fits. Same-source repair and exhausted-source
+suppression preserve counters when JSON, summary and remaining rendered room do not increase,
+including a shrinking carrier. Additional room is an ordinary new allocation, not a cursor reset. On the 16 KiB carrier, allocation first reserves
 full Core, reviewed legacy continuity, current call and attempt authority. The existing atomic
 combiner then retains optional peer sections only within the remaining room. The admitted snapshot
 retains an optional work projection only when its whole capsule remains in that selection, so final
