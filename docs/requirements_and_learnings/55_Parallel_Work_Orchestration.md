@@ -1181,6 +1181,16 @@ completed work and workspace remain durable. Reclaim one candidate at a time and
 capacity after each release. Never infer relief from the release call alone, reclaim paused or
 needs-input work, or widen this into unconditional idle cleanup.
 
+Main's typed delegation accepts an optional `workspaceRoot` and passes it unchanged to the native
+`workspace_root` placement selector. Existing admitted work keeps its exact cwd. A native
+conversation session can use the selected root directly; a new non-conversation host worker gets
+a generated subfolder under it. Omission preserves the configured worker root; no path is inferred
+from the objective, output file or unresolved origin. Existing
+native access and execution-mode constraints still apply; placement does not grant file or tool
+authority. A nonblank explicit root disables the native automatic host-to-Docker fallback for
+missing host dependencies. A nonblank explicit root also excludes Docker workspaces from managed ephemeral-storage-root
+cleanup eligibility. These placement options do not bypass native mode or access checks.
+
 A native mission's workspace identity is the exact cwd admitted before its process starts.
 Publish that path through the existing run-start runtime identity fence and retain it in the
 private active-session record. Completion, Stop, recovery, files, and subsequent turns use that
@@ -1465,7 +1475,10 @@ from owner-scoped local readiness. Web and Telegram account surfaces use the str
 owner claim; an open or missing release snapshot does not disable authorized local work. A local
 override retains **PRE-GATE / NOT READY** in release diagnostics and cannot certify a public release.
 Source, compiled, installed, and prebuilt identities remain separate release evidence; no one
-surface may stand in for another.
+surface may stand in for another. Explicit source runtime profiles `isolated` and `compat` use the
+existing source release-owner proof even when the installation mode is native. Packaged native
+runtimes and unknown native profiles still require the packaged runtime identity. Asynchronous
+validation retains the selected profile and invalidates cached proof when it changes.
 
 Explicit local QA is separate:
 
