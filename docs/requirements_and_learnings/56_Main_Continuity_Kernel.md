@@ -1091,11 +1091,15 @@ section and summary without trusting an earlier size forecast. Original messages
 this sizing projection does not edit them. Static native system instructions are configured
 separately. The existing selected-history file resolver pins one owner/conversation/parent/selection
 promise per request for early sizing and later signed projection. Another request rechecks current
-File ownership/deletion; a rejected promise is removed. A completed assistant result with only
-an attachment keeps that same owned ancestry and selected-file authority. If the provider omits its
-empty text, snapshot reconciliation omits only that text digest; it keeps the original result row,
-file references and authenticated attachment lane. Missing files, authored text or media still fail
-closed when their required carrier is absent. Missing model metadata, pending hydration, mixed carriers or an over-budget replay
+File ownership/deletion; a rejected promise is removed. Native output attachments of either
+available or unavailable status remain message-bound historical DATA in assistant history. The
+shared history normalizer safely serializes filename and recorded status, plus the available file
+ID/type or failure code, so source digests and provider formatting carry the same facts. A historical
+receipt is not a current availability or delivery claim: the existing selected-file resolver and signed
+native upload lane still own current File access and all MIME bytes. No File or grant is invented for
+an unavailable receipt. Saved rows, UI and speech remain unchanged. Unknown or mismatched receipts,
+unrelated hydrated media, malformed references and missing authored words still fail closed.
+Missing model metadata, pending hydration, mixed carriers or an over-budget replay
 retain foreground reconciliation. Native admission remains the final source-integrity guard. Foreground assembly immediately retains the exact validated reviewed prefix plus every
 newer authorized row, or all original rows when no valid prefix exists. It never accepts an
 unfinished candidate, edits stored history, clips a tool result, or marks unreviewed source covered.
