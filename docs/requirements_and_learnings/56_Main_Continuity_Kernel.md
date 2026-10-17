@@ -66,7 +66,12 @@ every declared route and uses only the proven remaining native body budget, up t
 512 KiB hard ceiling. The factual converter removes the context header before transport
 and invocation hashing. Only Main applies its accepted-source manifest, authority stamps and
 invocation-fresh background-input guard; a specialist does not gain Main source authority. The
-selected provider, model, effort, stateless setting and surface permissions remain unchanged. Routes that
+lazy participant and its configured fallbacks retain the full factual context and its byte
+allocation when their provider parameters materialize. This budget-only binding preserves each
+specialist's own authority and does not add Main's source manifest, state-range metadata or identity
+stamps. Trusted state ranges remain part of Main's full binding.
+Hydration must not replace the allocation with the legacy default. The selected
+provider, model, effort, stateless setting and surface permissions remain unchanged. Routes that
 send a real context header retain the 16 KiB bound. Neither lane silently omits required accepted
 background evidence; context above its applicable bound remains a typed failure.
 
