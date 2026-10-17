@@ -3,6 +3,7 @@ capability: voice
 requirementOwner: docs/requirements_and_learnings/capabilities/voice.md
 statusPolicy: Run results belong in dated, candidate-bound reports.
 reports:
+  - qa/voice/reports/2026-10-17-native-continuation-and-memory-recovery.md
   - qa/voice/reports/2026-10-14-native-overhead-and-livekit-reference.md
   - qa/voice/reports/2026-10-14-fast-queen-and-call-context.md
   - qa/modern-playground-voice/reports/2026-10-03-voice-and-telegram-acceptance.md

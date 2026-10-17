@@ -2,6 +2,8 @@ schemaVersion: 1
 capability: interaction-delivery
 requirementOwner: docs/requirements_and_learnings/capabilities/interaction-delivery.md
 statusPolicy: Run results belong in dated, candidate-bound reports.
+reports:
+  - qa/voice/reports/2026-10-17-native-continuation-and-memory-recovery.md
 sourceInventories:
   - qa/agent-config-continuity/cases.md
   - qa/agent-streaming-usage/cases.md

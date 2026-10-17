@@ -67,7 +67,15 @@ their exact loss, consumer, and safety gates pass. Runtime implementation detail
 Capability routing does not certify completion. Candidate-bound QA reports own execution results;
 unresolved owner, surface, seam, and planned acceptance mappings remain open until reviewed.
 
-Current scoped Voice/Telegram repair results are in the
+Latest scoped native reply-completion, worker/Steer, received Voice audio, file/reload and
+memory-recovery results are in the
+[2026-10-17 acceptance report](../qa/voice/reports/2026-10-17-native-continuation-and-memory-recovery.md).
+It records successful functional paths and the unmet fast-voice target. The
+[continuous relationship diagram](architecture/cognitive-system.md#continuous-relationship)
+and [Queen/worker contract](requirements_and_learnings/55_Parallel_Work_Orchestration.md#locked-queen-bee-and-worker-bee-user-experience)
+define the simple cross-channel flow and A/B/C execution guardrails.
+
+Earlier scoped Voice/Telegram repair results are in the
 [2026-10-03 acceptance report](../qa/modern-playground-voice/reports/2026-10-03-voice-and-telegram-acceptance.md),
 grouped by requirement, user path and test owner. Its current model, recall, streaming, generated-file
 and delivery results supersede the listed older statuses; unchanged evidence retains its original

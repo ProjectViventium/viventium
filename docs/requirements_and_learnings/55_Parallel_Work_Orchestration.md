@@ -151,6 +151,11 @@ the GlassHive root.
 
 ## Locked Queen Bee and Worker Bee user experience
 
+The [continuous relationship diagram](../architecture/cognitive-system.md#continuous-relationship)
+shows the same flow across Text, Telegram and Voice. xPerfect owns harness execution and worker
+lifecycle/control; Viventium supplies ordered input, cognitive context and channel delivery through
+the existing owners. Main is one role and speaking personality, not two competing managers.
+
 This product-language contract is normative. **Queen Bee** means Viventium Main. **Worker Bee**
 means one durable GlassHive mission root. These names do not add another runtime entity, manager,
 memory store, tool plane, or orchestration system. Technical detail in this document may strengthen
@@ -172,6 +177,10 @@ this contract but must not weaken it.
 - Results return through Queen's voice.
 
 ### 3. Rapid A/B/C flow
+
+This describes the user outcome. Main uses model judgment to answer, delegate or reuse existing
+work; no keyword, task-size or provider-based routing rubric implements this example. A and B
+are examples within Workers A…N, subject to real capacity and authority.
 
 1. You send large A, large B, then quick C.
 2. Queen creates separate Bees for A and B, once each.
