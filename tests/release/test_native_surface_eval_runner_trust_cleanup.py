@@ -13,6 +13,60 @@ RUNNER = (
 )
 
 
+def test_voice_cleanup_ends_only_calls_created_by_this_run() -> None:
+    script = r"""
+const assert = require('assert');
+const runner = require(process.argv[1]);
+const requests = [];
+global.fetch = async (url, options) => {
+  requests.push({url, method: options.method, authorization: options.headers.Authorization});
+  const callSessionId = decodeURIComponent(new URL(url).pathname.split('/').at(-2));
+  return {ok:true,status:200,text:async()=>JSON.stringify({callSessionId,status:'ended'})};
+};
+(async()=>{
+  const args = {apiBase:'http://localhost:3180'};
+  assert.deepStrictEqual(await runner.endQaCallSessions({args,token:'synthetic-token',
+    createdCallIds:new Set()}), {ok:true,endedCallCount:0});
+  assert.strictEqual(requests.length,0);
+  assert.deepStrictEqual(await runner.endQaCallSessions({args,token:'synthetic-token',
+    createdCallIds:new Set(['qa-call-a','qa-call-b','qa-call-a'])}),
+    {ok:true,endedCallCount:2});
+  assert.deepStrictEqual(requests.map(x=>x.url),[
+    'http://localhost:3180/api/viventium/calls/qa-call-a/end',
+    'http://localhost:3180/api/viventium/calls/qa-call-b/end']);
+  assert.ok(requests.every(x=>x.method==='POST' && x.authorization==='Bearer synthetic-token'));
+})().catch(error=>{console.error(error);process.exit(1)});
+"""
+    result = _node(script)
+    assert result.returncode == 0, result.stderr
+
+
+def test_voice_cleanup_checks_receipt_and_continues_after_failed_end() -> None:
+    script = r"""
+const assert = require('assert');
+const runner = require(process.argv[1]);
+const called = [];
+global.fetch = async (url) => {
+  const id = decodeURIComponent(new URL(url).pathname.split('/').at(-2));
+  called.push(id);
+  if(id==='unavailable') throw new Error('synthetic private network detail');
+  return {ok:id!=='denied',status:id==='denied'?403:200,text:async()=>JSON.stringify({
+    callSessionId:id==='mismatch'?'someone-else':id,
+    status:id==='not-ended'?'created':'ended'})};
+};
+(async()=>{
+  const ids=['unavailable','denied','mismatch','not-ended','valid'];
+  const result=await runner.endQaCallSessions({args:{apiBase:'http://localhost:3180'},
+    token:'synthetic-token',createdCallIds:new Set(ids)});
+  assert.deepStrictEqual(called,ids);
+  assert.deepStrictEqual(result,{ok:false,endedCallCount:1});
+  assert.strictEqual(JSON.stringify(result).includes('private'),false);
+})().catch(error=>{console.error(error);process.exit(1)});
+"""
+    result = _node(script)
+    assert result.returncode == 0, result.stderr
+
+
 def test_judge_failure_metadata_keeps_typed_status_without_private_payload() -> None:
     script = r"""
 const assert = require('assert');

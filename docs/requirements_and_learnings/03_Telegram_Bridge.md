@@ -916,6 +916,16 @@ contract; it does not own a Telegram-only coordinator.
   assistant response/authoring for the same canonical conversation.
 - Only stale assistant prose or previews are removed. Supersession never removes a user transcript,
   file source segment, accepted external effect, or accepted durable work item.
+  Finalized transcript text and transcript documents retain source-order checks but never enter
+  the assistant output references used for failure cleanup or delivery acknowledgement. A typed
+  terminal failure replaces unfinished assistant output with the existing public error message,
+  not a generic uncertain-delivery notice. Its known error class survives pending-terminal recovery;
+  raw diagnostics are not retained. Unknown delivery outcomes keep the existing generic notice.
+  If the generation stream expires, the existing ingress receipt can recover a durable typed
+  terminal only through its bound assistant ID, owner, source, stream and author revision. Both
+  stream reconnect and retained-input continuation use that binding without regenerating accepted
+  work. The existing failed presentation acknowledgement settles the message and ingress together;
+  a removed preview alone does not settle the later terminal. Unbound older receipts fail closed.
 - Preview deletion failure records degraded delivery and prevents subsequent stale edits; it does
   not produce a false `Connection error. Please retry.` when the current revision succeeds.
 - Pending voice transcription preserves receipt order through the existing bounded wait. Failure

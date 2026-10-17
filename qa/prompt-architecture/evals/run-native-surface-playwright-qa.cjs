@@ -1818,12 +1818,15 @@ async function createQaAuth({ args, env }) {
     }
 
     const trackedConversationIds = new Set();
+    const createdCallIds = new Set();
     let cleanupPromise = null;
     const cleanup = () => {
       if (!cleanupPromise) {
         cleanupPromise = (async () => {
           try {
-            return await cleanupExactQaArtifacts({
+            // End calls while this run's owner session is still valid, before deleting its chats.
+            const callCleanup = await endQaCallSessions({ args, token: accessToken, createdCallIds });
+            const artifacts = await cleanupExactQaArtifacts({
               db,
               qaUser: user,
               qaEmail: configuredQaEmail,
@@ -1835,6 +1838,10 @@ async function createQaAuth({ args, env }) {
               preexistingConversationIds,
               trackedConversationIds,
             });
+            if (!callCleanup.ok) {
+              throw new Error('qa_cleanup_call_end_unverified');
+            }
+            return { ...artifacts, endedCallCount: callCleanup.endedCallCount };
           } finally {
             await client.close();
           }
@@ -1845,6 +1852,12 @@ async function createQaAuth({ args, env }) {
 
     return {
       cleanup,
+      trackCreatedCall(callSessionId) {
+        if (typeof callSessionId !== 'string' || !callSessionId.trim()) {
+          throw new Error('qa_created_call_identity_invalid');
+        }
+        createdCallIds.add(callSessionId);
+      },
       trackCreatedConversations(values) {
         for (const value of values || []) {
           const conversationId = String(value?.conversationId || value || '').trim();
@@ -1893,6 +1906,29 @@ async function createQaAuth({ args, env }) {
     }
     throw error;
   }
+}
+
+async function endQaCallSessions({ args, token, createdCallIds }) {
+  let endedCallCount = 0;
+  for (const callSessionId of createdCallIds) {
+    try {
+      const result = await fetchJson(
+        `${args.apiBase}/api/viventium/calls/${encodeURIComponent(callSessionId)}/end`,
+        {
+          method: 'POST',
+          headers: { Authorization: `Bearer ${token}`, 'User-Agent': USER_AGENT },
+        },
+        20_000,
+      );
+      if (result.ok && result.body?.callSessionId === callSessionId &&
+          result.body?.status === 'ended') {
+        endedCallCount += 1;
+      }
+    } catch {
+      // Continue closing this run's other calls; report failure after ordinary artifact cleanup.
+    }
+  }
+  return { ok: endedCallCount === createdCallIds.size, endedCallCount };
 }
 
 async function createCallSession({ args, token, requestedVoiceRoute = null }) {
@@ -2053,6 +2089,7 @@ function buildVoiceTypedInput({ inputKind, session, sourceEventId, text }) {
 
 async function runVoiceSurface({
   args,
+  qaAuth,
   token,
   ownerId,
   env,
@@ -2068,6 +2105,7 @@ async function runVoiceSurface({
       tts: { provider: 'plain_tts', variant: 'qa-sink' },
     },
   });
+  qaAuth.trackCreatedCall(session.callSessionId);
   const headers = {
     'X-VIVENTIUM-CALL-SESSION': session.callSessionId,
     'X-VIVENTIUM-CALL-SECRET': env.VIVENTIUM_CALL_SESSION_SECRET || '',
@@ -2401,7 +2439,7 @@ async function runSchedulerSurface({ args, env, qaAuth, testCase }) {
 
 async function runSurfaceCase({ args, env, qaAuth, token, testCase }) {
   if (testCase.surface === 'voice') {
-    return runVoiceSurface({ args, token, ownerId: qaAuth.userId, env, testCase });
+    return runVoiceSurface({ args, qaAuth, token, ownerId: qaAuth.userId, env, testCase });
   }
   if (testCase.surface === 'telegram') {
     return runTelegramSurface({ args, env, qaAuth, testCase });
@@ -2412,6 +2450,7 @@ async function runSurfaceCase({ args, env, qaAuth, token, testCase }) {
   if (testCase.surface === 'listen_only') {
     return runVoiceSurface({
       args,
+      qaAuth,
       token,
       ownerId: qaAuth.userId,
       env,
@@ -2422,6 +2461,7 @@ async function runSurfaceCase({ args, env, qaAuth, token, testCase }) {
   if (testCase.surface === 'wing') {
     return runVoiceSurface({
       args,
+      qaAuth,
       token,
       ownerId: qaAuth.userId,
       env,
@@ -3726,6 +3766,7 @@ module.exports = {
   buildVoiceTypedInput,
   caseRequiresSemanticJudge,
   cleanupExactQaArtifacts,
+  endQaCallSessions,
   completionEvidenceForCase,
   extractFinalStreamError,
   extractVisibleText,

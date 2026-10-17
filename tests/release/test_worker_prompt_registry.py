@@ -250,7 +250,7 @@ def test_registered_grok_tool_access_fact_uses_current_compiler_and_workbench(mo
 
 def test_compiled_registered_grok_fact_reaches_actual_command_without_bundle_mutation(tmp_path):
     bundle = build_prompt_bundle(PROMPTS)
-    expected = bundle["prompts"]["worker.grok_mcp_tool_access"]["body"].strip()
+    expected = render_prompt("worker.grok_mcp_tool_access", load_prompt_registry(PROMPTS), variables={"known_mcp_tools": "[]"}).strip()
     path = write_bundle(tmp_path, bundle)
     env = {key: value for key, value in os.environ.items() if not key.startswith("VIVENTIUM_")}
     env.update(PYTHONDONTWRITEBYTECODE="1", PYTHONPATH=str(BOOTSTRAP.parents[1]),
@@ -273,7 +273,7 @@ runtime=HostGrokBuildRuntime(str(root))
 info=RuntimeInfo('grok-build','grok-selected','',None,None,'native-id',str(root),str(root/'workspace'),None)
 command=runtime._grok_command(worker,info,host=True)
 rules=(runtime._home_dir('synthetic-worker')/'.xperfect-grok/developer-instructions.txt').read_text()
-fact=b._VIVENTIUM_WORKER_PROMPTS['worker.grok_mcp_tool_access']['body'].strip()
+fact=b._worker_prompt('worker.grok_mcp_tool_access', '', variables={'known_mcp_tools':'<untrusted_tool_catalog_v1 instruction_authority="none">\n[]\n</untrusted_tool_catalog_v1>'}).strip()
 print(json.dumps({'exact':rules=='Exact authority.\n\n'+fact+'\n\n'+tail,
  'factCount':rules.count(fact),'bundleUnchanged':worker['bootstrap_bundle_json']==encoded,
  'systemFlag':'--system-prompt-file' in command}))
@@ -281,4 +281,4 @@ print(json.dumps({'exact':rules=='Exact authority.\n\n'+fact+'\n\n'+tail,
     result = subprocess.run([sys.executable, "-c", code], env=env, capture_output=True, text=True, timeout=10)
     assert result.returncode == 0, result.stderr
     assert json.loads(result.stdout) == {"exact": True, "factCount": 1, "bundleUnchanged": True, "systemFlag": True}
-    assert expected in render_prompt("worker.grok_mcp_tool_access", load_prompt_registry(PROMPTS))
+    assert expected in render_prompt("worker.grok_mcp_tool_access", load_prompt_registry(PROMPTS), variables={"known_mcp_tools": "[]"})

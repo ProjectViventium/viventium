@@ -66,7 +66,12 @@ every declared route and uses only the proven remaining native body budget, up t
 512 KiB hard ceiling. The factual converter removes the context header before transport
 and invocation hashing. Only Main applies its accepted-source manifest, authority stamps and
 invocation-fresh background-input guard; a specialist does not gain Main source authority. The
-selected provider, model, effort, stateless setting and surface permissions remain unchanged. Routes that
+lazy participant and its configured fallbacks retain the full factual context and its byte
+allocation when their provider parameters materialize. This budget-only binding preserves each
+specialist's own authority and does not add Main's source manifest, state-range metadata or identity
+stamps. Trusted state ranges remain part of Main's full binding.
+Hydration must not replace the allocation with the legacy default. The selected
+provider, model, effort, stateless setting and surface permissions remain unchanged. Routes that
 send a real context header retain the 16 KiB bound. Neither lane silently omits required accepted
 background evidence; context above its applicable bound remains a typed failure.
 
@@ -517,6 +522,12 @@ local model evaluation do not close `MC-008` or the real long-conversation journ
   replay budget, including its truthful protected-source failure. Discovery exposes that same
   model/config budget at minimum bytes-per-token calibration; it has no separate 192 KiB clamp.
   Core allocates the remaining body space from the smallest advertised primary/fallback limit.
+  A known native replay budget checks the existing reviewed conversation projection without first
+  loading Core under the default carrier. That early fixed-carrier load is unused by the known-budget
+  estimate and can otherwise hide a valid reviewed prefix. Unknown budgets retain the existing
+  carrier resolver. Final admission still allocates from the complete selected source and all declared
+  routes; it re-renders accepted Core, includes the reviewed conversation capsule and peers, and fails
+  closed on missing capacity or overflow. No stored summary, source, fidelity or native limit changes.
   The stored summary contract remains bounded by 128 KiB. Actual native admission honors the
   selected harness's effective half-window, explicit operator cap and existing 512 KiB hard
   bound; a valid model/epoch-bound native observation can only reduce that window. The catalog
@@ -1074,24 +1085,35 @@ A redundant lower discovery clamp previously forced foreground reconciliation ev
 complete source and required carrier fit native admission. Removing that clamp reuses the existing
 allocation and guards; it adds no reserve scan or alternate compaction path.
 The existing cached model loader discovers this capability even with a fixed model menu; model
-choices stay unchanged. Admission reads that cache only, costs the fields rendered by the native
+choices stay unchanged. A cached menu does not prove successful capability discovery: a later normal
+catalog read retries only a missing native discovery through the same authenticated owner. Concurrent
+identical requests share that recovery. A successful catalog, including one with no admission floor,
+is reused without another fetch; absent floors still fail closed. No turn allocates an invented budget.
+Admission reads that cache only, costs the fields rendered by the native
 history reader, the existing final native turn-context byte cap, source/delivery framing and the
 selected upload ledger with its workspace paths. Reserving the final cap covers every later dynamic
 section and summary without trusting an earlier size forecast. Original messages, tool evidence and source-integrity guards remain unchanged;
 this sizing projection does not edit them. Static native system instructions are configured
 separately. The existing selected-history file resolver pins one owner/conversation/parent/selection
 promise per request for early sizing and later signed projection. Another request rechecks current
-File ownership/deletion; a rejected promise is removed. Missing model metadata, pending hydration, mixed carriers or an over-budget replay
+File ownership/deletion; a rejected promise is removed. Native output attachments of either
+available or unavailable status remain message-bound historical DATA in assistant history. The
+shared history normalizer safely serializes filename and recorded status, plus the available file
+ID/type or failure code, so source digests and provider formatting carry the same facts. A historical
+receipt is not a current availability or delivery claim: the existing selected-file resolver and signed
+native upload lane still own current File access and all MIME bytes. No File or grant is invented for
+an unavailable receipt. Saved rows, UI and speech remain unchanged. Unknown or mismatched receipts,
+unrelated hydrated media, malformed references and missing authored words still fail closed.
+Missing model metadata, pending hydration, mixed carriers or an over-budget replay
 retain foreground reconciliation. Native admission remains the final source-integrity guard. Foreground assembly immediately retains the exact validated reviewed prefix plus every
 newer authorized row, or all original rows when no valid prefix exists. It never accepts an
 unfinished candidate, edits stored history, clips a tool result, or marks unreviewed source covered.
 Each background claim reloads its durable record; only a reviewed commit advances the prefix.
 Idle work uses its own background response and budget, without the finished request's scheduler
 deadline or abort signal.
-The same foreground fences, finite batch/deadline, and failure-stop policy apply. A live Call
-alone does not pause opportunistic memory maintenance; active foreground admission still has
-priority. A lazy declared fallback need not initialize its tools merely to
-classify the current primary's native courier; its actual dispatch still checks source authority.
+The same finite batch/deadline and failure-stop policy apply. A live Call and ordinary foreground
+admission do not cancel independent memory maintenance; native admission owns actual capacity.
+A lazy declared fallback need not initialize its tools merely to classify the current primary's native courier; its actual dispatch still checks source authority.
 
 Header-only, mixed or unproved routes retain required foreground reconciliation. Genuine aggregate
 turn-context overflow retains the existing foreground carrier recovery and reload; its limits and
@@ -1131,8 +1153,27 @@ reserve described above.
 After reviewed progress, an insufficient budget for the next claim exhausts this batch and uses
 the same idle continuation owner. A concrete fidelity repair may also continue as described below;
 provider/review transport failures do not re-arm continuation.
-Foreground admission still cancels the exact maintenance attempt and waits for its capacity-release
-acknowledgment. Only independently reviewed output can promote the summary or advance a source cursor.
+Required foreground carrier recovery uses the same authenticated Native stage
+receipt and store-owned lease heartbeat, so Core's short initial guard does not cancel a longer
+already-admitted Native request. It retains Native's ordinary response budget; only background
+maintenance derives a timeout from the enclosing twenty-minute batch. A finite waiting-request
+deadline still bounds receipt admission and leaves the existing review/completion reserves.
+Unknown routes, unrenewable claims, cancellation and stale-lease fences retain their policy.
+This repairs a timeout mismatch; it does not make required foreground recovery parallel or fast.
+
+Ordinary Main admission does not reserve an owner-wide memory fence or abort ongoing compaction.
+A fitting reviewed context returns immediately. When the actual carrier cannot fit, the existing
+recovery owner waits for current same-domain compaction promises, reloads, and rechecks after the
+finite idle batch advances to another claim. Only a loaded, reviewed context that fits is adopted;
+settlement and release acknowledgments are not promotion. If no active producer remains, the one
+existing foreground recovery may claim and reload. The same check handles a producer admitted
+during that claim race; an unclaimed busy result does not spend a producer attempt, while
+post-provider contention retains its attempt count. A waiting request's Stop cancels its wait without canceling the shared
+producer. Explicit maintenance cancellation, Native capacity and release checks, claim leases,
+four-claim/twenty-minute batches, source generation/digest checks, fidelity review and promotion CAS
+remain enforced. Same-family saturation can queue Main; this policy does not promise immediate
+capacity or complete historical convergence.
+Only independently reviewed output can promote the summary or advance a source cursor.
 
 A whole-proposal, summary or rendered-carrier byte overflow can use the same batch's next claim
 when the existing source planner proves a smaller whole prefix. The failed result carries its
@@ -1141,7 +1182,7 @@ the new store-owned claim must belong to the same domain, have a different diges
 strictly fewer source bytes. An unchanged or indivisible source releases that claim and stops;
 it never repeats model work merely because the target number decreased. Field/item errors,
 provider or review failures and cancellation do not qualify. These reductions consume the same
-four claims and deadline, yield to foreground admission, and retain every unreviewed source.
+four claims and deadline, honor explicit cancellation, and retain every unreviewed source.
 Failure alone never re-arms an exhausted idle batch. Summary promotion and source-cursor movement
 still require the existing independent fidelity review.
 
@@ -1186,7 +1227,7 @@ existing shrinking-size state, so another batch does not restart its attempt bud
 receives the complete original source and exact typed feedback. A resumed bounded size draft
 keeps its exact bytes and must pass the same complete-request native admission-floor check again.
 Unknown or insufficient admission capacity, or a tighter carrier ceiling that no longer contains a
-whole-JSON draft, leaves numeric feedback only. Rendered carrier excess is recomputed for the current reserve.
+whole-JSON draft, leaves numeric feedback only. Rendered carrier excess is recomputed for the current reserve. Element text escapes `&`, `<` and `>`; quotes and apostrophes remain literal text. Attribute values still escape both quote forms. Sizing, full/reference summaries, source/tool/background projections and deferral use this same text representation. A valid retained size checkpoint keeps its prior stricter output ceiling when serialization frees capacity, so its source and attempt counters do not reset. A retained draft may carry the exact former attribute-escaped carrier measurement as historical rejection feedback; that measurement is verified against its full draft, not treated as current capacity. New output always passes the current full-carrier check and independent fidelity review.
 The next attempt continues the existing counter; retaining a draft grants no retry, quality bypass,
 model change or accepted-memory promotion. Any new rejected candidate is eligible for the same
 in-claim admission check. The canonical compaction prompt defines `maxJsonUtf8Bytes`
@@ -1216,11 +1257,10 @@ complete. Approved memory and all original source remain available while mainten
 Provider or review failure, cancellation, contention, stale source, an exhausted deadline, or the
 four-claim cap stops the batch. After successful reviewed legacy progress exhausts only that batch
 budget, the existing per-domain idle scheduling owner re-arms one continuation after thirty idle
-seconds, without requiring another user turn. It waits while the existing foreground fence is held;
-required foreground recovery or a newer schedule discards the old timer. Historical maintenance
-can run during a long-lived Call without waiting for End. The existing foreground admission fence
-and cancellation owner yield to an actual interactive turn; a connected but idle Call does not hold
-the memory queue. Each current turn keeps its admitted snapshot. Promotion still rechecks source
+seconds, without requiring another user turn. Required foreground recovery or a newer schedule
+discards the old timer. Historical maintenance can run during a long-lived Call and ordinary Main
+turns. A waiting request owns only its own cancellation; it does not cancel shared maintenance.
+Each current turn keeps its admitted snapshot. Promotion still rechecks source
 generation, digest, lease, current carrier and the store CAS, so parallel work cannot replace newer
 source or advance an unreviewed cursor. Ordinary memory admission and Feelings also remain parallel.
 An inherited enclosing
@@ -1242,3 +1282,7 @@ A label-only replay fit also retains Native inline image ingress: the existing24
 checked before a positive estimate. Unknown or oversized inline inputs retain the existing
 foreground reconciliation path. This estimate may conservatively count duplicate images;
 the Native media owner remains authoritative for actual admission and deduplication.
+
+Active local pre-native preparation retains its existing job, logical-turn and source-author ownership
+through the existing cleanup tick. Passive reconnects and stopped, completed or replaced owners cannot
+renew that ownership. Once native dispatch binds a deadline, retention does not extend it.

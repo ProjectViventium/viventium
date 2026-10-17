@@ -6601,3 +6601,127 @@ def test_validated_quiet_completion_acknowledges_without_fake_message(monkeypatc
                                {"effect_ref": effect_ref} if effect_ref else {})]
     else:
         assert robot.acks == []
+
+
+class _TypedFailingMainStreamRobot(_FailingMainStreamRobot):
+    def __init__(self, preview_text="", error_class="source_context_unavailable"):
+        super().__init__(preview_text)
+        self.error_class = error_class
+
+    async def source_order_is_current(self, **_kwargs):
+        return True
+
+    async def ask_stream_async(self, *args, **kwargs):
+        async for event in super().ask_stream_async(*args, **kwargs):
+            if event.get("type") == "bridge_error":
+                event.update(error_class=self.error_class, text=(
+                    "The conversation context could not be preserved. Please retry this turn."
+                ))
+            yield event
+
+
+def test_input_transcript_survives_typed_main_failure(monkeypatch, tmp_path):
+    monkeypatch.setenv("VIVENTIUM_TELEGRAM_RETRACTION_STORE_PATH", str(tmp_path / "retractions.sqlite3"))
+    monkeypatch.setattr(tg_bot, "Users", types.SimpleNamespace(get_config=lambda *_a, **_k: False))
+    monkeypatch.setattr(tg_bot, "should_send_voice_reply", lambda **_k: False)
+    context = _FakeContext()
+    robot = _TypedFailingMainStreamRobot()
+    guard = tg_bot._TelegramSourceOrderGuard(
+        bot=context.bot, robot=robot, telegram_user_id=_FakeUser.id,
+        chat_id=111, thread_id=None, source_sequence=222,
+    )
+
+    async def run():
+        text, failed = await tg_bot._resolve_prepared_voice_input(
+            context, guard, chatid=111, messageid=222, message_thread_id=None,
+            message=None, voice_text="Original spoken source", voice_error_text=None,
+        )
+        assert failed is False
+        transcript_id = context.bot.sent_ids[0]
+        transcript = dict(context.bot.current_messages[transcript_id])
+        await tg_bot.getViventiumResponse(
+            update_message=_FakeUpdateMessage(), context=context, title="", robot=robot,
+            message=text, chatid=111, messageid=222, convo_id="chat-1",
+            message_thread_id=None, voice_note_detected=True, telegram_message_id=222,
+            _source_guard=guard,
+        )
+        assert context.bot.current_messages[transcript_id] == transcript
+        assert transcript_id not in [item.get("message_id") for item in context.bot.edits + context.bot.deletes]
+        assert len(context.bot.current_messages) == 2
+        assert "context could not be preserved" in _final_delivered_texts(context)[1]
+        assert robot.acks == [("turn-1", 1, "failed", "telegram:111")]
+        assert context.bot.audios == []
+
+    asyncio.run(run())
+
+
+@pytest.mark.parametrize("error_class, expected", [
+    ("source_context_unavailable", "The conversation context could not be preserved. Please retry this turn."),
+    ("provider_auth_missing", "The configured model provider authentication is unavailable. Open Viventium in the browser, reconnect the AI provider, then retry."),
+    ("unknown-private-diagnostic", "The model provider could not complete this request."),
+])
+def test_typed_failure_replaces_only_assistant_preview(monkeypatch, tmp_path, error_class, expected):
+    monkeypatch.setenv("VIVENTIUM_TELEGRAM_RETRACTION_STORE_PATH", str(tmp_path / "retractions.sqlite3"))
+    robot = _TypedFailingMainStreamRobot("Unfinished answer.", error_class)
+    context = _run_failing_main_stream(monkeypatch, robot)
+    assert _final_delivered_texts(context) == [expected]
+    assert robot.acks == [("turn-1", 1, "failed", "telegram:111")]
+    assert context.bot.audios == []
+
+
+def test_typed_failure_pending_terminal_retains_class_across_restart(monkeypatch, tmp_path):
+    now = 100.0
+    monkeypatch.setattr(tg_bot.time, "time", lambda: now)
+    path = tmp_path / "retractions.sqlite3"
+    store = tg_bot._TelegramRetractionStore(path, retry_delay_s=0)
+    claim = store.reserve_pending_terminal(
+        telegram_user_id=9, chat_id=111, thread_id=None, source_sequence=222,
+        presentation_refs=["telegram:111:1001"], error_class="source_context_unavailable",
+    )
+    assert claim is not None
+    # The first process disappears before its Telegram operation. Reuse the durable claim.
+    now = 131.0
+    restarted = tg_bot._TelegramRetractionStore(path, retry_delay_s=0)
+    bot = _FakeTelegramBot()
+    bot.next_id = 1001
+    bot.current_messages[1001] = {"text": "Unfinished answer."}
+    robot = _TypedFailingMainStreamRobot()
+    assert asyncio.run(tg_bot._retry_pending_source_order_terminals(bot, robot, restarted)) == 1
+    assert bot.current_messages[1001]["text"] == (
+        "The conversation context could not be preserved. Please retry this turn."
+    )
+    assert restarted.pending_terminal_count() == 0
+    assert bot.messages == []
+
+
+def test_input_transcript_late_send_keeps_source_but_fences_assistant(monkeypatch, tmp_path):
+    monkeypatch.setenv("VIVENTIUM_TELEGRAM_RETRACTION_STORE_PATH", str(tmp_path / "retractions.sqlite3"))
+    current = True
+    class Robot:
+        async def source_order_is_current(self, **_kwargs):
+            return current
+    class Bot(_FakeTelegramBot):
+        async def send_message(self, **kwargs):
+            nonlocal current
+            result = await super().send_message(**kwargs)
+            current = False
+            return result
+    context = _FakeContext()
+    context.bot = Bot()
+    guard = tg_bot._TelegramSourceOrderGuard(
+        bot=context.bot, robot=Robot(), telegram_user_id=9,
+        chat_id=111, thread_id=None, source_sequence=222,
+    )
+    async def run():
+        text, failed = await tg_bot._resolve_prepared_voice_input(
+            context, guard, chatid=111, messageid=222, message_thread_id=None,
+            message=None, voice_text="Original spoken source", voice_error_text=None,
+        )
+        assert (text, failed) == ("Original spoken source", False)
+        assert len(context.bot.current_messages) == 1
+        assert guard.live_refs == []
+        with pytest.raises(tg_bot._StaleTelegramSourceOrder):
+            await tg_bot._SourceOrderedBotProxy(guard).send_message(chat_id=111, text="Stale answer")
+        assert len(context.bot.current_messages) == 1
+        assert context.bot.deletes == []
+    asyncio.run(run())
