@@ -1298,3 +1298,32 @@ the Native media owner remains authoritative for actual admission and deduplicat
 Active local pre-native preparation retains its existing job, logical-turn and source-author ownership
 through the existing cleanup tick. Passive reconnects and stopped, completed or replaced owners cannot
 renew that ownership. Once native dispatch binds a deadline, retention does not extend it.
+
+Current attachments use the existing preparation step before either history-fit check. Completion is
+scoped to that prepared current message; retaining an authorized upload does not mean preparation is
+still pending. The fit checks and signed Native invocation share the same current-plus-selected-history
+upload ledger, with current uploads first and duplicate identities counted once. The original files,
+ownership checks, reviewed prefix, source digests and final Native admission remain intact.
+Unsupported inline media, unfinished RAG, unknown capacity and measured overflow retain their existing
+guarded paths. This removes a false foreground memory wait; it neither skips memory nor forces
+transcription or delegation. Audio files remain available to the model's existing transcription tool;
+voice-note ingress retains its documented automatic transcription path.
+A completed file-only authored user message retains its empty text through model formatting. The
+formatter must not discard that source row or invent caption text; the authorized upload ledger carries
+its files, and source digests and access checks remain intact.
+
+Background cortices that inherit Main's accepted snapshot preserve its exact source rows, including
+empty authored text for file-only inputs. They use the existing checked body transport for the visible
+message chain; they do not send large chains through bounded headers. Source equality, ownership and
+size checks remain enforced. An isolated memory compactor does not inherit Main's unrelated carrier.
+
+A completed assistant row with no authored text, files, media, or tool evidence is runtime-only,
+whether its content is an empty text part or an empty array. Existing ancestry bookkeeping retains
+the raw row while model input excludes it. It must not make the next authored message fail source
+preservation. User attachment-only rows and unfinished or content-bearing assistant rows remain.
+Background cortices reuse their existing authorized initialization result for the exact current file
+IDs and order, and retain the accepted active message as the ancestry anchor. They must not discard
+prepared files in favor of raw browser references. Unselected tool-resource files and conflicting
+declared sources cannot enter the current upload set. Selected-history hydration may fill an absent
+body from the same authorized file ID and declared source. An explicit current body, including empty
+text, always wins.
