@@ -1091,7 +1091,11 @@ section and summary without trusting an earlier size forecast. Original messages
 this sizing projection does not edit them. Static native system instructions are configured
 separately. The existing selected-history file resolver pins one owner/conversation/parent/selection
 promise per request for early sizing and later signed projection. Another request rechecks current
-File ownership/deletion; a rejected promise is removed. Missing model metadata, pending hydration, mixed carriers or an over-budget replay
+File ownership/deletion; a rejected promise is removed. A completed assistant result with only
+an attachment keeps that same owned ancestry and selected-file authority. If the provider omits its
+empty text, snapshot reconciliation omits only that text digest; it keeps the original result row,
+file references and authenticated attachment lane. Missing files, authored text or media still fail
+closed when their required carrier is absent. Missing model metadata, pending hydration, mixed carriers or an over-budget replay
 retain foreground reconciliation. Native admission remains the final source-integrity guard. Foreground assembly immediately retains the exact validated reviewed prefix plus every
 newer authorized row, or all original rows when no valid prefix exists. It never accepts an
 unfinished candidate, edits stored history, clips a tool result, or marks unreviewed source covered.
