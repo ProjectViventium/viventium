@@ -766,17 +766,23 @@ an unaccepted proposal starts at half the default after process-local learning i
 or transport failure does not change that default. Promotion restores the default source target.
 An indivisible larger turn is supplied whole to the provider, whose actual input budget remains
 authoritative. The server allocates semantic output from the actual serialized consumer: the
-existing selected 16 KiB header consumer or native compaction output contract capped at
-128 KiB, shared by Core and legacy conversation context. The stored contract stays capped even
-when a turn has a larger proven body allocation. Current, recent, authority and framing costs
-are reserved before allocation.
+existing selected header consumer or the positively validated current native body allocation,
+shared by Core and legacy conversation context. The entire semantic JSON remains capped at
+128 KiB. Its allocation is the smaller of that ceiling and the selected carrier minus actual
+mandatory reserves; the exact rendered carrier must also fit. Current, recent, authority and
+framing costs are reserved before allocation. A larger transport allocation does not increase
+semantic or correction-draft storage ceilings. Unknown, mixed, unprepared or smaller routes retain
+the existing conservative admission contract; no future-route fit is promised.
 Core reserves its three actual recent full-text turns, including escaped tool/background evidence,
 the existing bounded pending-unavailable marker and reconciliation framing. Pending source keeps
 its existing bounded inclusion and guarded compaction policy. A reference-only capsule cannot
 substitute for full source unless the message courier actually delivers that source.
 The former 12 KiB Core bound is a conservative legacy-allocation floor, not a separate full-source
-ceiling. Legacy allocation hydrates Core once and reserves the larger of that floor and its actual
-serialized bytes. Final Main admission reuses that request's exact identity/version and hydrated
+ceiling. Legacy allocation prices the exact planned remaining history with the same current-route native
+estimator used by Core, then hydrates Core and reserves the larger of that floor and its actual
+serialized bytes. A legacy maintenance claim with an unavailable peer allocation reports a typed
+degraded result without blocking an otherwise fitting current turn. Required foreground source
+admission remains fail closed. Final Main admission reuses that request's exact identity/version and hydrated
 source snapshot under the selected carrier's remaining space, including the final legacy capsule,
 peer sections, attempt authority and separators. It is a pinned request snapshot, not a fresh read
 after another turn commits. Ordinary recent-source growth within the existing aggregate transport
@@ -787,7 +793,13 @@ aggregate carrier overflow returns a typed budget state with full hydrated sourc
 reviewed summary retained. Admission reuses the existing foreground compactor once and reloads;
 a summary-only claim is permitted when that exact state needs reallocation. Failure blocks source
 admission explicitly. Both domains share the selected carrier; neither can claim its full allowance
-without reserving the other mandatory sections. On the 16 KiB carrier, allocation first reserves
+without reserving the other mandatory sections. Their existing independent leases and compare-and-set
+owners do not make two peer snapshots atomic: concurrent or back-to-back promotions can change the
+combined fit. The next admission rechecks the full current pair, retains both accepted sources, and
+uses existing required-context recovery or fails typed before dispatch. This preexisting boundary
+is not a guarantee that every concurrent pair fits. Same-source repair and exhausted-source
+suppression preserve counters when JSON, summary and remaining rendered room do not increase,
+including a shrinking carrier. Additional room is an ordinary new allocation, not a cursor reset. On the 16 KiB carrier, allocation first reserves
 full Core, reviewed legacy continuity, current call and attempt authority. The existing atomic
 combiner then retains optional peer sections only within the remaining room. The admitted snapshot
 retains an optional work projection only when its whole capsule remains in that selection, so final
@@ -1286,3 +1298,32 @@ the Native media owner remains authoritative for actual admission and deduplicat
 Active local pre-native preparation retains its existing job, logical-turn and source-author ownership
 through the existing cleanup tick. Passive reconnects and stopped, completed or replaced owners cannot
 renew that ownership. Once native dispatch binds a deadline, retention does not extend it.
+
+Current attachments use the existing preparation step before either history-fit check. Completion is
+scoped to that prepared current message; retaining an authorized upload does not mean preparation is
+still pending. The fit checks and signed Native invocation share the same current-plus-selected-history
+upload ledger, with current uploads first and duplicate identities counted once. The original files,
+ownership checks, reviewed prefix, source digests and final Native admission remain intact.
+Unsupported inline media, unfinished RAG, unknown capacity and measured overflow retain their existing
+guarded paths. This removes a false foreground memory wait; it neither skips memory nor forces
+transcription or delegation. Audio files remain available to the model's existing transcription tool;
+voice-note ingress retains its documented automatic transcription path.
+A completed file-only authored user message retains its empty text through model formatting. The
+formatter must not discard that source row or invent caption text; the authorized upload ledger carries
+its files, and source digests and access checks remain intact.
+
+Background cortices that inherit Main's accepted snapshot preserve its exact source rows, including
+empty authored text for file-only inputs. They use the existing checked body transport for the visible
+message chain; they do not send large chains through bounded headers. Source equality, ownership and
+size checks remain enforced. An isolated memory compactor does not inherit Main's unrelated carrier.
+
+A completed assistant row with no authored text, files, media, or tool evidence is runtime-only,
+whether its content is an empty text part or an empty array. Existing ancestry bookkeeping retains
+the raw row while model input excludes it. It must not make the next authored message fail source
+preservation. User attachment-only rows and unfinished or content-bearing assistant rows remain.
+Background cortices reuse their existing authorized initialization result for the exact current file
+IDs and order, and retain the accepted active message as the ancestry anchor. They must not discard
+prepared files in favor of raw browser references. Unselected tool-resource files and conflicting
+declared sources cannot enter the current upload set. Selected-history hydration may fill an absent
+body from the same authorized file ID and declared source. An explicit current body, including empty
+text, always wins.

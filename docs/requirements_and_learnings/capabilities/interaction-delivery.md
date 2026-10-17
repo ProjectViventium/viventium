@@ -41,6 +41,26 @@ truthful Main presentation without losing or repeating durable work.
 - **CC-048:** A Telegram voice-note transcript remains source input, preserves receipt order and file
   semantics, and receives one truthful unavailable response when transcription fails.
 
+### Attachment-only input
+
+- A completed authorized attachment is valid user input without a caption. Web send, saved user
+  edits and regeneration use the files selected for that operation; unrelated history cannot make
+  an empty new message valid. Pending or invalid uploads remain blocked.
+- Saved user files remain visible and editable when the message has no structured content parts.
+  Existing file controls render the canonical file list; an empty content array must not hide it.
+- Main and worker handoff preserve the original empty authored text, source order and authorized
+  files. They neither drop the source nor invent a caption. The same source identity and file
+  access checks apply to text, image, audio and document inputs. This does not force transcription
+  or delegation; the configured model chooses its existing tools.
+
+- Saved input file cards use the same authenticated download path as result files. Original stored
+  files return their exact bytes. Upload-as-Text returns its retained extraction as plain text with
+  a `.txt` download name; a removed temporary original is not required or falsely reconstructed.
+  Explicit empty extraction is a valid file. Missing retained content returns an unavailable result.
+- Main, background agents and workers receive the same declared file representation: original,
+  extracted text, or unavailable metadata. A binary original filename must not hide usable declared
+  extraction. Reading extraction does not prove access to original bytes.
+
 ### Origin binding
 
 - **HARD-021:** Completion returns only to its exact owner and origin, or to one governed account-
@@ -96,6 +116,19 @@ truthful Main presentation without losing or repeating durable work.
 - **PW-111:** A recoverable provider or bridge condition remains pending after stream close; one
   recovery creates one final presentation instead of a committed generic error.
 
+### Finished reply after connection expiry
+
+- A completed host reply, whether produced through Direct or a native handoff, remains recoverable
+  from its existing saved Message after the temporary job expires. Recovery uses the exact saved
+  source, owner, conversation, revision, text and files. It does not rerun the model or its tools.
+- The private completion receipt is saved with the final answer. A partial message, Stop,
+  acknowledgment alone, or an old branch is not proof of completion. Changed or deleted source,
+  payload, attachment or ownership must fail the same recovery check on Web, Telegram and Voice.
+  Acknowledgment is idempotent and bound to that exact presentation. Native-owned completed
+  responses keep their existing replay authority; host recovery cannot restore revoked authority.
+- An unavailable recovery proof must not make ordinary answer persistence fail. Keep the existing
+  Stop, supersession and native publication controls; real persistence failures still fail.
+
 ## Non-goals
 
 - Do not infer authoring or supersession scope from provider, adapter, or channel names.
@@ -110,7 +143,7 @@ truthful Main presentation without losing or repeating durable work.
 - QA: `qa/main-continuity/`, `qa/agent-streaming-usage/`, `qa/no-response/`,
   `qa/citation-rendering/`, and `qa/agent-config-continuity/`
 - Durable journeys: `qa/interaction-delivery/cases.yaml` (`cross-surface-supersession`,
-  `main-natural-response`)
+  `main-natural-response`, `attachment-only-input`, `finished-reply-after-connection-expiry`)
 
 Acceptance includes rapid cross-surface input, false and stable Voice interruption, callback
 completion, concurrent conversation isolation, restart and reload, transcription failure, and a

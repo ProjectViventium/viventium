@@ -25,3 +25,19 @@ journeys:
     degradedAndRecovery: Provider unavailable, timeout, rate limit, and isolation conflict each surface once as a typed state; a conflict is never treated as success and never triggers a resubmission with a new conversation.
     persistenceAndCleanup: Reload and restart preserve the conversation and answer; the synthetic conversation is removed through the supported owner path.
     evidence: [visible answer and URL, turn identity count, provider session and project counts, message rows, served client identity, send-to-first-visible timing]
+  - id: finished-reply-after-connection-expiry
+    requirements: [CORE-001, CC-043, CC-047, HARD-021, PW-111]
+    userAction: Complete a harmless Direct reply and a native handoff reply, then reconnect after the temporary job is absent.
+    surfaces: [Web, Telegram, Voice]
+    expectedResult: The exact saved final text and authorized files are recovered once, without a new provider request or repeated tool effect.
+    degradedAndRecovery: Partial, stopped, active or failed replies and changed source, ownership, revision, payload or files cannot become a recovered success. Concurrent acknowledgment and reconnect keep the exact presentation identity.
+    persistenceAndCleanup: Reload and restart retain the same answer and acknowledgment; public reads and client writes cannot expose, forge or clear the private completion receipt.
+    evidence: [visible recovered answer, final save transaction, source and payload identity, provider request count, attachment authorization, acknowledgment race and reload receipts]
+  - id: attachment-only-input
+    requirements: [CORE-001, CORE-006, CC-048, HARD-021]
+    userAction: Send a completed document without a caption from Web and an audio file without a caption from Telegram; use a synthetic request whose authorized worker returns a small file. Compare with a native voice note.
+    surfaces: [Web, Telegram, worker]
+    expectedResult: The original attachment and empty authored text reach Main, its bound background cortices and any accepted worker with unchanged source identity. The useful reply and exact output file return in the same conversation.
+    degradedAndRecovery: Empty input without selected files and pending or invalid uploads cannot send. Missing, stale or mismatched source identity and unauthorized files remain rejected. A native voice transcript uses the existing transcription path. Completed empty assistant status rows cannot block the next authored source; content-bearing or unfinished rows remain. Missing retained text is unavailable, while explicit empty extraction is valid.
+    persistenceAndCleanup: Reload retains the visible input, reply and output file, including saved user rows with an empty structured content array. Saved input and result cards download the actual retained representation; original bytes remain exact, while declared extraction returns exact text with a .txt name. File-only edits and regeneration retain their exact selected files; no new blank turn can borrow files from history.
+    evidence: [visible captionless send, source and upload ledger, worker receipt and result, downloaded file bytes, reload, admission and authorization tests]
