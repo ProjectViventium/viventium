@@ -67,6 +67,11 @@ their exact loss, consumer, and safety gates pass. Runtime implementation detail
 Capability routing does not certify completion. Candidate-bound QA reports own execution results;
 unresolved owner, surface, seam, and planned acceptance mappings remain open until reviewed.
 
+The [Direct Queen action-handoff report](../qa/voice/reports/2026-10-17-direct-queen-action-handoff.md)
+records the later Voice configuration repair, real action workers, Stop, file delivery and user
+acceptance. It preserves High effort and keeps optional preparation off; fast-response performance
+remains unresolved. This is a tested local configuration, not a new global default.
+
 Latest scoped native reply-completion, worker/Steer, received Voice audio, file/reload and
 memory-recovery results are in the
 [2026-10-17 acceptance report](../qa/voice/reports/2026-10-17-native-continuation-and-memory-recovery.md).
