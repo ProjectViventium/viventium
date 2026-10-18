@@ -99,3 +99,21 @@ journeys:
     degradedAndRecovery: Unsupported profiles and account projections are explicit. Optional attach failure before session/prompt uses the same-model cold path; accepted prompts are never replayed. Failed starts, uncertain Stop, concurrent close, orphan recovery and PID reuse never silently release capacity or signal an unrelated process. Startup recovery runs even with zero, paused or unusable settings. Full Stop proof does not hold the runtime-wide process lock.
     persistenceAndCleanup: Native tools and escaped descendants are proved stopped by the existing owner before resource release; saved conversation history survives clean eviction and active Stop. Idle expiry, pause, termination and shutdown leave no owned live process.
     evidence: [saved configuration and reload, native status and process identities, model and effort receipts, cold and warm native clocks, exact Stop and next-turn history, restart and cleanup evidence]
+
+  - id: plain-action-native-execution
+    requirements: [PW-050, PW-052, CORE-005]
+    surfaces: [installed Voice Call, native xPerfect harness, actual browser or local workspace, linked chat]
+    userAction: Ask to open a harmless public page in a new browser tab without naming a tool or worker. Repeat with an authorized local file task and an ordinary conversational question. Compare the exact plain request through the configured Chat route.
+    expectedResult: In a configured Queen/worker split, the Queen receives a real durable-worker acceptance; direct execution counts only for a single-executor setup. The selected route then reports the actual result or needed input. The real page or file exists. Conversation-only input needs no tool. The user does not supply orchestration instructions.
+    degradedAndRecovery: A promise without an action is a failed case even if the provider reports completion. Wrong handoffs, unavailable tools and missing permission remain distinct. Keep the original failed receipt when retrying; do not silently switch models or infer Voice parity from Chat success.
+    persistenceAndCleanup: Join the original input, exact native run, tool result and visible effect. Preserve user data and unrelated work; remove only disposable test artifacts through their supported recovery path. Keep raw personal history and provider context private.
+    evidence: [exact configured model and effort, input and native attempt joins, real tool acceptance or completion, visible page or file, spoken claim, source and runtime identity, separate original and retry outcomes]
+
+  - id: direct-queen-independent-action-handoff
+    requirements: [PW-050, PW-052, CORE-005]
+    surfaces: [installed Voice Call, xPerfect Direct Queen, configured native workers, linked chat]
+    userAction: Speak two independent ordinary action goals without naming a provider or tool, then ask a conversational question. Include one browser action and one downloadable artifact.
+    expectedResult: The Queen obtains distinct durable worker receipts through the existing broker. Configured worker models and fallback stay independent of the Queen. Conversation continues; each actual result returns through the Queen once, with the real page or downloadable file.
+    degradedAndRecovery: Preserve failed tool attempts and report their actual result. Conversation-only and planning-only requests need no action. Missing acceptance is not success. A route change and an effort change are separate choices; neither is hidden. A supported durable background follow-up is not evidence of mid-reply interjection.
+    persistenceAndCleanup: Join speech transcription, Queen tool calls, exact workers, callback destinations, persisted chat and received audio. Record whether later input actually overlapped running work. End the owned test call normally; preserve unrelated work.
+    evidence: [selected Queen and worker configuration, real RTC transcript and PCM, distinct accepted work receipts, worker execution bindings, visible browser effect, downloaded file contents, callback presentation receipts, stage timings, separate native and Direct results]

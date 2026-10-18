@@ -102,6 +102,49 @@ hosted Listening rejection. Short non-lexical sounds can produce false local-ASR
 unqualified filenames retain the native bare-link behavior. These bounded results do not establish
 universal recognition accuracy, glitch-free audio, full microphone parity or release readiness.
 
+### Plain action acceptance
+
+Voice action readiness requires a plain user goal to produce the requested effect through the
+selected native harness or an accepted durable worker. The user need not name a tool, provider,
+worker or delegation procedure. In a configured Queen/worker split, action success requires
+a durable worker acceptance; direct harness execution counts only for a single-executor setup.
+Test an ordinary browser action and another authorized local
+operation, plus a conversational input that needs no action. Join the original input to the exact
+native attempt, real tool result, visible effect and final spoken claim. A reply such as “opening
+it now,” a successful provider completion, or an active-work card does not prove the effect.
+
+Successful explicit worker-launch tests do not establish plain-action readiness. Record results
+for each configured Voice route separately; a working Codex Chat route does not establish Grok
+Voice parity. Preserve a failing attempt when retrying and report its actual outcome. Configuration
+changes must remain explicit; do not conceal a provider substitution or add intent matching,
+promise detection, forced delegation, or another routing layer to make a case pass.
+
+### Queen execution and worker execution are separate settings
+
+In the Queen/worker configuration, the Voice Queen owns the conversation and exact work
+coordination. The configured workers execute action requests, including small actions. A plain
+action request must reach the durable delegation tool without the user naming a provider or handoff.
+The worker profile, model, effort and fallback remain independent of the Queen execution mode.
+A Direct Queen still runs inside xPerfect and uses its existing authorized broker, context,
+worker receipts and callbacks; it is not a separate host-side manager.
+
+Treat native tool discovery, Direct function binding and actual worker acceptance as separate
+claims. A model can produce a valid final response without calling any tool. Tool readiness and
+explicit-delegation probes alone do not prove plain-action behavior. Selecting an existing Direct
+route can be a configuration remedy when its real path passes, but does not prove the native route
+repaired. Keep supported alternatives and disclose the selected mode. Preparation remains optional;
+it is neither a prerequisite for delegation nor a proven speed optimization.
+
+Direct uses the selected provider API connection and its API billing. A native subscription does
+not pay for Direct requests. Where the executor cannot accept live interjection, useful background
+context uses the existing durable Main follow-up; this is not proof of mid-reply incorporation.
+The accepted Direct configuration delegated small actions with the existing prompt unchanged.
+A proposed prompt change still requires the existing old/new Prompt Workbench comparison; do not
+treat this configuration result as acceptance of the rejected wording candidate.
+Measure end-of-input to first received audio separately from worker acceptance and final results.
+A successful Direct handoff does not establish a latency improvement. Do not lower effort or omit
+cognition to label a route fast.
+
 ### Worker controls
 
 - **PW-050:** In a normal Voice Call, Main remains available and may perform explicit authorized

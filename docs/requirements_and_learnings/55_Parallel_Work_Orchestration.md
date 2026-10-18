@@ -1196,7 +1196,15 @@ conversation session can use the selected root directly; a new non-conversation 
 a generated subfolder under it. Omission preserves the configured worker root; no path is inferred
 from the objective, output file or unresolved origin. Existing
 native access and execution-mode constraints still apply; placement does not grant file or tool
-authority. A nonblank explicit root disables the native automatic host-to-Docker fallback for
+authority. The Queen's selected Life workspace does not automatically replace this worker default.
+For a deployment whose action workers should run within Life, set the existing
+`integrations.glasshive.host_worker.workspace_root` to its configured Life folder, compile the
+configuration, and reload the runtime through its normal lifecycle. This affects new workers that
+omit a root; explicit roots and admitted workspaces keep their existing precedence. Worker memory
+already uses the authorized worker bootstrap. Do not add another memory transport or copy the
+Queen's full prompt to correct workspace placement.
+
+A nonblank explicit root disables the native automatic host-to-Docker fallback for
 missing host dependencies. A nonblank explicit root also excludes Docker workspaces from managed ephemeral-storage-root
 cleanup eligibility. These placement options do not bypass native mode or access checks.
 
@@ -1997,8 +2005,10 @@ flowchart TD
   Queen --> Answer[Conversational output]
   Queen --> A[xPerfect durable worker A]
   Queen --> B[xPerfect durable worker B]
+  Queen --> N[xPerfect durable worker N: within available capacity]
   A --> Results[xPerfect results, failures and needed input]
   B --> Results
+  N --> Results
   Results --> Queen
   Courier --> Cortex[Configured cognition in parallel]
   Cortex --> Batch[One finite completed useful cohort]
@@ -2015,6 +2025,26 @@ schema probe supports exact-turn steering. Other exact admitted native routes ma
 at a verified safe boundary when their declared capability allows it. Unsupported, disabled or
 restricted contracts retain durable after-Main delivery. A queued acknowledgement is not proof
 of consumption. Grok live consumption remains subject to its artifact and authority gates.
+
+### Direct Queen configuration and action ownership
+
+In the Direct Queen configuration, Queen handles conversation and coordinates work; configured
+workers execute actions, including small actions. “Quick work stays with Queen” means quick
+conversational work in this configuration, not a separate local action executor. The model judges
+what action is needed from the goal and context; the host adds no keyword router or fixed task map.
+Worker A, B and N are examples, not a two-worker limit. Available capacity and authorization still
+apply. A later question C must not wait for unrelated accepted work.
+
+Queen mode, provider, model and effort are independent of worker model, effort and fallback.
+Selecting Direct does not replace the workers with the Queen's provider or reduce their tools,
+authority, memory, Feelings or relevant context. Optional context preparation may remain off;
+it must not become a prerequisite for a valid handoff. xPerfect owns the existing delegation and
+work-control mechanisms. Viventium supplies authorized context and channel presentation.
+
+The [Voice contract](capabilities/voice.md#queen-execution-and-worker-execution-are-separate-settings)
+and [local acceptance report](../../qa/voice/reports/2026-10-17-direct-queen-action-handoff.md)
+separate the approved design, tested configuration and unresolved response latency. Preserve that
+distinction: a working handoff does not prove a fast Queen or repair another provider route.
 
 ### Observable behavior
 
