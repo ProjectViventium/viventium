@@ -2673,7 +2673,7 @@ def test_helper_refreshes_cli_intent_for_matching_dev_and_native_bindings(tmp_pa
     cancel = _helper_swift_block(source, "private func cancelStackLaunch(").replace("private func ", "func ", 1)
     harness = tmp_path / "IntentProbe.swift"
     harness.write_text("import Foundation\n" + types + "\nfinal class Probe {\n"
-        "static var persisted: HelperConfig?\nvar config: HelperConfig?\nvar runtimeSupervision = RuntimeSupervisionState.defaultRunning\nvar stackLaunchTask: Task<Void,Never>?\nvar stackLaunchInProgress = false\n" + cancel + "\n" + body + "\n}\n" + r'''
+        "static var persisted: HelperConfig?\nvar config: HelperConfig?\nvar runtimeSupervision = RuntimeSupervisionState.defaultRunning\nvar stackLaunchTask: Task<Void,Never>?\nvar stackLaunchInProgress = false\nvar stackLaunchFailureGuidance: String?\n" + cancel + "\n" + body + "\n}\n" + r'''
 func config(_ mode: Bool?, _ state: RuntimeDesiredState, _ root: String = "/synthetic/runtime", _ support: String = "/synthetic/support") -> HelperConfig {
     var intent = RuntimeSupervisionState.defaultRunning; intent.desiredState = state
     return HelperConfig(repoRoot: root, appSupportDir: support, allowProtectedRepoRoot: nil,
@@ -2847,6 +2847,122 @@ func launchFailureMarkerSeen(startLogURL: URL?, startLogOffset: UInt64) -> Bool 
     assert result.stdout.strip() == "cancel-pass"
 
 
+def test_helper_health_wait_ends_on_fresh_fatal_startup_only(tmp_path: Path) -> None:
+    source = HELPER_SOURCE.read_text()
+    helpers = "\n".join(
+        _helper_swift_block(source, signature)
+        .replace("private nonisolated static func ", "func ", 1)
+        .replace("self.", "")
+        for signature in (
+            "private nonisolated static func waitForHealthyStack(",
+            "private nonisolated static func launchFailureMarkerSeen(",
+            "private nonisolated static func logSegment(",
+        )
+    )
+    snapshot = _helper_swift_block(source, "private struct StackHealthSnapshot").replace("private ", "", 1)
+    harness = tmp_path / "FatalStartupProbe.swift"
+    harness.write_text("import Foundation\nstruct RuntimePorts {}\n" + snapshot + r'''
+var commandActive = true
+func stackHealthSnapshot(runtime: RuntimePorts, appSupportDir: String? = nil) async -> StackHealthSnapshot {
+    StackHealthSnapshot(apiReady: false, frontendReady: false, playgroundReady: false,
+        requiresPlayground: false, optionalSurfacesReady: false)
+}
+func userFacingSurfaceHealthy(runtime: RuntimePorts) async -> Bool { false }
+func cliOperationStillRunning(appSupportDir: String) -> Bool { commandActive }
+''' + helpers + r'''
+@main struct Main {
+    static func main() async throws {
+        let log = URL(fileURLWithPath: CommandLine.arguments[1])
+        let stale = Data("FATAL_STARTUP: old failed attempt\n".utf8)
+        try stale.write(to: log)
+        let offset = UInt64(stale.count)
+        precondition(!launchFailureMarkerSeen(startLogURL: log, startLogOffset: offset),
+            "A prior attempt's terminal marker cannot fail the current launch")
+        let oldWait = Task { await waitForHealthyStack(runtime: RuntimePorts(), appSupportDir: "/synthetic/support",
+            timeoutSeconds: 1800, allowEarlyFailure: true, requireManagedReadiness: true,
+            startLogURL: log, startLogOffset: offset) }
+        try? await Task.sleep(for: .milliseconds(20))
+        oldWait.cancel()
+        let oldReady = await oldWait.value
+        precondition(!oldReady)
+
+        let handle = try FileHandle(forWritingTo: log)
+        try handle.seekToEnd()
+        try handle.write(contentsOf: Data("FATAL_STARTUP: launcher exited before core handoff (status 1)\n".utf8))
+        try handle.close()
+        let started = Date()
+        let wait = Task { await waitForHealthyStack(runtime: RuntimePorts(), appSupportDir: "/synthetic/support",
+            timeoutSeconds: 1800, allowEarlyFailure: true, requireManagedReadiness: true,
+            startLogURL: log, startLogOffset: offset) }
+        try? await Task.sleep(for: .seconds(9))
+        commandActive = false
+        let healthy = await wait.value
+        let elapsed = Date().timeIntervalSince(started)
+        precondition(!healthy && elapsed >= 9 && elapsed < 13,
+            "A fresh fatal launch must release the thirty-minute wait only after its CLI owner exits")
+        print("fresh-fatal-pass")
+    }
+}
+''')
+    executable = tmp_path / "fatal-startup-probe"
+    subprocess.run(["xcrun", "swiftc", "-parse-as-library", str(harness), "-o", str(executable)],
+        check=True, capture_output=True, text=True)
+    result = subprocess.run([str(executable), str(tmp_path / "helper-start.log")],
+        capture_output=True, text=True, timeout=15)
+    assert result.returncode == 0, result.stderr[-1500:]
+    assert result.stdout.strip() == "fresh-fatal-pass"
+
+
+def test_helper_start_failure_status_keeps_retry_visible_and_clears_on_recovery(tmp_path: Path) -> None:
+    source = HELPER_SOURCE.read_text()
+    status = _helper_swift_block(source, "var statusLabel: String")
+    state = _helper_swift_block(source, "@Published private(set) var stackState:")
+    state = state.replace("@Published private(set) ", "", 1)
+    intent = _helper_swift_block(source, "private func setRuntimeDesiredState(").replace("private func ", "func ", 1)
+    cancel = _helper_swift_block(source, "private func cancelStackLaunch(").replace("private func ", "func ", 1)
+    types = "\n".join(_helper_swift_block(source, signature) for signature in (
+        "enum StackState:", "enum RuntimeDesiredState:", "struct RuntimeSupervisionState:"))
+    harness = tmp_path / "StartFailureStatusProbe.swift"
+    harness.write_text("import Foundation\n" + types + r'''
+final class Probe {
+    var stackLaunchFailureGuidance: String?
+    var workflowStatusLabel: String?
+    var runtimeSupervision = RuntimeSupervisionState.defaultRunning
+    var stackLaunchTask: Task<Void,Never>?
+    var stackLaunchInProgress = false
+    var busyStateGraceDeadline: Date?
+    func persistRuntimeSupervision() {}
+''' + state + "\n" + status + "\n" + intent + "\n" + cancel + r'''
+}
+let probe = Probe()
+probe.stackLaunchFailureGuidance = "Check Docker Desktop and try Start again."
+probe.runtimeSupervision.recordLaunchAttempt(at: Date(), baseDelay: 15, maximumDelay: 900)
+let savedIntent = probe.runtimeSupervision
+precondition(probe.statusLabel.contains("Start failed") && probe.statusLabel.contains("Check Docker Desktop") &&
+    probe.statusLabel.contains("Retrying at"), "Automatic failures must show an action and the existing retry schedule")
+precondition(probe.runtimeSupervision == savedIntent, "Rendering cannot change retry authority")
+probe.stackState = .running
+precondition(probe.stackLaunchFailureGuidance == nil && probe.statusLabel == "Running")
+probe.stackLaunchFailureGuidance = "old failure"
+probe.setRuntimeDesiredState(.running)
+precondition(probe.stackLaunchFailureGuidance == nil, "Explicit Start clears the prior failure")
+probe.stackLaunchFailureGuidance = "old failure"
+probe.setRuntimeDesiredState(.stopped)
+precondition(probe.stackLaunchFailureGuidance == nil && !probe.runtimeSupervision.shouldLaunch(at: .distantFuture),
+    "Stop clears failure and never schedules another launch")
+probe.stackLaunchFailureGuidance = "old failure"
+probe.cancelStackLaunch()
+precondition(probe.stackLaunchFailureGuidance == nil, "Imported Stop also clears the old launch failure")
+print("start-failure-status-pass")
+''')
+    executable = tmp_path / "start-failure-status-probe"
+    subprocess.run(["xcrun", "swiftc", str(harness), "-o", str(executable)],
+        check=True, capture_output=True, text=True)
+    result = subprocess.run([str(executable)], capture_output=True, text=True, timeout=5)
+    assert result.returncode == 0, result.stderr[-1500:]
+    assert result.stdout.strip() == "start-failure-status-pass"
+
+
 def test_helper_cancelled_start_completion_cannot_clear_a_new_start(tmp_path: Path) -> None:
     source = HELPER_SOURCE.read_text()
     start = _helper_swift_block(source, "private func startStack(")
@@ -2870,6 +2986,7 @@ actor Gate {
 @MainActor final class Probe {
     var stackLaunchTask: Task<Void,Never>?
     var stackLaunchInProgress = true
+    var stackLaunchFailureGuidance: String?
     var runtimeSupervision = RuntimeSupervisionState.defaultRunning
     let runtimeSupervisionStableHealthSeconds: TimeInterval = 300
     var writes = 0

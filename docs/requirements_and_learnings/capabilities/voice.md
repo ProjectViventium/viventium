@@ -145,6 +145,176 @@ Measure end-of-input to first received audio separately from worker acceptance a
 A successful Direct handoff does not establish a latency improvement. Do not lower effort or omit
 cognition to label a route fast.
 
+### Fast Direct Queen with prepared context and live work awareness
+
+#### Should / fixes · Direct Queen
+
+This is the approved flow, shared by Text, Telegram and Voice. It defines expected behavior;
+dated [candidate results](../../../qa/voice/reports/2026-10-21-prepared-direct-queen.md) define what
+has actually passed. The Queen and Worker Bee names describe existing roles, not extra services.
+
+```mermaid
+flowchart TB
+    Input["You send A, B, C…<br/>Text, speech, files, history<br/>Any supported surface"]
+    Ordered["Keep A, B, C in order<br/>Preserve every original segment<br/>Only update a reply still in progress"]
+    Context["Shared cognitive context<br/>Memory · Feelings · prompts<br/>Tools · files · history · allowed access<br/>Same prepared conversation"]
+    Queen["Queen / Main · Direct & Fast<br/>One manager and speaking personality<br/>Answer / start work / steer exact work<br/>hand_off_to · list_workers"]
+    A["Worker Bee A<br/>Independent durable work<br/>Configured native harness and fallback"]
+    N["Worker Bees B … N<br/>Run beside A<br/>Full relevant native capabilities<br/>Within configured capacity"]
+    Callback["Existing durable worker callbacks<br/>Results · files · actual failures · needed input<br/>Evidence for Queen, not another speaker"]
+    Status["Internal status → Active Work / logs<br/>No raw-status chat or speech"]
+    Subconscious["Parallel subconscious<br/>Selected Cortices run in parallel<br/>Does not hold Main's first response"]
+    Batch["One finite useful batch<br/>Activated set settles<br/>Exclude silent NTA results<br/>Do not wait for unrelated Bees"]
+    Reply["Main-authored conversation<br/>Answer C now; useful result later<br/>Write the public reply once; stream it<br/>Ask only for an answer truly needed"]
+    Presenter["One presenter for each item<br/>Its own identity and durable receipt<br/>Text / Call stream / Telegram audio<br/>Files in linked chat / Active Work"]
+    Input --> Ordered --> Queen
+    Context --> Queen
+    Ordered --> Subconscious --> Batch
+    Batch -. "Useful findings to the same Queen" .-> Queen
+    Queen -->|"Original selected input + shared context; no rewritten brief"| A
+    Queen --> N
+    A --> Callback
+    N --> Callback
+    Callback --> Queen
+    Callback --> Status
+    Queen --> Reply --> Presenter
+```
+
+Viventium carries the original input, cognitive context and presentation. **xPerfect owns Queen
+and worker execution, handoff, work controls and callbacks.** Do not add another routing agent,
+intent classifier, action-specific pipe or channel-specific manager.
+
+The saved Main is the shared foreground owner. Chat, Telegram, Main-authored callbacks, scheduled
+Main work including Consciousness Continuity, and Main continuity compaction/review follow that
+saved route. Selecting Direct Grok Low for Main therefore changes all of those consumers; it is
+not a Voice-only switch. The saved-memory writer and Feelings reaction retain their explicit High
+routes, and native action workers retain their separate models and fallback. Do not claim
+continuity parity from a fast chat reply: run the owning synthetic compaction-fidelity check on
+the selected Main route. This uses the same existing compactor, not another compaction agent role.
+
+- **A, B, C:** independent A and B may run beside each other while Queen answers C. A correction
+  to A uses A's existing work identity; it must not start A again or affect B. New input may
+  revise only an unfinished reply, never cancel accepted background work implicitly.
+- **Full context without broken telephone:** the handoff selects the original input and exact
+  work target. Existing authorized snapshots and readers supply conversation, prepared awareness,
+  memory, Feelings, files/history and relevant tools. Queen must not generate a substitute brief.
+  Historical context is evidence, not permission to repeat old actions; unrelated private data
+  and credentials never cross the boundary.
+- **Fast acknowledgement, independent execution:** acknowledge only after the durable acceptance
+  receipt, without waiting for completion. Reuse a valid authored reply after acceptance where
+  the output contract supports it; generate another only when needed. Do not speak speculative
+  promises, arbitrary provider prose or internal tool/status text to shorten a timer.
+- **One voice:** useful worker results and needed questions return through Queen. Raw memory
+  maintenance, saved-memory notices and generic worker status belong in logs / Active Work,
+  never in conversation or TTS. Useful subconscious findings form one finite activated batch;
+  `{NTA}` findings stay silent. Use native live injection where supported, otherwise the existing
+  durable Main follow-up. A follow-up is not proof of mid-reply consumption.
+- **Same ability across surfaces:** each supported Text, Telegram and Voice path retains the
+  authorized outcome, context, tools, files, work controls and once-only delivery. Presentation
+  can differ. A successful Web action does not by itself prove Telegram or Voice acceptance.
+- **No capability cuts for speed:** memory maintenance and background work remain parallel.
+  Preserve intelligence, Feelings, cortices, prompts, history and permissions. Use the existing
+  process warm pool and context/session reuse; do not rebuild them or call a retained workspace
+  a warm model.
+
+Optional call preparation is a separate startup stage: **Main updates existing Life awareness in
+the same conversation → its report stays visible and silent → the configured Voice Queen
+continues in that conversation.** Reuse prior context and gather changes; do not rebuild it per
+turn. When preparation is off, Queen uses available context and ordinary memory. When enabled,
+do not silently replace this order with parallel preparation. Its timeout and exact cancellation
+must preserve input and permit the existing truthful degraded recovery. This is not a new
+preparation framework or an authorization bypass.
+
+An optional operator-owned `voice.prebuild_context.execution` provider/model/effort tuple can
+keep preparation on a capable native Main while the speaking Queen uses Direct. Omitting it
+preserves the saved Main route. The compiler and current provider capability registry must accept
+the exact tuple. Only a current call's owner, agent, conversation, preparation receipt and deadline
+can select that server policy; an HTTP model tuple cannot override normal scheduled work. Native
+fallback remains the agent's existing `glasshive_options.fallback_model` and effort, with the
+same xPerfect validation and recovery. Do not create another fallback manager or change workers.
+The daily fast configuration can leave optional preparation Off while keeping its native High pin
+ready for later enablement. Off retains normal Life, memory, Feelings, prompts, history, current
+work awareness and tool access. It avoids the optional startup wait; it does not repair a failed
+prebuild or prove the sub-two-second speech objective.
+
+The intended deployment keeps native workers on Codex GPT 6.1 Sol / High with configured
+Claude Opus 5.5 / High fallback. Worker models and fallback remain configurable independently of
+the conversational Queen. A … N means capacity-bounded parallel work, not a two-worker limit or
+unlimited provider capacity. OpenCode remains unchanged and backlogged.
+
+The target configuration is one Direct conversational Queen inside xPerfect, backed by the
+configured native workers A through N. Viventium carries input, authorized cognitive context and
+presentation; xPerfect owns work. This is a configuration of existing mechanisms, not another
+orchestrator or a task-specific routing table.
+
+The canonical Voice default uses xPerfect Direct xAI / Grok 4.7 / Low, with coordination mode.
+Low is the lowest supported effort, not disabled thinking. Main and native worker effort remain
+independent; saved explicit alternatives are preserved.
+
+- The Fast Direct Queen uses the existing orchestration option `tool_mode: coordination`.
+  Its action interface is `hand_off_to` and `list_workers`. The handoff starts configured work or
+  applies the existing exact-work controls; it does not wait for the worker's result. Schedules,
+  web and file search, diagnostics and other action capabilities remain on workers. Do not remove
+  those capabilities globally, add action-category routing, or restore the whole action catalog
+  to the Queen as a substitute for a working handoff. The explicit `full` option retains the wider
+  interface; native workers and their configured fallbacks keep their existing capability grants.
+  A natural acknowledgement must follow an accepted receipt and must not claim completion.
+
+- When enabled, the existing preparation prompt uses Main and its fallback once at call start to
+  gather situational awareness incrementally from Life, memory and current work in the same
+  conversation. Keep its report visible and silent. Measure preparation separately from later
+  conversational turns; do not repeat the whole preparation for each input.
+- Each Queen turn receives the prepared context plus the latest authorized work state and results.
+  A preparation snapshot alone is not a fresh work roster. The Queen decides whether to answer,
+  start independent work, or Message/Steer an exact existing worker. Do not create a duplicate
+  merely because another message arrived. No keyword router or extra classification model is needed.
+- Worker handoff preserves the full authorized conversation/context and tool access through the
+  existing context owner. Distinguish included prompt content from source references that require
+  retrieval. Do not call a limited inline preview a full copied prompt, and do not make the Queen
+  write a fresh recap to reconstruct context for each worker. The handoff selects a worker and,
+  when needed, a short task focus; the existing context owner supplies the exact authorized source
+  conversation. A model-authored `instruction` must not be a required substitute for inheritance.
+  Share context through existing snapshots/readers or native conversation binding, preserving
+  roles and provenance. Do not copy credentials, raw tool configuration or hidden authority from
+  a provider journal, and do not fabricate another owner’s conversation records.
+- Existing background enablement controls whether asynchronous work is allowed. It is not a
+  promise of instant inference. Worker models, efforts and fallbacks remain independently
+  configurable; A through N are examples subject to actual capacity and authorization.
+- Stream eligible conversational words into the existing TTS path as they arrive. Internal
+  maintenance and status remain silent. A worker result must not hold an unrelated conversational
+  answer; only necessary action acceptance or an actual answer dependency can gate that answer.
+- Compare the exact provider request, model, effort, context, tools and output contract before
+  blaming a cold process or transport. Separate time to first raw model text, time to accepted
+  work, time to eligible spoken text and time to received active audio. A plain one-tool microprobe
+  without the cognitive context is diagnostic, not parity acceptance. Report sample count and
+  arithmetic mean per stage; do not fabricate stage averages from one successful run.
+
+Provider effort names are not interchangeable. Grok 4.7 cannot disable reasoning; `low` still
+reasons and `none` is rejected. GPT 6.1 Sol and Opus 5.5 also do not offer disabled reasoning.
+Never label Low as Off or silently substitute a different model. A request to turn thinking off
+requires a supported explicit model choice. Keep worker effort independent from Queen effort.
+
+Prepared-context latency has two separate measurements: building the report once, and processing
+the already prepared input on each model request. Record the input size by owned layer and the
+provider's input, cache and reasoning usage. A two-tool diagnostic can still be slow with a large
+history and conflicting output instructions. Cached input does not guarantee immediate speech.
+Remove a repeated context body only when stable source identity and exact admitted content prove
+that the retained representation covers it; preserve other-thread sources and durable originals.
+
+The latency objective remains useful speech within two seconds after user speech ends. Direct
+execution, preparation, warm executors and provider caching are separate levers, not proof that
+this objective is met. Parameter experiments must remain explicit and preserve action quality,
+context, memory, Feelings and worker capability. The exact observed configuration and incomplete
+acceptance gates belong in the corresponding dated QA report.
+
+Historical retrieval evidence must survive the shared history formatter when it is the only
+content of a settled assistant row. Carry exact bound source data with an explicit untrusted-data
+notice in both provider history and its integrity digest. It is neither an assistant answer nor
+proof that preparation completed, and grants no current file access. Keep normal context budgets
+and ownership checks. A completed report retains its existing authored representation; do not
+append raw retrieval to every successful report as a new latency cost. This rule repairs blank
+retrieval-bearing history, not a new context-building pipeline.
+
 ### Worker controls
 
 - **PW-050:** In a normal Voice Call, Main remains available and may perform explicit authorized

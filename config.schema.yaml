@@ -408,7 +408,7 @@ properties:
         type: string
       prebuild_context:
         type: object
-        description: Opt-in context gathering by the normal Main before the call's Voice endpoint responds.
+        description: Opt-in context gathering by Main or its explicit preparation route before the call's Voice endpoint responds.
         properties:
           enabled:
             type: boolean
@@ -422,6 +422,21 @@ properties:
             minimum: 1
             maximum: 600
             default: 120
+          execution:
+            type: object
+            additionalProperties: false
+            description: Optional exact preparation route, independent of the speaking Queen. Native fallback remains in the configured agent's existing harness options.
+            required: [provider, model, reasoning_effort]
+            properties:
+              provider:
+                type: string
+                minLength: 1
+              model:
+                type: string
+                minLength: 1
+              reasoning_effort:
+                type: string
+                minLength: 1
       fast_llm_provider:
         type: string
         description: Legacy ignored field. Voice-call LLM selection comes from the agent's explicit Voice Call LLM fields, otherwise the agent primary LLM is used.

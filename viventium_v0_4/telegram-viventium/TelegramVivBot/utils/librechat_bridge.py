@@ -70,6 +70,12 @@ logger = logging.getLogger(__name__)
 TELEGRAM_CALLBACK_INTERRUPTED_NOTICE = (
     "I couldn't finish delivering that response. Please try again."
 )
+TELEGRAM_FOREGROUND_CANCEL_HINT = (
+    "Use /cancel to release the earlier reply, then send your message again."
+)
+TELEGRAM_FOREGROUND_CANCEL_UNAVAILABLE = (
+    "I could not verify an earlier reply to cancel in this chat."
+)
 
 
 @dataclass(frozen=True)
@@ -1430,6 +1436,7 @@ _STRUCTURED_STREAM_ERROR_MESSAGES = {
     "provider_response_deadline_exceeded": (
         "The model response exceeded this turn's configured deadline and was stopped. Please retry the turn."
     ),
+    "provider_progress_stalled": "The model needs attention because progress stopped.",
     "provider_temporarily_unavailable": (
         "The model provider is temporarily unavailable. Please try again shortly."
     ),
@@ -2025,6 +2032,8 @@ class LibreChatBridge:
         self._pending_stream_errors: dict[str, dict[str, str]] = {}
         self._insight_task_by_stream: dict[str, asyncio.Task] = {}
         self._response_message_ids: dict[str, str] = {}
+        # This is a short-lived, owner/chat/thread-bound capability cache, never a latest-work lookup.
+        self._foreground_attention_by_chat: dict[str, dict[str, Any]] = {}
         self._conversation_by_stream: dict[str, str] = {}
         self._followup_task_by_stream: dict[str, asyncio.Task] = {}
         self._followup_sent: set[str] = set()
@@ -3683,6 +3692,140 @@ class LibreChatBridge:
             params["telegramUsername"] = username
         return params
 
+    def _prune_foreground_attention(self) -> None:
+        now = time.time()
+        self._foreground_attention_by_chat = {
+            key: value for key, value in self._foreground_attention_by_chat.items()
+            if value["expires_at"] > now
+        }
+        while len(self._foreground_attention_by_chat) > 256:
+            self._foreground_attention_by_chat.pop(next(iter(self._foreground_attention_by_chat)))
+
+    @staticmethod
+    def _foreground_attention_response_id(payload: Any) -> str:
+        if not isinstance(payload, dict):
+            return ""
+        attention = payload.get("foregroundAttention")
+        if attention is None:
+            response = payload.get("responseMessage")
+            metadata = response.get("metadata") if isinstance(response, dict) else None
+            viventium = metadata.get("viventium") if isinstance(metadata, dict) else None
+            attention = viventium.get("foregroundAttention") if isinstance(viventium, dict) else None
+        if not isinstance(attention, dict) or type(attention.get("version")) is not int or attention["version"] != 1:
+            return ""
+        response_id = attention.get("responseMessageId")
+        return response_id if isinstance(response_id, str) and 0 < len(response_id) <= 256 and response_id.strip() == response_id else ""
+
+    async def _get_foreground_attention(
+        self, response_message_id: str, identity: dict[str, str],
+    ) -> Optional[dict[str, Any]]:
+        if not self.base_url or not self.secret or not identity.get("telegramUserId") or not identity.get("telegramChatId"):
+            return None
+        url = f"{self.base_url}/api/viventium/telegram/foreground/{urllib.parse.quote(response_message_id, safe='')}/attention"
+        try:
+            async with httpx.AsyncClient(timeout=10.0, **_async_client_options_for_url(url)) as client:
+                response = await client.get(url, params=identity, headers={"X-VIVENTIUM-TELEGRAM-SECRET": self.secret})
+            if response.status_code != 200:
+                return None
+            data = response.json()
+            if (not isinstance(data, dict) or type(data.get("version")) is not int or data["version"] != 1
+                    or data.get("action") != "cancel" or data.get("responseMessageId") != response_message_id
+                    or not isinstance(data.get("receipt"), str) or not re.fullmatch(r"[a-f0-9]{64}", data["receipt"])):
+                return None
+            expiry = self._glasshive_dispatch_permit_expiry(data)
+            now = time.time()
+            if expiry is None or expiry.timestamp() <= now:
+                return None
+            return {"response_message_id": response_message_id, "receipt": data["receipt"],
+                    "identity": dict(identity), "expires_at": min(now + 900.0, expiry.timestamp())}
+        except Exception as exc:
+            logger.warning("Telegram foreground attention verification unavailable: %s", type(exc).__name__)
+            return None
+
+    async def _foreground_failure_event(
+        self, message: str, *, error_class: str, payload: Any, chat_id: str,
+        stream_id: str = "", identity: Optional[dict[str, str]] = None,
+        source_sequence: str = "",
+    ) -> dict[str, Any]:
+        event = _bridge_error_event(message, speak=False, error_class=error_class or None)
+        if error_class != "provider_progress_stalled":
+            return event
+        if identity is None:
+            identity = self._get_identity_params(stream_id)
+            identity["telegramMessageThreadId"] = str(self._stream_identity.get(stream_id, {}).get("telegram_message_thread_id") or "")
+            if self._conversation_by_stream.get(stream_id):
+                identity["conversationId"] = self._conversation_by_stream[stream_id]
+        response_id = self._foreground_attention_response_id(payload) or self._response_message_ids.get(stream_id, "")
+        if not response_id:
+            return event
+        attention = await self._get_foreground_attention(response_id, identity)
+        if attention is None:
+            return event
+        attention["source_sequence"] = str(source_sequence or self._stream_identity.get(stream_id, {}).get("telegram_message_id") or "")
+        self._prune_foreground_attention()
+        self._foreground_attention_by_chat.pop(str(chat_id), None)
+        self._foreground_attention_by_chat[str(chat_id)] = attention
+        self._prune_foreground_attention()
+        event["text"] = f"{message} {TELEGRAM_FOREGROUND_CANCEL_HINT}"
+        event["foreground_cancel_available"] = True
+        return event
+
+    async def cancel_foreground(
+        self, convo_id: str, *, telegram_user_id: str, telegram_chat_id: str,
+        telegram_message_thread_id: str = "", operation_id: str,
+    ) -> str:
+        self._prune_foreground_attention()
+        cached = self._foreground_attention_by_chat.get(str(convo_id))
+        expected = {"telegramUserId": str(telegram_user_id or ""), "telegramChatId": str(telegram_chat_id or ""),
+                    "telegramMessageThreadId": str(telegram_message_thread_id or "")}
+        if (not cached or not operation_id or not all(expected[key] == cached["identity"].get(key, "") for key in expected)):
+            return TELEGRAM_FOREGROUND_CANCEL_UNAVAILABLE
+        attention = await self._get_foreground_attention(cached["response_message_id"], cached["identity"])
+        if attention is None:
+            return TELEGRAM_FOREGROUND_CANCEL_UNAVAILABLE
+        url = f"{self.base_url}/api/viventium/telegram/foreground/{urllib.parse.quote(cached['response_message_id'], safe='')}/cancel"
+        try:
+            async with httpx.AsyncClient(timeout=10.0, **_async_client_options_for_url(url)) as client:
+                response = await client.post(url, params=cached["identity"],
+                    json={"receipt": attention["receipt"], "operationId": operation_id},
+                    headers={"X-VIVENTIUM-TELEGRAM-SECRET": self.secret})
+            if response.status_code != 200:
+                return "The earlier reply could not be cancelled. Please try /cancel again."
+            data = response.json()
+            if (not isinstance(data, dict) or type(data.get("version")) is not int or data["version"] != 1
+                    or type(data.get("capacityReleased")) is not bool
+                    or data.get("state") not in {"cancelled", "already_cancelled", "already_completed", "pending"}):
+                return "Cancellation could not be confirmed. Please try /cancel again."
+            state = data.get("state")
+            if state == "already_completed":
+                if self._foreground_attention_by_chat.get(str(convo_id)) is cached:
+                    self._foreground_attention_by_chat.pop(str(convo_id), None)
+                return "The earlier reply has already completed. Send your message again."
+            if state in {"cancelled", "already_cancelled"} and data["capacityReleased"] is True:
+                if self._foreground_attention_by_chat.get(str(convo_id)) is cached:
+                    self._foreground_attention_by_chat.pop(str(convo_id), None)
+                return "The earlier reply was cancelled and its capacity was released. Send your message again."
+            return "Cancellation is still pending. Capacity release is not confirmed. Try /cancel again shortly."
+        except Exception as exc:
+            logger.warning("Telegram foreground cancellation unavailable: %s", type(exc).__name__)
+            return "Cancellation could not be confirmed. Please try /cancel again."
+
+    def _clear_foreground_attention_on_success(self, chat_id: str, stream_id: str) -> None:
+        cached = self._foreground_attention_by_chat.get(str(chat_id))
+        if cached is None:
+            return
+        identity = self._stream_identity.get(stream_id, {})
+        if (str(identity.get("telegram_chat_id") or "") != cached["identity"].get("telegramChatId")
+                or str(identity.get("telegram_user_id") or "") != cached["identity"].get("telegramUserId")
+                or str(identity.get("telegram_message_thread_id") or "") != cached["identity"].get("telegramMessageThreadId")):
+            return
+        try:
+            newer = int(identity.get("telegram_message_id") or 0) >= int(cached.get("source_sequence") or 0)
+        except (ValueError, TypeError):
+            newer = False
+        if newer:
+            self._foreground_attention_by_chat.pop(str(chat_id), None)
+
     def _stream_voice_mode(self, stream_id: Optional[str]) -> bool:
         if not stream_id:
             return False
@@ -4392,7 +4535,25 @@ class LibreChatBridge:
                     type(exc).__name__,
                     getattr(getattr(exc, "response", None), "status_code", ""),
                 )
-                yield _bridge_error_event(_start_chat_error_message(exc), speak=False)
+                error_payload = None
+                if isinstance(exc, httpx.HTTPStatusError):
+                    try:
+                        error_payload = exc.response.json()
+                    except Exception:
+                        pass
+                error_class = extract_final_error_class(error_payload) if isinstance(error_payload, dict) else ""
+                if error_class == "provider_progress_stalled":
+                    identity = {"telegramUserId": str(telegram_user_id), "telegramChatId": str(telegram_chat_id),
+                                "telegramMessageThreadId": str(telegram_message_thread_id or "")}
+                    if conversation_id and conversation_id != "new":
+                        identity["conversationId"] = conversation_id
+                    yield await self._foreground_failure_event(
+                        _stream_error_message(None, error_class=error_class), error_class=error_class,
+                        payload=error_payload, chat_id=chat_id, identity=identity,
+                        source_sequence=str(telegram_message_id),
+                    )
+                else:
+                    yield _bridge_error_event(_start_chat_error_message(exc), speak=False)
                 return
             if not session:
                 return
@@ -5019,10 +5180,10 @@ class LibreChatBridge:
                                     error_class or "unstructured",
                                 )
                                 self._mark_stream_final(stream_id)
-                                yield _bridge_error_event(
+                                yield await self._foreground_failure_event(
                                     _stream_error_message(err, error_class=error_class or None),
-                                    speak=False,
-                                    error_class=error_class or None,
+                                    error_class=error_class, payload=payload,
+                                    stream_id=stream_id, chat_id=chat_id,
                                 )
                                 return
 
@@ -5156,13 +5317,16 @@ class LibreChatBridge:
                                         stream_id,
                                         final_error_class or "unstructured",
                                     )
-                                    yield _bridge_error_event(
+                                    yield await self._foreground_failure_event(
                                         public_error,
-                                        speak=False,
-                                        error_class=final_error_class or None,
+                                        error_class=final_error_class, payload=payload,
+                                        stream_id=stream_id, chat_id=chat_id,
                                     )
                                     return
                                 # === VIVENTIUM END ===
+
+                                if emitted_text or final_text or emitted_attachments or has_final_attachments or quiet_native_final:
+                                    self._clear_foreground_attention_on_success(chat_id, stream_id)
 
                                 # Retain the existing detached-writer observer; its receipt is
                                 # diagnostic metadata and never assistant text or audio.

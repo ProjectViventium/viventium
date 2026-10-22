@@ -585,15 +585,17 @@ from pathlib import Path
 import sys
 
 sys.path.insert(0, str(Path(sys.argv[1]) / "scripts" / "viventium"))
-from preflight import DEFAULT_DOCKER_READINESS_TIMEOUT_SECONDS, run_checked
+from host_cli_auth import run_status
 
-result = run_checked(
+# This ownership check needs only the existing bounded subprocess helper.
+# Do not import full provider preflight during local service adoption.
+result = run_status(
     ["docker", "ps",
      "--filter", "label=viventium.stack=viventium_v0_4",
      "--filter", "label=viventium.service=meilisearch",
      "--filter", "publish=" + sys.argv[2],
      "--format", "{{.Names}}"],
-    timeout_seconds=DEFAULT_DOCKER_READINESS_TIMEOUT_SECONDS,
+    timeout_seconds=3.0,
 )
 if result.returncode == 0:
     print(result.stdout, end="")

@@ -69,10 +69,19 @@ unresolved owner, surface, seam, and planned acceptance mappings remain open unt
 
 The [Direct Queen action-handoff report](../qa/voice/reports/2026-10-17-direct-queen-action-handoff.md)
 records the later Voice configuration repair, real action workers, Stop, file delivery and user
-acceptance. It preserves High effort and keeps optional preparation off; fast-response performance
-remains unresolved. This is a tested local configuration, not a new global default.
+acceptance. Its High-effort and preparation-off observations are historical; later fast-Queen
+configuration and measurements are recorded separately below.
 
-Latest scoped native reply-completion, worker/Steer, received Voice audio, file/reload and
+The [prepared Direct Queen report](../qa/voice/reports/2026-10-21-prepared-direct-queen.md#r22-shared-direct-main-loaded-cross-channel-checks)
+retains later cloud/local benchmarks, typed-output checks, loaded Steer repair and current Grok
+Voice samples, with exact clock and acceptance limits. Its native-Main baseline is distinct from
+loaded shared-Direct Main checks; the latter separate the repaired shared-server stall from
+remaining provider and Direct-startup latency. Raw requests and private evidence stay private.
+The [Should / fixes · Direct Queen flow](requirements_and_learnings/capabilities/voice.md#should--fixes--direct-queen)
+extends the approved continuous relationship with ordered input, shared context, workers A … N and
+one presenter across Text, Telegram and Voice. A target diagram does not certify readiness.
+
+Earlier scoped native reply-completion, worker/Steer, received Voice audio, file/reload and
 memory-recovery results are in the
 [2026-10-17 acceptance report](../qa/voice/reports/2026-10-17-native-continuation-and-memory-recovery.md).
 It records successful functional paths and the unmet fast-voice target. The

@@ -13027,7 +13027,7 @@ ensure_restart_livekit_prerequisite() {
       log_error "Restart refused: configured LiveKit endpoint is unavailable. Repair LIVEKIT_API_HOST and retry; current services were kept."
       return 1
     fi
-  elif [[ "$SKIP_DOCKER" == "true" ]] || ! docker_daemon_ready; then
+  elif [[ "$SKIP_DOCKER" == "true" ]] || ! ensure_docker_daemon_for_service "LiveKit"; then
     log_error "Restart refused: managed LiveKit requires Docker. Start Docker Desktop and retry; current services were kept."
     return 1
   fi

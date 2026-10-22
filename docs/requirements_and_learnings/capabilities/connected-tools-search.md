@@ -5,6 +5,14 @@
 Main and supported clients can use the owner's authorized tools and current-information search and
 can explain whether a result is empty, unavailable, blocked, or successful.
 
+## Forward development boundary
+
+xPerfectAI owns harness, agent and worker management going forward. Retain existing LibreChat
+connection settings as legacy state. Exclude LibreChat-specific connection selectors, OAuth
+administration and Connected Accounts handoff improvements from new QA and development. Do not
+sync or expand those selections as part of xPerfect work. This boundary does not remove existing
+connections or waive owner authorization and capability parity in xPerfect.
+
 ## Cross-client access
 
 - **GOV-027:** Supported non-LibreChat agents and clients discover and use Scheduling and GlassHive

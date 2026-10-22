@@ -161,6 +161,13 @@ means one durable GlassHive mission root. These names do not add another runtime
 memory store, tool plane, or orchestration system. Technical detail in this document may strengthen
 this contract but must not weaken it.
 
+The [Should / fixes · Direct Queen flow](capabilities/voice.md#should--fixes--direct-queen) is the
+shared visual contract for the configured fast conversational Queen and native workers A … N.
+It retains this document's A/B/C ordering, exact work controls and one Main. Viventium carries
+input/context/presentation; xPerfect owns execution. Direct is an executor option for that same
+Queen, not a second manager. Original conversation sources are inherited through existing readers,
+not rewritten into a Queen-authored task brief. Current acceptance remains in dated QA reports.
+
 ### 1. Roles
 
 - **Queen Bee:** one Viventium Main. It is the only manager and speaking personality.
@@ -424,8 +431,13 @@ B produced the requested restart/callback checklist. The escaped contracts are s
   and notes-directory names cannot establish missing work or produce a completion warning for the
   user. The artifact inventory remains workspace-scoped; it must not scan arbitrary host paths to
   infer whether an authorized native app action succeeded. Exact run/evidence identity, structured
-  failures, explicit typed output formats, document integrity and actual authority boundaries remain
-  enforced on live completion and restart recovery. The model is not required to author an internal
+  failures, explicit typed output formats, run-owned document integrity and actual authority boundaries remain
+  enforced on live completion and restart recovery. Document integrity applies to isolated-workspace
+  outputs and selected delivered files. A shared/native workspace inventory cannot establish run
+  ownership: unrelated invalid documents remain private evidence only, never failure status or
+  text appended to the native reply. Existing typed format checks retain their workspace inventory
+  scope; they do not prove that the current run authored a matching file.
+  The model is not required to author an internal
   ledger. Evidence writes publish complete JSON atomically, and completion consumers retain the
   exact per-run path while the latest alias can advance independently to a subsequent run.
 - When an exact Retry replacement is still queued and Message arrives before it begins, Store replaces
@@ -1122,7 +1134,17 @@ destinations and current account mapping, then creates one idempotent delivery r
   by the dispatched runtime. A late event from an older attempt, an event without that identity, or
   an event whose exact lease has expired is rejected; it is never rebound to the current attempt.
   Only exact typed native progress and retry events count; reasoning text, provider prose, unknown
-  events, and failed or rate-limited terminal events do not. Three classified internal retries
+  events, and failed or rate-limited terminal events do not. Codex's generic top-level `error`
+  diagnostics and completed `error` items are not typed retry events. They neither consume the
+  host retry budget nor refresh meaningful progress; native connection recovery and transport
+  fallback may finish under the unchanged operator deadline and no-progress watchdog.
+  Provider response-deadline cleanup remains bound to the expired run's recorded native
+  generation even when a never-invoked queued successor becomes the worker's latest run.
+  The Store rechecks successor execution history, native startup, active leases, restore holds,
+  ownership and control fences when claiming and finalizing cleanup. An invoked replacement
+  stays protected. Repeated activity reconciliation may retry unconfirmed cleanup for the
+  already-failed request without changing failed history, queued work, or saved native context.
+  Three classified internal retries
   without later meaningful progress, or
   15 minutes without meaningful progress, atomically closes the live attempt and lease, releases
   compute, preserves the workspace/session/route, and keeps the wire state `needs_input`. User

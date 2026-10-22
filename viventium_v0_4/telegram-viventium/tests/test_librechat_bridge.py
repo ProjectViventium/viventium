@@ -2220,6 +2220,10 @@ async def test_stream_response_reports_expired_stream_as_non_spoken_bridge_error
 @pytest.mark.parametrize(
     ("payload", "expected", "error_class"),
     [
+        ({"_sse_event": "error", "error": "synthetic-private-diagnostic", "error_class": "provider_progress_stalled"},
+         "The model needs attention because progress stopped.", "provider_progress_stalled"),
+        ({"_sse_event": "error", "error": {"message": "synthetic-private-diagnostic", "code": "provider_progress_stalled"}},
+         "The model needs attention because progress stopped.", "provider_progress_stalled"),
         ({"_sse_event": "error", "error": "synthetic-private-diagnostic", "error_class": "source_context_unavailable"},
          "The conversation context could not be preserved. Please retry this turn.", "source_context_unavailable"),
         ({"_sse_event": "error", "error": {"message": "synthetic-private-diagnostic", "code": "provider_quota_exhausted"}},

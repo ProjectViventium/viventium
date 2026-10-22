@@ -8,6 +8,7 @@ import os
 import shutil
 import socket
 import sqlite3
+import stat
 import subprocess
 import sys
 import time
@@ -801,6 +802,37 @@ def cli_operation_running(runtime_dir: Path | None) -> bool:
     return True
 
 
+def runtime_start_claim_running(runtime_dir: Path | None, repo_root: Path | None) -> bool:
+    """Observe the launcher's existing private, fresh, checkout-bound startup claim."""
+    if runtime_dir is None or repo_root is None:
+        return False
+    claim = runtime_dir.parent / "state" / "runtime" / "startup-in-progress"
+    try:
+        identity = claim.lstat()
+        if (not stat.S_ISREG(identity.st_mode) or identity.st_uid != os.getuid()
+                or identity.st_nlink != 1 or identity.st_mode & 0o077):
+            return False
+        lines = claim.read_text(encoding="utf-8").splitlines()
+        pid, owner_repo, created_at = int(lines[0]), Path(lines[1]), int(lines[2])
+        if pid <= 0 or owner_repo.resolve() != repo_root.resolve():
+            return False
+        age = time.time() - created_at
+        return 0 <= age <= 1800 and str(repo_root.resolve() / "bin" / "viventium") in process_command_line(pid)
+    except (OSError, ValueError, IndexError):
+        return False
+
+
+def runtime_startup_in_progress(runtime_dir: Path | None, repo_root: Path | None) -> bool:
+    if runtime_dir is not None and cli_operation_running(runtime_dir):
+        try:
+            command = (runtime_dir.parent / "state" / "cli-operation.lock" / "command").read_text().strip().lower()
+        except OSError:
+            command = ""
+        if command in {"install", "start", "launch", "upgrade", "update"}:
+            return True
+    return runtime_start_claim_running(runtime_dir, repo_root)
+
+
 def recent_log_text(path: Path, *, max_bytes: int = 65536) -> str:
     try:
         with path.open("rb") as handle:
@@ -1529,7 +1561,7 @@ def build_service_rows(
     express_experience = install_experience == "express"
     livekit_url = runtime_env.get("LIVEKIT_URL", "ws://localhost:7880")
     stack_should_be_live = stack_expected_live(config, runtime_env, runtime_dir)
-    startup_in_progress = cli_operation_running(runtime_dir)
+    startup_in_progress = runtime_startup_in_progress(runtime_dir, repo_root)
     remote_status, remote_detail = remote_access_status_and_detail(
         config,
         runtime_env,
@@ -1597,7 +1629,7 @@ def build_service_rows(
         else False
     )
     missing_core_status = (
-        "Starting"
+        ("Starting" if startup_in_progress else "Action Required")
         if probe_live and stack_should_be_live
         else "Configured"
     )
@@ -2030,6 +2062,17 @@ def resolve_summary_heading(
             "Viventium is configured",
             "The table below shows the services this install is set up to run. Start the stack when you want the local surfaces live on this Mac.",
             "Configured Services",
+        )
+
+    if any(
+        status == "Action Required"
+        for name, status, _detail in rows
+        if name in {"LibreChat Frontend", "LibreChat API", "Modern Playground"}
+    ):
+        return (
+            "Viventium needs attention",
+            "Required local services are unavailable. Check the service status below.",
+            "Live Services",
         )
 
     return (

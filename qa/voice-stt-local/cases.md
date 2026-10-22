@@ -17,6 +17,7 @@ public-safe (macOS `say`). Expected outcomes are the quality bar in `README.md`.
 | STT-L-10 | Authored acknowledgement | Genuine short thanks/okay/yes/bye speech through the call adapter | Native words reach the final transcript; empty results and errors remain distinct | deleting text by phrase matching |
 | STT-L-11 | Brief speech and no-speech controls | Brief acknowledgements, quiet/accented/paused speech, digital silence, noise and instrumental audio | Shared 0.1s minimum speech accepts brief input; explicit overrides win; tested non-speech produces no final | a local-only 0.35s default dropping recognisable brief speech; loss of quiet words or paused tail |
 | STT-L-12 | One authored request stays once | One synthetic request through the normal call; exact received PCM and native float32 retained privately when diagnosing a failure | One complete native request and final transcript; full `audio_ctx=0` explicitly resets every cached call and prewarm | repeated native text from compact context; hiding repetition with transcript filtering |
+| STT-L-13 | Consequential negation | Clean synthetic speech: “Prepare two notes and keep both unsent. Do not send anything.” | The final transcript preserves the negation; uncertainty never expands action authority. Compare full native waveform and actual call-adapter output. | silently turning “unsent” into “on send”; phrase replacement or a silent provider switch to hide the error |
 
 ## Natural User Use Case Checklist
 
@@ -44,3 +45,8 @@ public-safe (macOS `say`). Expected outcomes are the quality bar in `README.md`.
 ## Last run
 - 2026-05-30 — `reports/2026-05-30-retry-fallback-cap.md` (STT-L-01…07,09 PASS; **STT-L-08 FAILED gate
   → retry-cap rejected, not shipped as default**). Local STT left as-is; no safe speed win.
+
+
+### STT-L-13 reproduction and limits
+
+Generate a public-safe clip with the existing synthetic-speech fixture method. Use the selected local provider through the normal call and compare its persisted user transcript with the authored words. If it differs, retain that failure and use the existing native decoder on the same waveform to separate model recognition from call/VAD transport. A supported hosted provider can be tested only as an explicit test selection; preserve the saved local-first default. Record missing credentials honestly. No keyword correction or complaint-specific runtime branch is an acceptable repair.

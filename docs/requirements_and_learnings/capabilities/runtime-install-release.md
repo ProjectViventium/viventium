@@ -71,6 +71,11 @@ internals.
   `--no-start` opens the helper with stopped intent. External Stop retires its supervisor before
   recording stopped intent, and queued automatic starts honor it under the same lifecycle lock.
   Menu Stop keeps the app's Start control available; reopening a hidden app offers to show its menu.
+- Restart checks managed LiveKit's Docker prerequisite before stopping the current services. If
+  Docker Desktop is stopped, the existing automatic launch and bounded readiness wait run first.
+  Without a configured external LiveKit endpoint, unavailable or explicitly skipped Docker stops
+  restart and preserves the current services. An unavailable configured external endpoint also
+  stops restart without an implicit fallback.
 
 ### Developer install presentation
 

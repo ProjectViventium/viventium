@@ -539,6 +539,28 @@ def test_glasshive_runtime_provider_env_receives_deployment_route_only(tmp_path:
     ).stat().st_mode & 0o777 == 0o600
 
 
+@pytest.mark.parametrize("security_mode", ["multi_user", "legacy_compatibility"])
+def test_direct_openai_deployment_secret_is_runtime_only(tmp_path: Path, security_mode: str) -> None:
+    env = {
+        "GLASSHIVE_SECURITY_MODE": security_mode,
+        "OPENAI_API_KEY": "synthetic-native-key",
+        "WPR_OPENAI_API_KEY": "synthetic-direct-key",
+        "WPR_OPENAI_BASE_URL": "https://fixture.openai.azure.com/openai/v1",
+    }
+    config_compiler.render_service_envs(tmp_path, env)
+    service_dir = tmp_path / "service-env"
+    provider = (service_dir / "glasshive-runtime-provider.env").read_text()
+    for key in ("WPR_OPENAI_API_KEY", "WPR_OPENAI_BASE_URL"):
+        assert key in config_compiler.GLASSHIVE_OPENAI_PROVIDER_ENV_KEYS
+        assert key not in config_compiler.GLASSHIVE_ANTHROPIC_PROVIDER_ENV_KEYS
+        assert f"{key}={env[key]}" in provider
+        assert key not in (service_dir / "glasshive-runtime.env").read_text()
+        assert key not in (service_dir / "glasshive-gateway.env").read_text()
+        assert key not in (service_dir / "librechat.env").read_text()
+    assert env["OPENAI_API_KEY"] == "synthetic-native-key"
+    assert (service_dir / "glasshive-runtime-provider.env").stat().st_mode & 0o777 == 0o600
+
+
 def test_glasshive_runtime_env_filters_placeholder_and_non_enterprise_provider_values(
     tmp_path: Path,
 ) -> None:
@@ -2102,10 +2124,10 @@ def test_main_agent_voice_profile_preserves_recall_capable_primary_and_independe
     main_agent = load_source_of_truth_agents_bundle()["mainAgent"]
 
     assert main_agent["voice_llm_provider"] == "glasshive-harness"
-    assert main_agent["voice_llm_model"] == "grok-build:grok-4.7-build-fast"
+    assert main_agent["voice_llm_model"] == "direct-xai:grok-4.7"
     assert main_agent["voice_llm_model_parameters"] == {
-        "model": "grok-build:grok-4.7-build-fast",
-        "reasoning_effort": "high",
+        "model": "direct-xai:grok-4.7",
+        "reasoning_effort": "low",
     }
     assert main_agent["voice_fallback_llm_provider"] == "glasshive-harness"
     assert main_agent["voice_fallback_llm_model"] == "claude-code:claude-opus-5-5"
@@ -12094,6 +12116,8 @@ def test_native_harness_workspace_is_provisioned_without_life_selection() -> Non
     assert compiled["mainAgent"]["model"] == "codex-cli:gpt-6.1-sol"
     assert compiled["mainAgent"]["model_parameters"]["reasoning_effort"] == "high"
 
+    assert compiled["mainAgent"]["glasshive_options"]["orchestration"]["tool_mode"] == "coordination"
+
 
 def test_native_harness_preserves_explicit_custom_workspace(monkeypatch) -> None:
     config = minimal_compile_config()
@@ -12265,6 +12289,50 @@ def test_call_preparation_default_is_inactive_and_does_not_reconfigure_main(tmp_
     assert env["VIVENTIUM_VOICE_PREBUILD_CONTEXT_ENABLED"] == "false"
     assert env["VIVENTIUM_VOICE_PREBUILD_CONTEXT_TIMEOUT_S"] == "120"
     assert assignments == before
+    assert "VIVENTIUM_VOICE_PREBUILD_CONTEXT_EXECUTION" not in env
+
+
+def test_call_preparation_route_is_explicit_validated_and_reaches_core(tmp_path, monkeypatch):
+    monkeypatch.setenv("VIVENTIUM_APP_SUPPORT_DIR", str(tmp_path / "app-support"))
+    config = minimal_compile_config()
+    config["integrations"]["glasshive"] = {"enabled": True, "provider": {"enabled": True}}
+    execution = {"provider": "glasshive-harness", "model": "codex-cli:gpt-6.1-sol", "reasoning_effort": "high"}
+    config["voice"]["prebuild_context"] = {"enabled": True, "execution": execution}
+    assignments = config_compiler.build_agent_assignments(config)
+    before = copy.deepcopy(assignments)
+
+    env = config_compiler.render_runtime_env(config, assignments)
+    assert json.loads(env["VIVENTIUM_VOICE_PREBUILD_CONTEXT_EXECUTION"]) == execution
+    config_compiler.render_service_envs(tmp_path, env)
+    core = config_compiler.parse_env_file(tmp_path / "service-env" / "librechat.env")
+    assert core["VIVENTIUM_VOICE_PREBUILD_CONTEXT_EXECUTION"] == env["VIVENTIUM_VOICE_PREBUILD_CONTEXT_EXECUTION"]
+    assert assignments == before
+
+
+@pytest.mark.parametrize("execution", [
+    {"provider": "glasshive-harness", "model": "codex-cli:gpt-6.1-sol"},
+    {"provider": "glasshive-harness", "model": "undeclared", "reasoning_effort": "high"},
+    {"provider": "glasshive-harness", "model": "codex-cli:gpt-6.1-sol", "reasoning_effort": "none"},
+    {"provider": "glasshive-harness", "model": "claude-code:claude-opus-5-5", "reasoning_effort": "default"},
+    {"provider": "not-declared", "model": "some-model", "reasoning_effort": "high"},
+    {"provider": "glasshive-harness", "model": "codex-cli:gpt-6.1-sol", "reasoning_effort": "high", "fallback": {}},
+])
+def test_call_preparation_route_rejects_missing_or_unsupported_configuration(execution):
+    config = minimal_compile_config()
+    config["integrations"]["glasshive"] = {"enabled": True, "provider": {"enabled": True}}
+    config["voice"]["prebuild_context"] = {"execution": execution}
+    with pytest.raises(SystemExit, match="voice.prebuild_context.execution"):
+        config_compiler.resolve_call_preparation_execution(config)
+
+
+def test_call_preparation_route_cannot_select_an_unavailable_provider():
+    config = minimal_compile_config()
+    config["integrations"]["glasshive"] = {"enabled": False}
+    config["voice"]["prebuild_context"] = {"execution": {
+        "provider": "glasshive-harness", "model": "codex-cli:gpt-6.1-sol", "reasoning_effort": "high",
+    }}
+    with pytest.raises(SystemExit, match="available main-chat capability"):
+        config_compiler.resolve_call_preparation_execution(config)
 
 
 def test_direct_xperfect_selectors_preserve_native_defaults() -> None:

@@ -525,6 +525,12 @@ def test_registered_telegram_ingress_and_control_handlers_are_nonblocking():
     assert application.handlers
     assert all(handler.block is False for handler in application.handlers)
     assert any(
+        isinstance(handler, tg_bot.CommandHandler)
+        and "cancel" in handler.commands
+        and handler.callback is tg_bot.cancel_foreground_reply
+        for handler in application.handlers
+    )
+    assert any(
         isinstance(handler, tg_bot.CallbackQueryHandler)
         and handler.callback is tg_bot.button_press
         for handler in application.handlers
@@ -6656,6 +6662,7 @@ def test_input_transcript_survives_typed_main_failure(monkeypatch, tmp_path):
 
 
 @pytest.mark.parametrize("error_class, expected", [
+    ("provider_progress_stalled", "The model needs attention because progress stopped."),
     ("source_context_unavailable", "The conversation context could not be preserved. Please retry this turn."),
     ("provider_auth_missing", "The configured model provider authentication is unavailable. Open Viventium in the browser, reconnect the AI provider, then retry."),
     ("unknown-private-diagnostic", "The model provider could not complete this request."),
@@ -6667,6 +6674,72 @@ def test_typed_failure_replaces_only_assistant_preview(monkeypatch, tmp_path, er
     assert _final_delivered_texts(context) == [expected]
     assert robot.acks == [("turn-1", 1, "failed", "telegram:111")]
     assert context.bot.audios == []
+
+
+@pytest.mark.parametrize("preview_text", ["", "Unfinished answer."])
+def test_verified_foreground_cancel_hint_survives_failed_preview(monkeypatch, tmp_path, preview_text):
+    monkeypatch.setenv("VIVENTIUM_TELEGRAM_RETRACTION_STORE_PATH", str(tmp_path / "retractions.sqlite3"))
+    class Robot(_TypedFailingMainStreamRobot):
+        async def ask_stream_async(self, *args, **kwargs):
+            async for event in super().ask_stream_async(*args, **kwargs):
+                if event.get("type") == "bridge_error":
+                    event.update(foreground_cancel_available=True,
+                        text="The model needs attention because progress stopped. " + tg_bot.TELEGRAM_FOREGROUND_CANCEL_HINT)
+                yield event
+    robot = Robot(preview_text, "provider_progress_stalled")
+    context = _run_failing_main_stream(monkeypatch, robot)
+    assert _final_delivered_texts(context) == [
+        "The model needs attention because progress stopped. " + tg_bot.TELEGRAM_FOREGROUND_CANCEL_HINT]
+    assert robot.acks == [("turn-1", 1, "failed", "telegram:111")]
+
+
+@pytest.mark.asyncio
+async def test_cancel_command_bypasses_model_and_uses_stable_scoped_operation(monkeypatch):
+    calls = []
+    class Robot:
+        async def cancel_foreground(self, *args, **kwargs):
+            calls.append((args, kwargs))
+            return "The earlier reply was cancelled and its capacity was released. Send your message again."
+        async def ask_stream_async(self, *_args, **_kwargs):
+            raise AssertionError("cancel must bypass the model")
+    robot = Robot()
+    for key in ("BLACK_LIST", "GROUP_LIST", "whitelist"):
+        monkeypatch.setattr(tg_bot.config, key, None)
+    monkeypatch.setattr(tg_bot.config, "VIVENTIUM_TELEGRAM_BACKEND", "librechat")
+    monkeypatch.setattr(tg_bot, "get_robot", lambda convo_id: (robot, None, None, None))
+    async def no_preparation(*_args, **_kwargs):
+        raise AssertionError("cancel must not prepare or transcribe input")
+    monkeypatch.setattr(tg_bot, "GetMesageInfo", no_preparation)
+    message = types.SimpleNamespace(chat_id=111, message_id=224, is_topic_message=True, message_thread_id=77)
+    update = types.SimpleNamespace(effective_message=message, effective_user=types.SimpleNamespace(id=9),
+                                   effective_chat=None, update_id=333)
+    context = _FakeContext()
+    context.args = []
+    await tg_bot.cancel_foreground_reply(update, context)
+    await tg_bot.cancel_foreground_reply(update, context)
+    assert len(calls) == 2
+    assert calls[0] == calls[1]
+    assert calls[0][0] == ("111:77:9",)
+    assert calls[0][1]["telegram_user_id"] == "9"
+    assert calls[0][1]["telegram_chat_id"] == "111"
+    assert calls[0][1]["telegram_message_thread_id"] == "77"
+    assert calls[0][1]["operation_id"].startswith("tg-cancel-")
+    assert context.bot.messages[0]["message_thread_id"] == 77
+    assert "capacity was released" in context.bot.messages[0]["text"]
+    context.args = ["foreign-response-id"]
+    await tg_bot.cancel_foreground_reply(update, context)
+    assert len(calls) == 2
+    assert context.bot.messages[-1]["text"] == "Use /cancel without arguments in the chat with the stalled reply."
+
+
+@pytest.mark.asyncio
+async def test_cancel_command_menu_is_registered(monkeypatch):
+    commands = []
+    class Bot:
+        async def set_my_commands(self, values): commands.extend(values)
+        async def set_my_description(self, _description): pass
+    await tg_bot._refresh_telegram_bot_metadata(types.SimpleNamespace(bot=Bot()))
+    assert any(command.command == "cancel" for command in commands)
 
 
 def test_typed_failure_pending_terminal_retains_class_across_restart(monkeypatch, tmp_path):
