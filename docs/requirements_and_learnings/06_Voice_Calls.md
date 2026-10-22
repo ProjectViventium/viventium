@@ -1480,7 +1480,7 @@ Same Core conversation does not imply the same native provider session: system/s
 
 ### Configurable Queen speed
 
-The existing Main, Voice and fallback endpoint controls may expose a **Speed** selector when the provider/model capability metadata declares supported tiers. GPT-6.1 Sol may explicitly use Low effort and Fast (`priority`) for a Queen experiment; omitted tier retains the user's/native default. Main/high, Voice Grok/high and configured Anthropic fallback/high defaults remain unchanged. Supported alternatives remain legal, and OpenCode is unchanged/backlogged.
+The existing Main, Voice and fallback endpoint controls may expose a **Speed** selector when the provider/model capability metadata declares supported tiers. GPT-6.1 Sol may explicitly use Low effort and Fast (`priority`) for a Queen experiment; omitted tier retains the user's/native default. Native Main/High, native worker/High and configured Anthropic fallback/High defaults remain unchanged. The current Voice default is xPerfect Direct xAI → Grok 4.7/Low with `tool_mode: coordination`; native Grok 4.7/High and supported Fast/High remain explicit alternatives. Direct uses separate API credentials and billing; Low does not disable reasoning. Supported alternatives remain legal, and OpenCode is unchanged/backlogged.
 
 A priority request or native acceptance echo does not prove the served tier. Record **NOT OBSERVED** unless the actual protocol exposes serving evidence. Benchmark exact configured endpoint/model/effort/tier, first and warm turns, EOU-to-first received/playable speech, context/tool/Feeling parity and useful output quality. The preparation option and speed selection are independent: use either or both without global route rewrites or a second Main.
 

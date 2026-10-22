@@ -1018,8 +1018,10 @@ preserve streaming. Two viable shapes, with a real trade-off:
 
 - Main Agent text defaults to `glasshive-harness / codex-cli:gpt-6.1-sol / high`.
   Its fallback is `glasshive-harness / claude-code:claude-opus-5-5 / high`.
-- Voice LLM defaults to `glasshive-harness / grok-build:grok-4.7-build-fast / high` where the
-  current native catalog supports Fast; standard Grok 4.7/high is the supported alternative.
+- Voice LLM defaults to `glasshive-harness / direct-xai:grok-4.7 / low`, using the Direct API
+  executor and `tool_mode: coordination`. Native Grok 4.7 and catalog-supported Grok 4.7 Fast
+  at High remain selectable alternatives. Direct API credentials and billing are separate from
+  native subscriptions; Low does not disable reasoning.
   Voice uses the same Opus 5.5/high harness fallback and must pass the same recall,
   tool-ownership, audible-delivery, and persistence gates as the main route. The TTS provider is
   selected separately and does not determine the Voice LLM.

@@ -58,9 +58,12 @@ This changes only deployment-managed Direct OpenAI execution. It must not replac
 OpenAI credential or send a selected personal account's credential to a custom deployment.
 The endpoint participates in the scoped history/cache identity. Default public OpenAI execution
 is unchanged when these settings are absent. Do not expose endpoint selection to conversation text.
-Keep this dedicated pair in the private provider environment. It is not part of the native-worker
-provider allowlist and must stay out of gateway and general runtime environment files. Core's
-native-worker allowlist must match xPerfect's projection contract.
+The generated `glasshive-gateway.env` and `glasshive-runtime.env` service files exclude this pair.
+The private `glasshive-runtime-provider.env` includes it. Core also writes resolved provider secrets
+to its private, mode-0600 `runtime.env`; the source-install launcher exports that aggregate environment
+to child services. These file projections do not provide process environment isolation.
+xPerfect strips `WPR_OPENAI_API_KEY` from native workers, even if an operator allowlist names it.
+Core's native-worker allowlist must match xPerfect's projection contract.
 
 Direct exposes only real configured tools. Native computer or shell work uses authorized MCP tools
 or the existing worker handoff. Shared context references do not imply free provider context or a

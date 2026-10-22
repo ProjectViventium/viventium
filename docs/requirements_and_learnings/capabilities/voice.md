@@ -53,11 +53,15 @@ Durable conversation work continues and generated speech alone never proves play
 
 LiveKit sends speech through the existing voice gateway and LibreChat agent route to the selected
 Voice Call LLM, or the Main LLM when no override is set. The Main source default uses
-xPerfect → Grok 4.7 at high effort for Voice, with xPerfect → Opus 5.5/high as its configured fallback.
+xPerfect Direct xAI → Grok 4.7 at Low effort with `tool_mode: coordination` for Voice, with
+xPerfect → Opus 5.5/High as its configured fallback. Direct uses an API key and separate API billing;
+Low does not disable reasoning. Native Grok 4.7 and catalog-supported Grok 4.7 Fast at High remain
+selectable alternatives.
 xPerfect serves as the text brain in this cascaded pipeline, with the same authorized harness
 actions and model/effort selection as other
 surfaces. Native realtime audio remains a separate capability; speech recognition and speech output
-remain separate from the LLM. Provider defaults are GPT-6.1 Sol, Opus 5.5, and Grok 4.7 at high effort.
+remain separate from the LLM. Native provider defaults are GPT-6.1 Sol, Opus 5.5, and Grok 4.7 at High;
+the Direct Voice default above is a separate role setting.
 Other supported models and efforts remain selectable. Grok 4.7 Fast uses the Grok Build harness,
 not the public xAI API. Owner-authorized call task controls use the same tool implementation through
 the signed native capability broker. They recheck the accepted turn authority before each call and
