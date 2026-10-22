@@ -3,6 +3,7 @@ capability: voice
 requirementOwner: docs/requirements_and_learnings/capabilities/voice.md
 statusPolicy: Run results belong in dated, candidate-bound reports.
 reports:
+  - qa/voice/reports/2026-10-21-prepared-direct-queen.md
   - qa/voice/reports/2026-10-17-native-continuation-and-memory-recovery.md
   - qa/voice/reports/2026-10-14-native-overhead-and-livekit-reference.md
   - qa/voice/reports/2026-10-14-fast-queen-and-call-context.md
@@ -113,7 +114,7 @@ journeys:
     requirements: [PW-050, PW-052, CORE-005]
     surfaces: [installed Voice Call, xPerfect Direct Queen, configured native workers, linked chat]
     userAction: Speak two independent ordinary action goals without naming a provider or tool, then ask a conversational question. Include one browser action and one downloadable artifact.
-    expectedResult: The Queen obtains distinct durable worker receipts through the existing broker. Configured worker models and fallback stay independent of the Queen. Conversation continues; each actual result returns through the Queen once, with the real page or downloadable file.
-    degradedAndRecovery: Preserve failed tool attempts and report their actual result. Conversation-only and planning-only requests need no action. Missing acceptance is not success. A route change and an effort change are separate choices; neither is hidden. A supported durable background follow-up is not evidence of mid-reply interjection.
+    expectedResult: In coordination mode the Direct Queen has hand_off_to and list_workers as its work tools; schedules, search, files and diagnostics remain worker capabilities. The Queen obtains distinct durable worker receipts through the existing broker, without writing a replacement task brief. Workers receive the selected original input and authorized inherited context through existing snapshots and readers. Configured worker models and fallback stay independent of the Queen. Conversation continues; each actual result returns through the Queen once, with the real page or downloadable file.
+    degradedAndRecovery: Preserve failed tool attempts and report their actual result. Conversation-only and planning-only requests need no action. Missing acceptance is not success. A route change and an effort change are separate choices; neither is hidden. A supported durable background follow-up is not evidence of mid-reply interjection. Include a settled blank preparation row with bound retrieval evidence; later voice turns must preserve it as untrusted data and keep provider history consistent with source integrity.
     persistenceAndCleanup: Join speech transcription, Queen tool calls, exact workers, callback destinations, persisted chat and received audio. Record whether later input actually overlapped running work. End the owned test call normally; preserve unrelated work.
     evidence: [selected Queen and worker configuration, real RTC transcript and PCM, distinct accepted work receipts, worker execution bindings, visible browser effect, downloaded file contents, callback presentation receipts, stage timings, separate native and Direct results]

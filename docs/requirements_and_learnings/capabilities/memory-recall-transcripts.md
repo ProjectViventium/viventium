@@ -26,6 +26,8 @@ Failure or deletion in one surface does not silently mutate or certify another.
   the same authoritative state.
 - A writer uses actual evidence and cannot turn a transient note, tool result, transcript ambiguity,
   or unsupported inference into a stable fact.
+- Draft maintenance must preserve the saved value when its parser cannot account for the complete
+  content. An unsupported or mixed format must never erase personal work or supporting detail.
 - Internal memory maintenance declares a system actor and retains the source interaction origin.
   Its signed memory-tool receipt owns completion; an empty user-facing answer is valid.
 

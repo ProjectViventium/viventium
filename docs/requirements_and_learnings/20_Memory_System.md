@@ -1334,7 +1334,13 @@ evidence that excluded context is absent while explicitly permitted history stil
   the original source-read, storage and reload journey remains a separate semantic gate.
 - Every live or recovered writer checks its original persisted source IDs, ownership, conversation,
   deletion state, and content digests before execution and each mutation. Receipt/feedback metadata
-  changes do not invalidate unchanged source text/tool content. IDs are captured before model
+  changes do not invalidate unchanged source text/tool content. Speech-only
+  `deliveryDispositionRanges` on text parts are excluded from that source digest: presentation
+  may remove empty or eligible/skip audio ranges without changing the evidence to remember.
+  Actual text, tool arguments/results and native tool-evidence identity/revision remain bound;
+  ownership, conversation, deletion, configuration and ACL checks remain unchanged. Existing
+  pending admissions keep their old digest and may reject; never rewrite them in the database.
+  IDs are captured before model
   formatting assigns temporary invocation IDs. Source edits/deletion block stale work; ordinary
   later user turns do not cancel earlier live FIFO saves. Current user permission, memory-enabled
   configuration, the admitted configuration/agent fingerprints, and the configured saved Agent's

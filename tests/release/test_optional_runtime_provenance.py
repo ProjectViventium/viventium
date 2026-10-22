@@ -42,6 +42,7 @@ def test_restart_livekit_prerequisite_preserves_stack_before_teardown() -> None:
 set -e
 log_error() { :; }
 docker_daemon_ready() { return "$DOCKER_RESULT"; }
+ensure_docker_daemon_for_service() { docker_daemon_ready; }
 curl() { return "$ENDPOINT_RESULT"; }
 stop_running_services() { printf STOPPED; }
 """
@@ -60,6 +61,87 @@ stop_running_services() { printf STOPPED; }
                                 capture_output=True, text=True)
         assert (result.returncode == 0) == expected_stop
         assert result.stdout == ("STOPPED" if expected_stop else "")
+
+
+def test_restart_livekit_waits_for_docker_before_teardown(tmp_path: Path) -> None:
+    source = _read("viventium_v0_4/viventium-librechat-start.sh")
+    helpers_start = source.index("docker_daemon_ready() {\n")
+    helpers_end = source.index("\ndocker_backed_services_requested() {", helpers_start)
+    guard_start = source.index("ensure_restart_livekit_prerequisite() {\n")
+    guard_end = source.index("\n# Preserve the predecessor receipt", guard_start)
+    script = """
+set -e
+DOCKER_BIN=synthetic-docker
+log_warn() { :; }
+log_error() { :; }
+uname() { printf Darwin; }
+docker() {
+  if [[ -f "$READY_MARKER" ]]; then
+    printf 'probe_ready\n' >>"$TRACE_FILE"
+    return 0
+  fi
+  printf 'probe_unready\n' >>"$TRACE_FILE"
+  return 1
+}
+open() {
+  printf 'launch\n' >>"$TRACE_FILE"
+  touch "$LAUNCH_MARKER"
+}
+sleep() {
+  printf 'wait\n' >>"$TRACE_FILE"
+  if [[ "$DAEMON_RECOVERS" == "true" && -f "$LAUNCH_MARKER" ]]; then
+    touch "$READY_MARKER"
+  fi
+}
+curl() { return "$ENDPOINT_RESULT"; }
+stop_running_services() { printf 'stop\n' >>"$TRACE_FILE"; }
+""" + source[helpers_start:helpers_end] + source[guard_start:guard_end]
+    cases = [
+        ("managed_recovers", False, True, False, False, 1, True, True),
+        ("managed_unavailable", False, False, False, False, 1, False, True),
+        ("managed_ready", True, False, False, False, 1, True, False),
+        ("docker_skipped", False, True, False, True, 1, False, False),
+        ("external_ready", False, False, True, True, 0, True, False),
+        ("external_unavailable", False, True, True, False, 1, False, False),
+    ]
+    for name, ready, recovers, external, skip_docker, endpoint, stops, launches in cases:
+        case_dir = tmp_path / name
+        case_dir.mkdir()
+        ready_marker = case_dir / "ready"
+        trace_file = case_dir / "trace"
+        trace_file.touch()
+        if ready:
+            ready_marker.touch()
+        env = dict(
+            os.environ,
+            RESTART_SERVICES="true",
+            SKIP_DOCKER=str(skip_docker).lower(),
+            SKIP_LIVEKIT="false",
+            LIVEKIT_API_HOST_WAS_CONFIGURED=str(external).lower(),
+            LIVEKIT_API_HOST="https://voice.example.test",
+            VIVENTIUM_AUTO_START_DOCKER="true",
+            VIVENTIUM_OPTIONAL_DOCKER_WAIT_RETRIES="3",
+            VIVENTIUM_OPTIONAL_DOCKER_WAIT_POLL_SECONDS="0",
+            DAEMON_RECOVERS=str(recovers).lower(),
+            ENDPOINT_RESULT=str(endpoint),
+            READY_MARKER=str(ready_marker),
+            LAUNCH_MARKER=str(case_dir / "launch"),
+            TRACE_FILE=str(trace_file),
+        )
+        result = subprocess.run(
+            ["bash", "-c", script], env=env, capture_output=True, text=True, timeout=5
+        )
+        events = trace_file.read_text(encoding="utf-8").splitlines()
+        assert (result.returncode == 0) == stops, (name, result.stderr, events)
+        assert ("stop" in events) == stops, (name, events)
+        assert events.count("launch") == int(launches), (name, events)
+        if name == "managed_recovers":
+            assert events.index("launch") < events.index("wait")
+            assert events.index("wait") < events.index("probe_ready") < events.index("stop")
+        if name == "managed_unavailable":
+            assert events.count("wait") == 3
+        if external or skip_docker:
+            assert "probe_unready" not in events
 
 
 def _extract_javascript_logging_calls(source: str) -> list[str]:
@@ -175,7 +257,7 @@ def _livekit_selector_defs() -> str:
 
 def _runtime_stop_selector_defs() -> str:
     launcher = _read("viventium_v0_4/viventium-librechat-start.sh")
-    return "\n".join(
+    return f"VIVENTIUM_CORE_DIR={str(ROOT)!r}\n" + "\n".join(
         _extract_shell_function(launcher, name)
         for name in (
             "read_detached_launch_process_group",

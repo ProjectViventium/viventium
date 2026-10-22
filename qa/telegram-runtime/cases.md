@@ -504,6 +504,58 @@
   supported restart, the same private Telegram path explained the exact scheduled output. Mongo and
   GlassHive agreed on verified schedule provenance, one delta attempt, and the exact per-turn quote.
 
+## Case TR-031: Native Connection Recovery Can Finish Before Host Attention
+
+- **Requirement:** Native provider liveness and same-route recovery in
+  `55_Parallel_Work_Orchestration.md`; Telegram delivery preserves the accepted answer.
+- **User outcome:** A normal conversation continues after a recoverable native connection loss.
+- **Steps:** Replay synthetic native JSONL containing four generic error diagnostics, a completed
+  error item, an authored answer, and turn completion through the actual adapter and Store.
+  Check diagnostic-only inactivity, explicit deadlines, terminal failure, and stale-attempt fences.
+  Queue a never-invoked successor before a predecessor's response deadline; retry cleanup after
+  terminal failure and inject successor invocation at cleanup claim and finalization.
+  Restart the active candidate and retry the failed natural Telegram turn, then a normal follow-up.
+  Reopen the chat and correlate both saved answers and committed delivery receipts.
+- **Expected result:** Generic diagnostics neither consume typed retry budget nor refresh progress.
+  Native recovery may complete under existing deadlines without a provider/model/account switch.
+  Deadline cleanup releases only the exact expired generation, preserves queued work and saved
+  context, and refuses any invoked replacement or changed ownership.
+  Two real replies persist with one text and one configured voice presentation each.
+- **Forbidden result:** The third generic diagnostic forces attention; diagnostics extend inactivity;
+  a real active-branch fence is bypassed; history is reset; a smoke check alone establishes success.
+- **Last run:** PASS 2026-10-20, local active checkout. Three focused regressions failed before the
+  fix and 51 affected checks passed after it. Exact stale failed runs were recovered through the
+  supported owner-scoped API. Both natural Telegram replies and their saved delivery receipts
+  passed. Deadline cleanup and adjacent timeout selections also passed 23 checks each, including
+  queued-successor preservation and invocation races. Managed restart removed expired compute,
+  resumed the retained queue, and delivered a third natural Telegram reply on the final candidate;
+  no history or generated state was edited. See the
+  [recovery report](../stable-dev-runtime/reports/2026-10-20-telegram-docker-recovery.md).
+
+## Case TR-032: Exact Failed Foreground Reply Can Be Cancelled
+
+- **Requirement:** `03_Telegram_Bridge.md`, explicit failed foreground recovery; native authority in
+  `55_Parallel_Work_Orchestration.md` and the existing native response identity contract.
+- **User outcome:** A saved stalled reply produces a clear error and a usable recovery action.
+- **Steps:** Make one persistent foreground request fail with structured progress attention and
+  released native execution. Try a new turn, then `/cancel`. Verify the failed Message/native
+  identity, owner, conversation, Telegram chat/topic, source, ACL, route and recovery deadline.
+  Repeat cancellation, change those fields, resume or replace the run between proof and effect,
+  and try the command with no saved failed reply. Send a normal message after recovery and reopen.
+- **Expected result:** Known failed attention returns its typed cause immediately, without five
+  minutes of busy retries or a false access-denied error. Only the saved failed foreground request
+  can be cancelled. Success requires an exact native cancellation acknowledgement and released
+  execution. Pending/unavailable proof stays truthful. A newer live reply and durable work survive.
+  No model turn or voice synthesis runs for the control command.
+- **Forbidden result:** Automatic cancellation, by-family or mission Stop, fabricated work identity,
+  foreign scope, stale-source authority, raw diagnostics, or successful wording without proof.
+- **Last run:** PARTIAL 2026-10-20. The final candidate passed 123 native, 182 Core control/native,
+  5 route, 142 Telegram and 13 Core propagation checks in selected batches. The real restarted
+  Telegram command correctly refused unverified cancellation and created no model turn. A normal
+  reply then delivered one text and one voice presentation, persisted with a committed receipt,
+  and remained visible after reopening. Active stalled-reply cancellation was proved in isolated
+  harnesses; its real UI path is unverified because the original failed run was already recovered.
+
 ## Natural User Use Case Checklist
 
 These rows are the minimum natural-user checklist gate for Telegram Runtime. Add narrower feature-specific
@@ -537,6 +589,8 @@ rows before claiming a pass when the feature behavior changes.
 | `TELEGRAM-UC-024` | Toggle parallel work, recover after a lost action response, and inspect the retained mission after restart. | `TR-018`, `PWK-UC-016`, `PWK-UC-017` | Telegram Desktop, Core, GlassHive, persistence | visible cards/actions, idempotent receipts, run counts, delivery ledger | Retrying the same action never duplicates work and retained missions remain controllable. | PARTIAL 2026-08-18: Message, Queue, Resume, Stop, Dismiss, and one browser continuation passed; remaining actions and restart retry stayed open |
 | `TELEGRAM-UC-025` | Ask a specialist worker for an answer while its primary provider fails before authoring. | `TR-019` | Telegram bot, graph participant, configured fallback | provider attempts, tool counts, one delivered reply, persisted identity | The configured participant fallback answers once without replaying external effects. | PARTIAL 2026-08-18: deterministic recovery passed; post-restart Telegram correlation remained incomplete |
 | `TELEGRAM-UC-026` | Ask a nested worker to answer while its provider authentication is unavailable. | `TR-021` | installed Telegram, Core, GlassHive worker | structured error class, zero durable residue, actionable visible wording | The user is told to reconnect the provider and retry; no raw error, loop, or orphaned work appears. | PASS 2026-08-18: installed failure reproduction and focused runtime suites passed |
+| `TELEGRAM-UC-027` | Continue a normal chat after native connection loss and retained failed-run attention. | `TR-031` | Telegram Desktop, Core, native adapter, Store | red/green regressions, exact supported recovery, visible replies, saved delivery receipts, reopen | Native recovery completes under existing deadlines; two natural replies persist on the same configured route. | PASS 2026-10-20: local active candidate, 51 affected checks and two real replies passed |
+| `TELEGRAM-UC-028` | Use `/cancel` after a saved foreground progress failure, then continue the chat. | `TR-032` | Telegram Desktop, Core, native exact-request control | typed failure, private identity proof, acknowledgement, released execution, normal reply/reopen | Only the saved failed reply is cancelled; uncertain or stale proof cannot stop other work. | PARTIAL 2026-10-20: real safe refusal and normal reply/reopen passed; positive active-stall UI unavailable |
 
 ## Release Test Traceability
 

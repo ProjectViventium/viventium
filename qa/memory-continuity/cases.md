@@ -487,3 +487,11 @@ assistant timeout cannot hide cleanup scope. Cleanup removes only the exact requ
 owner and family tombstone plus its run liveness dependencies. An idle paused worker is eligible
 only when every run is terminal; an active worker is refused. Eight isolated cleanup tests pass
 for the publication candidate; they do not certify the live memory journey.
+
+## Draft maintenance preserves unsupported content
+
+- Requirement: saved-memory durability in docs/requirements_and_learnings/capabilities/memory-recall-transcripts.md.
+- User case: retained work uses a compact or mixed draft format and another memory key triggers maintenance.
+- Expected: the complete drafts value stays unchanged if any content cannot be represented by the existing parser. Known structured drafts still compact and archive normally.
+- Regression: packages/api/src/memory/policy.spec.ts, draft retention during maintenance, in the Core component. Cover unsupported compact entries, mixed structured/detail content, unsupported archived entries and leading free-form notes.
+- Evidence: current candidate-bound private report; automated checks alone do not prove live memory retention.

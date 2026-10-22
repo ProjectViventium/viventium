@@ -74,6 +74,16 @@ confusing upstream component boundaries.
   clears it only after the launcher has handed off startup ownership. Helper `launch` treats a valid,
   live claim as already starting; dead, foreign, symlinked, multi-link, or expired claims do not block
   recovery.
+- CLI status may show a missing required service as Starting only while an actual startup operation
+  or the existing fresh, private, owner/repository/PID-bound startup claim is live. A retained
+  serving receipt or desired running state alone cannot prove startup. If required services are
+  unavailable without that proof, status reports Action required and the heading reports attention.
+- A fresh launcher `FATAL_STARTUP` marker ends the helper's readiness wait after the CLI operation
+  exits, so a failed launch does not hold the full thirty-minute warm-up window. Only the current
+  attempt's log segment may end that wait. Existing retry backoff, Stop intent, and cancellation
+  remain authoritative. Automatic launch failures show the existing recovery guidance and retry
+  time in the helper's status row without repeated modal alerts. Stop, an explicit Start, and
+  healthy recovery clear the previous failure.
 - The installed macOS helper owns a durable desired-state supervisor for local prod. A healthy stack
   that dies after login must be relaunched with bounded exponential backoff, not left down until the
   next login. Helper **Stop** and **Quit** persist intentional `stopped` state; a later helper **Start**

@@ -54,7 +54,7 @@ from config import (
 )
 
 # REMOVED: i18n - Using hardcoded English strings for simplicity
-from utils.scripts import GetMesageInfo, safe_get, is_emoji
+from utils.scripts import GetMesageInfo, get_update_ids, safe_get, is_emoji
 from utils.telegram_preparation import capture_telegram_preparation, restore_telegram_preparation
 from utils.tts import resolve_tts_selection, summarize_voice_markup, synthesize_speech
 from telegram_audio import package_telegram_audio
@@ -82,6 +82,8 @@ from utils.voice import (
 # Feature: Telegram account linking flow + citation-safe formatting helpers.
 from utils.librechat_bridge import (
     TelegramLinkRequired,
+    TELEGRAM_FOREGROUND_CANCEL_HINT,
+    TELEGRAM_FOREGROUND_CANCEL_UNAVAILABLE,
     _STRUCTURED_STREAM_ERROR_MESSAGES,
     _stream_error_message,
     render_telegram_markdown,
@@ -1763,7 +1765,7 @@ class _TelegramSourceOrderGuard:
                 return message_id
         return None
 
-    async def send_retryable_terminal(self, *, persist=True, pending_claim=None) -> Any:
+    async def send_retryable_terminal(self, *, persist=True, pending_claim=None, foreground_cancel_available=False) -> Any:
         if pending_claim is not None:
             self._recovery_claim = pending_claim
         if not await self.is_current():
@@ -1775,6 +1777,8 @@ class _TelegramSourceOrderGuard:
             "I could not safely confirm that reply. It was removed. "
             "Please retry your message."
         )
+        if foreground_cancel_available is True and error_class == "provider_progress_stalled":
+            terminal_text = f"{terminal_text} {TELEGRAM_FOREGROUND_CANCEL_HINT}"
         if pending_claim is not None and self.live_refs:
             replaced_message_id = await self._replace_live_output_with_retry_terminal(
                 pending_claim, terminal_text
@@ -4308,7 +4312,7 @@ async def _getViventiumResponse(
     # Fix: a Main stream that fails after its preview reached Telegram is a failed presentation.
     # The unfinished preview is never kept as, or joined to, an answer: the existing retry terminal
     # replaces the live output, and the logical turn is acknowledged failed instead of committed.
-    async def _fail_stream_presentation(error_class="") -> None:
+    async def _fail_stream_presentation(error_class="", *, foreground_cancel_available=False) -> None:
         nonlocal answer_messageid, lastresult, stream_preview_superseded
         stream_preview_superseded = True
         await _cancel_stream_previews()
@@ -4321,7 +4325,8 @@ async def _getViventiumResponse(
             retry_terminal_id = None
             try:
                 retry_terminal_id = await source_guard.send_retryable_terminal(
-                    persist=False, pending_claim=pending_claim
+                    persist=False, pending_claim=pending_claim,
+                    foreground_cancel_available=foreground_cancel_available,
                 )
             except Exception as exc:
                 logger.warning(
@@ -4550,7 +4555,10 @@ async def _getViventiumResponse(
                     await _discard_queued_stream_preview()
                     await _flush_stream_previews()
                     if source_guard.live_refs:
-                        await _fail_stream_presentation(data.get("error_class"))
+                        await _fail_stream_presentation(
+                            data.get("error_class"),
+                            foreground_cancel_available=data.get("foreground_cancel_available") is True,
+                        )
                         return
                     result = ""
                     # === VIVENTIUM END ===
@@ -5904,6 +5912,39 @@ async def info(update, context):
 
 @decorators.GroupAuthorization
 @decorators.Authorization
+async def cancel_foreground_reply(update, context):
+    """An explicit control command; do not prepare media or start a model turn."""
+    chatid, convo_id, message_thread_id = get_update_ids(update)
+    if chatid is None or convo_id is None:
+        return
+    text = TELEGRAM_FOREGROUND_CANCEL_UNAVAILABLE
+    if getattr(context, "args", None):
+        text = "Use /cancel without arguments in the chat with the stalled reply."
+    else:
+        message = _telegram_update_message(update)
+        user_id = str(getattr(getattr(update, "effective_user", None), "id", "") or "")
+        message_id = str(getattr(message, "message_id", "") or "")
+        if user_id and message_id:
+            robot, _, _, _ = get_robot(convo_id)
+            if robot is not None and hasattr(robot, "cancel_foreground"):
+                operation_identity = [user_id, str(chatid), str(message_thread_id or ""),
+                                      message_id, str(getattr(update, "update_id", "") or "")]
+                operation_id = "tg-cancel-" + hashlib.sha256(
+                    json.dumps(operation_identity, separators=(",", ":")).encode("utf-8")
+                ).hexdigest()
+                try:
+                    text = await robot.cancel_foreground(
+                        str(convo_id), telegram_user_id=user_id, telegram_chat_id=str(chatid),
+                        telegram_message_thread_id=str(message_thread_id or ""), operation_id=operation_id,
+                    )
+                except Exception as exc:
+                    logger.warning("Telegram cancel command unavailable: %s", type(exc).__name__)
+                    text = "Cancellation could not be confirmed. Please try /cancel again."
+    await context.bot.send_message(chat_id=chatid, message_thread_id=message_thread_id, text=text)
+
+
+@decorators.GroupAuthorization
+@decorators.Authorization
 async def call(update, context):
     _, _, _, chatid, user_message_id, _, _, message_thread_id, convo_id, _, _, _, _, _, _ = _unpack_message_info(await GetMesageInfo(
         update, context
@@ -6123,6 +6164,7 @@ async def _refresh_telegram_bot_metadata(application: Application) -> None:
     try:
         await application.bot.set_my_commands([
             BotCommand('call', 'Open a live Viventium call'),
+            BotCommand('cancel', 'Cancel a verified stalled reply'),
             BotCommand('info', 'Basic information'),
             BotCommand('reset', 'Reset the bot'),
             BotCommand('start', 'Start the bot'),
@@ -6266,6 +6308,7 @@ def _register_application_handlers(application: Application) -> None:
     """Register receptive ingress/control handlers through one testable contract."""
 
     application.add_handler(CommandHandler("call", call, block=False))
+    application.add_handler(CommandHandler("cancel", cancel_foreground_reply, block=False))
     application.add_handler(CommandHandler("info", info, block=False))
     application.add_handler(CommandHandler("start", start, block=False))
     application.add_handler(CommandHandler("reset", reset_chat, block=False))

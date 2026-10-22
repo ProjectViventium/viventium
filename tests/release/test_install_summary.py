@@ -280,6 +280,7 @@ def test_build_service_rows_marks_started_mcp_starting_while_cli_lock_is_active(
     lock_dir = tmp_path / "state" / "cli-operation.lock"
     lock_dir.mkdir(parents=True)
     (lock_dir / "pid").write_text(str(os.getpid()), encoding="utf-8")
+    (lock_dir / "command").write_text("start", encoding="utf-8")
     (lock_dir / "process_command").write_text(
         install_summary.process_command_line(os.getpid()),
         encoding="utf-8",
@@ -1247,7 +1248,7 @@ def test_build_service_rows_marks_conversation_recall_starting_during_cli_operat
     monkeypatch.setattr(install_summary, "http_ok", lambda _url: False)
     monkeypatch.setattr(install_summary, "http_json_status_up", lambda _url: False)
     monkeypatch.setattr(install_summary, "local_network_host", lambda: None)
-    monkeypatch.setattr(install_summary, "cli_operation_running", lambda _runtime_dir: True)
+    monkeypatch.setattr(install_summary, "runtime_startup_in_progress", lambda *_args: True)
 
     rows = install_summary.build_service_rows(
         config,
@@ -1397,7 +1398,7 @@ def test_build_service_rows_rejects_reachable_conversation_recall_semantic_down(
     assert services["Conversation Recall"] == ("Action Required", "http://localhost:8110")
 
 
-def test_resolve_summary_heading_reports_live_startup_when_stack_should_be_live(
+def test_resolve_summary_heading_reports_live_startup_with_running_operation(
     monkeypatch, tmp_path: Path
 ) -> None:
     install_summary = load_install_summary_module()
@@ -1425,6 +1426,7 @@ def test_resolve_summary_heading_reports_live_startup_when_stack_should_be_live(
 
     monkeypatch.setattr(install_summary, "http_ok", fake_http_ok)
     monkeypatch.setattr(install_summary, "local_network_host", lambda: None)
+    monkeypatch.setattr(install_summary, "runtime_startup_in_progress", lambda *_args: True)
 
     rows = install_summary.build_service_rows(
         config,
@@ -1445,6 +1447,85 @@ def test_resolve_summary_heading_reports_live_startup_when_stack_should_be_live(
     assert heading == "Viventium is still starting"
     assert "live surfaces" in intro
     assert table_title == "Live Services"
+
+
+def test_missing_core_reports_attention_without_live_start_owner(monkeypatch, tmp_path: Path) -> None:
+    summary = load_install_summary_module()
+    runtime = tmp_path / "runtime"
+    runtime.mkdir()
+    state = tmp_path / "state" / "runtime" / "isolated"
+    state.mkdir(parents=True)
+    (state / "stack-owner.json").write_text('{"command":"launch"}')
+    config = {"runtime": {"profile": "isolated"}, "voice": {"mode": "local"}}
+    monkeypatch.setattr(summary, "http_ok", lambda _url: False)
+    monkeypatch.setattr(summary, "local_network_host", lambda: None)
+    monkeypatch.setattr(summary, "cli_operation_running", lambda _runtime: False)
+
+    rows = summary.build_service_rows(config, {}, runtime_dir=runtime, repo_root=tmp_path, probe_live=True)
+    services = {name: status for name, status, _detail in rows}
+
+    assert services["LibreChat API"] == services["LibreChat Frontend"] == "Action Required"
+    heading, _intro, _table = summary.resolve_summary_heading(True, rows, True)
+    assert heading == "Viventium needs attention"
+
+
+def test_missing_core_startup_claim_requires_fresh_owned_start(monkeypatch, tmp_path: Path) -> None:
+    summary = load_install_summary_module()
+    runtime = tmp_path / "runtime"
+    runtime.mkdir()
+    state = tmp_path / "state" / "runtime" / "isolated"
+    state.mkdir(parents=True)
+    (state / "stack-owner.json").write_text('{"command":"launch"}')
+    claim = state.parent / "startup-in-progress"
+    now = 1_800_000_000
+    config = {"runtime": {"profile": "isolated"}, "voice": {"mode": "local"}}
+    monkeypatch.setattr(summary, "http_ok", lambda _url: False)
+    monkeypatch.setattr(summary, "local_network_host", lambda: None)
+    monkeypatch.setattr(summary, "cli_operation_running", lambda _runtime: False)
+    monkeypatch.setattr(summary.time, "time", lambda: now)
+    command = f"/bin/bash {tmp_path}/bin/viventium start"
+    monkeypatch.setattr(summary, "process_command_line", lambda _pid: command)
+
+    def core_status():
+        rows = summary.build_service_rows(config, {}, runtime_dir=runtime, repo_root=tmp_path, probe_live=True)
+        return next(status for name, status, _detail in rows if name == "LibreChat API")
+
+    claim.write_text(f"{os.getpid()}\n{tmp_path}\n{now}\n")
+    claim.chmod(0o600)
+    assert core_status() == "Starting"
+    claim.chmod(0o644)
+    assert core_status() == "Action Required"
+    claim.chmod(0o600)
+    claim.write_text(f"{os.getpid()}\n{tmp_path}\n{now - 1801}\n")
+    assert core_status() == "Action Required"
+    claim.write_text(f"{os.getpid()}\n{tmp_path / 'other'}\n{now}\n")
+    assert core_status() == "Action Required"
+    claim.write_text(f"{os.getpid()}\n{tmp_path}\n{now}\n")
+    command = "unrelated-process"
+    assert core_status() == "Action Required"
+    command = f"/bin/bash {tmp_path}/bin/viventium start"
+    backing = tmp_path / "claim-target"
+    claim.rename(backing)
+    claim.symlink_to(backing)
+    assert core_status() == "Action Required"
+    claim.unlink()
+    os.link(backing, claim)
+    assert core_status() == "Action Required"
+
+
+def test_core_status_does_not_treat_other_cli_operations_as_startup(monkeypatch, tmp_path: Path) -> None:
+    summary = load_install_summary_module()
+    runtime = tmp_path / "runtime"
+    runtime.mkdir()
+    operation = tmp_path / "state" / "cli-operation.lock"
+    operation.mkdir(parents=True)
+    monkeypatch.setattr(summary, "cli_operation_running", lambda _runtime: True)
+    for command in ("snapshot", "status", "stop", "configure"):
+        (operation / "command").write_text(command)
+        assert summary.runtime_startup_in_progress(runtime, tmp_path) is False
+    for command in ("start", "launch", "install", "upgrade"):
+        (operation / "command").write_text(command)
+        assert summary.runtime_startup_in_progress(runtime, tmp_path) is True
 
 
 def test_build_service_rows_reports_auth_posture() -> None:

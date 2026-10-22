@@ -227,6 +227,13 @@ voice:
     enabled: false
     prompt_id: voice.prebuild_context
     timeout_s: 120
+    # Optional: keep preparation on native Main even if the speaking Queen uses Direct.
+    # Requires that provider's declared main-chat capability; omitting follows Agent Builder.
+    # Native fallback stays in the agent's existing glasshive_options; no second fallback pipe.
+    # execution:
+    #   provider: glasshive-harness
+    #   model: codex-cli:gpt-6.1-sol
+    #   reasoning_effort: high
   # The public full example must compile on every supported host. Enable one complete route
   # explicitly: `local` is Apple-Silicon-only and never falls back to cloud; `hosted` requires
   # configured provider credentials.

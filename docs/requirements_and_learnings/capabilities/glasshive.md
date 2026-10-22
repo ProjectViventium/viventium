@@ -51,6 +51,20 @@ SDK and the existing xPerfect host supervisor, account binding, MCP projections,
 controls and callbacks. API credentials and API billing are separate from CLI subscriptions.
 An explicitly selected account must supply its own authorized key; an ambient key cannot replace it.
 
+An operator can configure an OpenAI-compatible HTTPS Responses deployment, including Azure v1,
+through `runtime.extra_env.WPR_OPENAI_BASE_URL` and a separate
+`WPR_OPENAI_API_KEY` Keychain secret reference. The model ID must match the deployment name.
+This changes only deployment-managed Direct OpenAI execution. It must not replace the global
+OpenAI credential or send a selected personal account's credential to a custom deployment.
+The endpoint participates in the scoped history/cache identity. Default public OpenAI execution
+is unchanged when these settings are absent. Do not expose endpoint selection to conversation text.
+The generated `glasshive-gateway.env` and `glasshive-runtime.env` service files exclude this pair.
+The private `glasshive-runtime-provider.env` includes it. Core also writes resolved provider secrets
+to its private, mode-0600 `runtime.env`; the source-install launcher exports that aggregate environment
+to child services. These file projections do not provide process environment isolation.
+xPerfect strips `WPR_OPENAI_API_KEY` from native workers, even if an operator allowlist names it.
+Core's native-worker allowlist must match xPerfect's projection contract.
+
 Direct exposes only real configured tools. Native computer or shell work uses authorized MCP tools
 or the existing worker handoff. Shared context references do not imply free provider context or a
 transferable prompt cache. Retain protocol, tool, reasoning and message identifiers across turns.
@@ -107,11 +121,30 @@ provider stopped cloud inference or billing. Preserve accepted durable work, unc
 receipts and late-output fences; do not automatically replay uncertain effects. No separate remote
 execution manager or indefinite GPU-capacity lock is required for that distinction.
 
+Confirmed native Stop, Pause, Steer replacement and termination retain the exact run, attempt,
+stop reason, transcript reference and native media. Their acknowledgment must not inventory a
+shared working folder, render deliverables, or infer a provider failure from an already confirmed
+stop. These completion audits cannot prove which stopped run created a file in a shared folder.
+Mark those audits not applicable for that stopped generation; keep existing files and their
+catalog. Large transcript previews may link to the retained source instead of scanning the full
+transcript for an inline excerpt. Normal successful and failed completion audits remain unchanged.
+Measure native stop proof separately from evidence preparation and the Queen's next reply.
+
 Source implementation is separate from installed-path acceptance. Provider availability, actual
 Queen/worker handoff, history, streaming, cancellation and affected Voice/Text/Telegram paths need
 candidate-bound evidence before claiming full parity. Shared API-key setup retains native CLI
 credential-artifact compatibility; an installed but failing native setup command can still block
 that shared connection path. Direct Docker placement and universal API-only setup are not delivered.
+
+Performance reports must separate a tiny direct model request, prepared context, the current
+typed reply/tool contract, and first received speech. Count a rejected API request as a failure,
+not a fast response. Record the actual supported thinking setting; Low does not mean Off.
+Report first context processing separately from prefix reuse. A fast local answer that cannot
+preserve the typed reply, silence and exact work controls is not a working Queen.
+Use plain stage names: "record this reply once, then start it" describes immediate execution
+bookkeeping, not a calendar timer. A future host replacement removes its adapter code, not the
+need to preserve the account, relevant context, allowed access, Stop and durable work receipts.
+Do not subtract a whole mixed stage as a future saving unless its removable part was measured.
 
 ### Backlog
 

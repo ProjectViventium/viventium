@@ -441,6 +441,7 @@ def test_source_easy_install_compiles_canonical_main_to_glasshive_codex(
         "orchestration": {
             "default_mode": "parallel",
             "parallel_available": True,
+            "tool_mode": "coordination",
             "worker_profile": "codex-cli",
             "worker_model": "codex-cli:gpt-6.1-sol",
             "worker_reasoning_effort": "high",

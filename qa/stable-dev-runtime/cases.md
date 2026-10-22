@@ -1,5 +1,21 @@
 # Stable Dev Runtime Cases
 
+## SDR-015: Restart Recovers Stopped Docker Before Teardown
+
+- Requirement: `capabilities/runtime-install-release.md`, lifecycle control; Telegram bridge API readiness.
+- User action: Start the installed runtime after Docker Desktop has stopped, then send a Telegram message and a follow-up.
+- Expected result: Managed LiveKit uses the existing automatic Docker launch and bounded readiness wait before restart stops services. Unavailable Docker, explicit Docker skip, and an unavailable configured external endpoint preserve the current services. Recovered Telegram replies once and preserves the follow-up context.
+- Evidence: Actual-helper lifecycle regression, source/runtime identity, HTTP health, real Telegram exchange and reopen, saved message parts, and committed delivery acknowledgements.
+- Last Run: PASS 2026-10-20 for the focused restart/Telegram recovery scope. Five selected regressions passed; two real Telegram answers and their committed receipts matched. Automatic recovery from a stopped daemon was exercised in the deterministic helper harness; Docker was already restored before the final live restart. Reboot and full capability QA were NOT RUN. [Report](reports/2026-10-20-telegram-docker-recovery.md).
+
+## SDR-016: Failed Startup Leaves the Warm-up Wait and Shows Recovery
+
+- Requirement: `50_Stable_Dev_Runtime.md`, durable desired-state recovery and truthful status.
+- User action: Let an automatic launch fail, inspect its recovery status, then Start or Stop.
+- Expected result: A fresh fatal marker ends the current wait after its CLI exits; stale logs and active CLI operations do not end a new wait. Existing backoff remains bounded. The helper shows guidance and retry time without repeated alerts. Healthy recovery, Start and Stop clear old guidance. CLI reports unavailable required services as Action required unless a real owned startup operation is live.
+- Evidence: Actual Swift readiness-wait and status-label regressions; private startup-claim validation; installed artifact and signature proof; live CLI status; helper menu inspection.
+- Last Run: PARTIAL 2026-10-20. Helper install/supervision checks passed 59 distinct tests. CLI summary checks passed 84 tests. The rebuilt helper is installed and running; both installed architectures match the tested prebuilt sections and code-signature verification passed. Live CLI reports the running services. Exact helper menu inspection is blocked by the available app-control surface; no live outage was induced for a screenshot. [Report](reports/2026-10-20-telegram-docker-recovery.md).
+
 ## SDR-001: Dev Env Uses Separate App-Facing Ports
 
 - Requirement: `50_Stable_Dev_Runtime.md`

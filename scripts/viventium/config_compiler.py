@@ -133,6 +133,8 @@ GLASSHIVE_ENTERPRISE_WORKER_PROVIDER_ENV_KEYS = {
     "XAI_API_KEY",
 }
 GLASSHIVE_OPENAI_PROVIDER_ENV_KEYS = {
+    "WPR_OPENAI_API_KEY",
+    "WPR_OPENAI_BASE_URL",
     "OPENAI_API_BASE",
     "OPENAI_API_KEY",
     "OPENAI_BASE_URL",
@@ -4128,6 +4130,32 @@ def build_agent_provider_capabilities(config: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def resolve_call_preparation_execution(config: dict[str, Any]) -> dict[str, str] | None:
+    preparation = (config.get("voice", {}) or {}).get("prebuild_context", {}) or {}
+    raw = preparation.get("execution")
+    if raw is None:
+        return None
+    key = "voice.prebuild_context.execution"
+    if not isinstance(raw, dict):
+        raise SystemExit(f"{key} must be an object")
+    if set(raw) - {"provider", "model", "reasoning_effort"}:
+        raise SystemExit(f"{key} accepts only provider, model, and reasoning_effort")
+    provider = normalize_provider_name(raw.get("provider"))
+    model = str(raw.get("model") or "").strip()
+    effort = str(raw.get("reasoning_effort") or "").strip().lower()
+    if not provider or not model or not effort:
+        raise SystemExit(f"{key} requires provider, model, and reasoning_effort")
+    capability = build_agent_provider_capabilities(config).get(provider)
+    if not capability or capability.get("main_chat") is not True:
+        raise SystemExit(f"{key}.provider requires an available main-chat capability")
+    metadata = next((item for item in capability.get("models", []) if item.get("id") == model), None)
+    if not metadata:
+        raise SystemExit(f"{key}.model must match a declared provider model")
+    if effort == "default" or effort not in metadata.get("effortChoices", []):
+        raise SystemExit(f"{key}.reasoning_effort is unsupported for {model}")
+    return {"provider": provider, "model": model, "reasoning_effort": effort}
+
+
 def choose_provider(available: list[str], preferred: list[str], fallback: str) -> str:
     for provider in preferred:
         if provider in available:
@@ -6586,6 +6614,11 @@ def render_runtime_env(
     )
     env["VIVENTIUM_VOICE_PREBUILD_CONTEXT_PROMPT_ID"] = preparation_prompt
     env["VIVENTIUM_VOICE_PREBUILD_CONTEXT_TIMEOUT_S"] = str(preparation_timeout)
+    preparation_execution = resolve_call_preparation_execution(config)
+    if preparation_execution is not None:
+        env["VIVENTIUM_VOICE_PREBUILD_CONTEXT_EXECUTION"] = json.dumps(
+            preparation_execution, separators=(",", ":")
+        )
     env["VIVENTIUM_STT_PROVIDER"] = resolved_voice["stt_provider"]
     if resolved_voice.get("stt_model"):
         env["VIVENTIUM_STT_MODEL"] = resolved_voice["stt_model"]
@@ -7883,6 +7916,7 @@ def render_service_envs(output_dir: Path, env: dict[str, str]) -> None:
         "VIVENTIUM_VOICE_PREBUILD_CONTEXT_ENABLED",
         "VIVENTIUM_VOICE_PREBUILD_CONTEXT_PROMPT_ID",
         "VIVENTIUM_VOICE_PREBUILD_CONTEXT_TIMEOUT_S",
+        "VIVENTIUM_VOICE_PREBUILD_CONTEXT_EXECUTION",
         "VIVENTIUM_LIFE_INTENT_FILE",
         "OPENAI_API_KEY",
         "ANTHROPIC_API_KEY",
@@ -8035,7 +8069,7 @@ def render_service_envs(output_dir: Path, env: dict[str, str]) -> None:
         for key in glasshive_keys
         if key not in glasshive_runtime_only
         and key not in glasshive_librechat_only
-        and key not in GLASSHIVE_ENTERPRISE_WORKER_PROVIDER_ENV_KEYS
+        and key not in (GLASSHIVE_ENTERPRISE_WORKER_PROVIDER_ENV_KEYS | GLASSHIVE_OPENAI_PROVIDER_ENV_KEYS)
     }
     runtime_denied = {
         "GLASSHIVE_AUTH_STATE_PATH",
@@ -8056,7 +8090,7 @@ def render_service_envs(output_dir: Path, env: dict[str, str]) -> None:
         if key not in runtime_denied
         and key not in glasshive_librechat_only
         and key not in glasshive_gateway_only
-        and key not in GLASSHIVE_ENTERPRISE_WORKER_PROVIDER_ENV_KEYS
+        and key not in (GLASSHIVE_ENTERPRISE_WORKER_PROVIDER_ENV_KEYS | GLASSHIVE_OPENAI_PROVIDER_ENV_KEYS)
     }
     hosted_enterprise_provider_route = (
         str(env.get("GLASSHIVE_SECURITY_MODE") or "").strip() == "multi_user"
@@ -8193,6 +8227,11 @@ def render_service_envs(output_dir: Path, env: dict[str, str]) -> None:
                     }
                 }
             )
+    # Explicit Direct API deployments have their own credential and endpoint.
+    # Do not replace the native/global OpenAI account or send this secret to the gateway.
+    for key in ("WPR_OPENAI_API_KEY", "WPR_OPENAI_BASE_URL"):
+        if has_non_placeholder_env(env, key):
+            deployment_provider_env[key] = env[key]
     glasshive_runtime_env["VIVENTIUM_DISABLE_DEFAULT_RUNTIME_ENV"] = "1"
 
     librechat_env = {key: env.get(key, "") for key in librechat_keys}

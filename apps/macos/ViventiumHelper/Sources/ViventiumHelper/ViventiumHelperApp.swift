@@ -516,6 +516,9 @@ enum StackState: Equatable {
 final class HelperController: ObservableObject {
     @Published private(set) var stackState: StackState = .stopped {
         didSet {
+            if self.stackState == .running {
+                self.stackLaunchFailureGuidance = nil
+            }
             if !self.stackState.actionBusy {
                 self.busyStateGraceDeadline = nil
             }
@@ -527,6 +530,7 @@ final class HelperController: ObservableObject {
     @Published private(set) var transcriptSourceConfigInProgress: Bool = false
     @Published private(set) var promptWorkbenchActionInProgress: Bool = false
     @Published private(set) var workflowStatusLabel: String?
+    @Published private var stackLaunchFailureGuidance: String?
     @Published private(set) var workflowActionInProgress: Bool = false
     @Published private(set) var openURLString: String = "http://localhost:3190"
     @Published private(set) var launchAtLoginEnabled: Bool = false
@@ -767,6 +771,12 @@ final class HelperController: ObservableObject {
     }
 
     var statusLabel: String {
+        if let guidance = self.stackLaunchFailureGuidance, !self.stackState.actionBusy {
+            let retry = self.runtimeSupervision.nextLaunchAttemptAt.map {
+                " Retrying at \($0.formatted(date: .omitted, time: .shortened))."
+            } ?? ""
+            return "Start failed. \(guidance)\(retry)"
+        }
         if let workflowStatusLabel {
             return workflowStatusLabel
         }
@@ -1767,14 +1777,16 @@ final class HelperController: ObservableObject {
                     self.log("CLI detached start submission failed (\(launchReason))")
                     self.refreshState(force: true)
                     self.log("Stack did not become healthy after \(launchReason)")
+                    let guidance = Self.startFailureGuidance(
+                        runtime: runtime,
+                        startLogURL: startLogURL,
+                        startLogOffset: startLogOffset
+                    )
+                    self.stackLaunchFailureGuidance = guidance
                     if openWhenReady {
                         let alert = NSAlert()
                             alert.messageText = "Viventium did not finish starting"
-                        alert.informativeText = Self.startFailureGuidance(
-                            runtime: runtime,
-                            startLogURL: startLogURL,
-                            startLogOffset: startLogOffset
-                        )
+                        alert.informativeText = guidance
                         alert.alertStyle = .warning
                         alert.addButton(withTitle: "OK")
                         alert.runModal()
@@ -1816,17 +1828,21 @@ final class HelperController: ObservableObject {
                 self.log(started ? "\(readyLabel) after \(launchReason)" : "Stack did not become healthy after \(launchReason)")
                 if started && openWhenReady {
                     self.openBrowser(path: openPath)
-                } else if openWhenReady && !started {
-                    let alert = NSAlert()
-                    alert.messageText = "Viventium did not finish starting"
-                    alert.informativeText = Self.startFailureGuidance(
+                } else if !started {
+                    let guidance = Self.startFailureGuidance(
                         runtime: runtime,
                         startLogURL: startLogURL,
                         startLogOffset: startLogOffset
                     )
-                    alert.alertStyle = .warning
-                    alert.addButton(withTitle: "OK")
-                    alert.runModal()
+                    self.stackLaunchFailureGuidance = guidance
+                    if openWhenReady {
+                        let alert = NSAlert()
+                        alert.messageText = "Viventium did not finish starting"
+                        alert.informativeText = guidance
+                        alert.alertStyle = .warning
+                        alert.addButton(withTitle: "OK")
+                        alert.runModal()
+                    }
                 }
             }
         }
@@ -2351,6 +2367,7 @@ final class HelperController: ObservableObject {
     }
 
     private func setRuntimeDesiredState(_ desiredState: RuntimeDesiredState) {
+        self.stackLaunchFailureGuidance = nil
         if desiredState == .running {
             self.runtimeSupervision.requestRunning()
         } else {
@@ -2361,6 +2378,7 @@ final class HelperController: ObservableObject {
     }
 
     private func cancelStackLaunch() {
+        self.stackLaunchFailureGuidance = nil
         self.stackLaunchTask?.cancel()
         self.stackLaunchTask = nil
         self.stackLaunchInProgress = false
@@ -3112,6 +3130,7 @@ final class HelperController: ObservableObject {
             return false
         }
         let failureMarkers = [
+            "FATAL_STARTUP:",
             "Native first-admin owner verification did not complete",
             "Built-in Viventium agent seeding failed",
             "Failed to seed built-in Viventium agents",

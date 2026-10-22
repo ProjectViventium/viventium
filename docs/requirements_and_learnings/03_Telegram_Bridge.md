@@ -13,6 +13,14 @@ not select the main Viventium Telegram bridge's model.
 ## Core Requirements
 
 - Telegram users receive complete responses or a clear error if the agent or voice stack disconnects.
+- A released foreground reply that needs `provider_progress_stalled` attention must return that
+  typed failure promptly. Telegram offers `/cancel` only after Core verifies its saved failed
+  native response, unchanged source, linked owner, conversation and chat/thread scope, current
+  provider access, and exact native control proof. The command releases that reply through the
+  existing native cancel adapter; it does not stop accepted missions or a newer reply. A saved
+  typed reference on a later failed preflight can recover the original control after a bot restart.
+  Repeated cancellation is idempotent. Telegram reports pending until native capacity release is
+  confirmed, then asks the user to send the message again. Missing or stale proof offers no control.
 - Connection loss mid-response must not leave users hanging on a partial holding message.
 - Transport recovery resumes the existing accepted work and saved reply automatically; it must not
   rerun tool actions. Starting execution again remains a distinct, authorized Retry action.

@@ -832,8 +832,11 @@ deterministic structural parsing of declared metadata is allowed.
   - `glasshive-harness / codex-cli:gpt-6.1-sol / high` for Main
   - `openAI / gpt-6.1-sol / high` for direct reasoning cortices
   - `glasshive-harness / claude-code:claude-opus-5-5 / high` for the generic Agent text fallback
-  - `glasshive-harness / grok-build:grok-4.7-build-fast / high` for Voice LLM, with
+  - `glasshive-harness / direct-xai:grok-4.7 / low` for Voice LLM, using the Direct API executor
+    and `tool_mode: coordination`, with
     `glasshive-harness / claude-code:claude-opus-5-5 / high` as its configured fallback
+- Native Grok 4.7 and Grok 4.7 Fast at High remain supported alternatives. Direct API credentials
+  and billing are separate from native subscriptions; Low does not mean disabled reasoning.
 - These are defaults. Older choices remain legal where the compiled model catalog and owning
   workload contract support them. Preserve explicit operator choices; never silently remap them.
 - Memory writers, activation classifiers, helper/title models, and GlassHive workers are separate
