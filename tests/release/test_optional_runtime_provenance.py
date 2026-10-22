@@ -280,7 +280,7 @@ def _runtime_stop_selector_defs() -> str:
 
 def _runtime_group_stop_defs() -> str:
     launcher = _read("viventium_v0_4/viventium-librechat-start.sh")
-    return "\n".join(
+    return f"VIVENTIUM_CORE_DIR={str(ROOT)!r}\n" + "\n".join(
         _extract_shell_function(launcher, name)
         for name in (
             "kill_pids",

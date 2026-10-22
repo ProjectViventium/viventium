@@ -130,8 +130,6 @@ GLASSHIVE_ENTERPRISE_WORKER_PROVIDER_ENV_KEYS = {
     "PORTKEY_PROVIDER",
     "PORTKEY_VIRTUAL_KEY",
     "WPR_CLAUDE_CODE_USE_API_KEY",
-    "WPR_OPENAI_API_KEY",
-    "WPR_OPENAI_BASE_URL",
     "XAI_API_KEY",
 }
 GLASSHIVE_OPENAI_PROVIDER_ENV_KEYS = {
@@ -8071,7 +8069,7 @@ def render_service_envs(output_dir: Path, env: dict[str, str]) -> None:
         for key in glasshive_keys
         if key not in glasshive_runtime_only
         and key not in glasshive_librechat_only
-        and key not in GLASSHIVE_ENTERPRISE_WORKER_PROVIDER_ENV_KEYS
+        and key not in (GLASSHIVE_ENTERPRISE_WORKER_PROVIDER_ENV_KEYS | GLASSHIVE_OPENAI_PROVIDER_ENV_KEYS)
     }
     runtime_denied = {
         "GLASSHIVE_AUTH_STATE_PATH",
@@ -8092,7 +8090,7 @@ def render_service_envs(output_dir: Path, env: dict[str, str]) -> None:
         if key not in runtime_denied
         and key not in glasshive_librechat_only
         and key not in glasshive_gateway_only
-        and key not in GLASSHIVE_ENTERPRISE_WORKER_PROVIDER_ENV_KEYS
+        and key not in (GLASSHIVE_ENTERPRISE_WORKER_PROVIDER_ENV_KEYS | GLASSHIVE_OPENAI_PROVIDER_ENV_KEYS)
     }
     hosted_enterprise_provider_route = (
         str(env.get("GLASSHIVE_SECURITY_MODE") or "").strip() == "multi_user"

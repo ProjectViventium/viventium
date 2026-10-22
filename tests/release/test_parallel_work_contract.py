@@ -84,6 +84,7 @@ def test_main_declares_automatic_parallel_capability() -> None:
     assert orchestration == {
         "parallel_available": True,
         "default_mode": "parallel",
+        "tool_mode": "coordination",
         "worker_profile": "codex-cli",
         "worker_model": "codex-cli:gpt-6.1-sol",
         "worker_reasoning_effort": "high",

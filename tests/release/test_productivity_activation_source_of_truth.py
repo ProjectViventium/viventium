@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-import ast
-import re
 from pathlib import Path
 
 import yaml
@@ -377,7 +375,7 @@ def test_main_agent_does_not_defer_productivity_checks_to_background_cortices() 
     instructions = bundle["mainAgent"]["instructions"].lower()
 
     assert "do not defer immediate current-state checks to background cortices" in instructions
-    assert "use the available connector or connected accounts handoff in the current turn" in instructions
+    assert "use the available live-data capability or worker handoff in the current turn" in instructions
     assert "choose tools from declared capabilities and structured metadata" in instructions
     assert "before an external write, confirm the user requested it" in instructions
     assert "require explicit confirmation and a declared write-capable path" in instructions
@@ -389,37 +387,50 @@ def test_main_agent_does_not_defer_productivity_checks_to_background_cortices() 
     assert "on tool failure, state the exact user-relevant limitation and recovery path" in instructions
 
 
-def test_runtime_card_guard_fallback_matches_productivity_live_data_rule() -> None:
+def test_required_runtime_card_guard_preserves_productivity_live_data_rule() -> None:
     agent_client_source = AGENT_CLIENT_CONTROLLER.read_text(encoding="utf-8").lower()
+    runtime_guard = load_and_resolve_prompt_refs(
+        {"promptRef": "main.background_cortex_runtime_card_guard"},
+        root=RUNTIME_CARD_GUARD_PROMPT.parents[1],
+    ).lower()
+    bundle = load_and_resolve_prompt_refs(
+        yaml.safe_load(SOURCE_OF_TRUTH_AGENTS_BUNDLE.read_text(encoding="utf-8"))
+    )
+    main_instructions = bundle["mainAgent"]["instructions"].lower()
 
-    assert "background_cortex_runtime_card_guard_fallback" in agent_client_source
-    assert "do not tell the user that background cortices will check gmail" in agent_client_source
-    assert "outlook, ms365, google workspace, the web, or any live connector" in agent_client_source
-    assert "verified current-run tool evidence, a brokered worker" in agent_client_source
+    assert "background_cortex_runtime_card_guard_fallback" not in agent_client_source
+    assert (
+        "const background_cortex_runtime_card_guard_prompt_id = "
+        "'main.background_cortex_runtime_card_guard';"
+    ) in agent_client_source
+    assert (
+        "getrequiredprompttext(background_cortex_runtime_card_guard_prompt_id)"
+    ) in agent_client_source
+    assert "ensurebackgroundcortexruntimecardguard(this.options.agent)" in agent_client_source
+    for phrase in [
+        "do not tell the user that background cortices will check gmail",
+        "outlook, ms365, google workspace, the web, or any live connector",
+        "verified current-run tool evidence, a brokered worker",
+    ]:
+        assert phrase in runtime_guard
+        assert phrase in main_instructions
 
 
-def test_runtime_card_guard_source_prompt_matches_inline_fallback() -> None:
+def test_runtime_card_guard_source_prompt_matches_registered_rendered_body() -> None:
     prompt_source = RUNTIME_CARD_GUARD_PROMPT.read_text(encoding="utf-8")
     _, _, prompt_body = prompt_source.partition("---\n")
     _, _, prompt_body = prompt_body.partition("---\n")
-
-    agent_client_source = AGENT_CLIENT_CONTROLLER.read_text(encoding="utf-8")
-    match = re.search(
-        r"const BACKGROUND_CORTEX_RUNTIME_CARD_GUARD_FALLBACK = \[(.*?)\]\.join\('\\n'\);",
-        agent_client_source,
-        re.DOTALL,
+    runtime_guard = load_and_resolve_prompt_refs(
+        {"promptRef": "main.background_cortex_runtime_card_guard"},
+        root=RUNTIME_CARD_GUARD_PROMPT.parents[1],
     )
-    assert match is not None
-
-    fallback_lines: list[str] = []
-    for line in match.group(1).splitlines():
-        stripped = line.strip()
-        if not stripped:
-            continue
-        fallback_lines.append(ast.literal_eval(stripped.rstrip(",")))
+    bundle = load_and_resolve_prompt_refs(
+        yaml.safe_load(SOURCE_OF_TRUTH_AGENTS_BUNDLE.read_text(encoding="utf-8"))
+    )
 
     normalize = lambda text: " ".join(text.split())
-    assert normalize(prompt_body) == normalize("\n".join(fallback_lines))
+    assert normalize(prompt_body) == normalize(runtime_guard)
+    assert runtime_guard in bundle["mainAgent"]["instructions"]
 
 
 def test_productivity_direct_action_surfaces_prevent_background_action_duplication() -> None:

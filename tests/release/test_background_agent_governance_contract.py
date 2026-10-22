@@ -87,6 +87,7 @@ APPROVED_MAIN_GLASSHIVE_OPTIONS = {
     "orchestration": {
         "parallel_available": True,
         "default_mode": "parallel",
+        "tool_mode": "coordination",
         "worker_profile": "codex-cli",
         "worker_model": "codex-cli:gpt-6.1-sol",
         "worker_reasoning_effort": "high",
@@ -349,10 +350,10 @@ def test_conscious_main_uses_glasshive_and_subconscious_agents_keep_current_high
             }
 
     assert main_agent.get("voice_llm_provider") == "glasshive-harness"
-    assert main_agent.get("voice_llm_model") == "grok-build:grok-4.7-build-fast"
+    assert main_agent.get("voice_llm_model") == "direct-xai:grok-4.7"
     assert main_agent.get("voice_llm_model_parameters") == {
-        "model": "grok-build:grok-4.7-build-fast",
-        "reasoning_effort": "high",
+        "model": "direct-xai:grok-4.7",
+        "reasoning_effort": "low",
     }
     assert main_agent.get("voice_fallback_llm_provider") == "glasshive-harness"
     assert main_agent.get("voice_fallback_llm_model") == "claude-code:claude-opus-5-5"
@@ -609,23 +610,25 @@ def test_local_source_of_truth_main_agent_uses_configured_glasshive_codex_route(
     ) == APPROVED_MAIN_AGENT_FAMILY
 
 
-def test_local_source_of_truth_main_agent_voice_route_uses_native_grok_high_reasoning() -> None:
+def test_local_source_of_truth_main_agent_voice_route_uses_supported_direct_grok_low_reasoning() -> None:
     bundle = _load_source_of_truth()
     main_agent = bundle.get("mainAgent", {})
 
     assert main_agent.get("voice_llm_provider") == "glasshive-harness"
-    assert main_agent.get("voice_llm_model") == "grok-build:grok-4.7-build-fast"
-    assert main_agent.get("voice_llm_model_parameters", {}).get("model") == "grok-build:grok-4.7-build-fast"
-    assert main_agent.get("voice_llm_model_parameters", {}).get("reasoning_effort") == "high"
+    assert main_agent.get("voice_llm_model") == "direct-xai:grok-4.7"
+    assert main_agent.get("voice_llm_model_parameters", {}).get("model") == "direct-xai:grok-4.7"
+    assert main_agent.get("voice_llm_model_parameters", {}).get("reasoning_effort") == "low"
     assert "thinking" not in main_agent.get("voice_llm_model_parameters", {})
     capabilities = _load_librechat_source_of_truth()["endpoints"]["agents"][
         "providerCapabilities"
     ]["glasshive-harness"]
     assert capabilities["voice_pipeline_llm"] is True
     declared_models = {model["id"]: model for model in capabilities["models"]}
-    native_grok = declared_models[main_agent["voice_llm_model"]]
-    assert native_grok["harnessProfile"] == "grok-build"
-    assert "high" in native_grok["effortChoices"]
+    direct_grok = declared_models[main_agent["voice_llm_model"]]
+    assert direct_grok["harnessProfile"] == "direct-xai"
+    assert direct_grok["executionBackend"] == "direct-api"
+    assert direct_grok["workerNativeTools"] is False
+    assert "low" in direct_grok["effortChoices"]
 
 
 def test_runtime_models_script_exports_match_release_contract() -> None:
@@ -773,6 +776,17 @@ def test_main_agent_background_cortex_prompt_does_not_contradict_runtime_cards()
     bundle = _load_source_of_truth()
     main_instructions = (bundle.get("mainAgent", {}).get("instructions") or "").lower()
     runtime_client = AGENT_CLIENT_PATH.read_text(encoding="utf-8").lower()
+    runtime_guard = load_and_resolve_prompt_refs(
+        {"promptRef": "main.background_cortex_runtime_card_guard"}, root=PROMPT_SOURCE_ROOT
+    ).lower()
+
+    assert runtime_guard in main_instructions
+    assert (
+        "const background_cortex_runtime_card_guard_prompt_id = "
+        "'main.background_cortex_runtime_card_guard';"
+    ) in runtime_client
+    assert "getrequiredprompttext(background_cortex_runtime_card_guard_prompt_id)" in runtime_client
+    assert "ensurebackgroundcortexruntimecardguard(this.options.agent)" in runtime_client
 
     for phrase in [
         "runtime may display background-cortex status/result cards outside your text",
@@ -785,7 +799,8 @@ def test_main_agent_background_cortex_prompt_does_not_contradict_runtime_cards()
         "let runtime-owned cards speak for themselves",
     ]:
         assert phrase in main_instructions
-        assert phrase in runtime_client
+        assert phrase in runtime_guard
+        assert phrase not in runtime_client
 
 
 def test_librechat_source_of_truth_stays_on_current_anthropic_inventory() -> None:
@@ -870,10 +885,10 @@ def test_conscious_and_subconscious_agents_use_approved_routes_with_managed_fall
 
     main_agent = bundle["mainAgent"]
     assert main_agent.get("voice_llm_provider") == "glasshive-harness"
-    assert main_agent.get("voice_llm_model") == "grok-build:grok-4.7-build-fast"
+    assert main_agent.get("voice_llm_model") == "direct-xai:grok-4.7"
     assert main_agent.get("voice_llm_model_parameters") == {
-        "model": "grok-build:grok-4.7-build-fast",
-        "reasoning_effort": "high",
+        "model": "direct-xai:grok-4.7",
+        "reasoning_effort": "low",
     }
     assert main_agent.get("voice_fallback_llm_provider") == "glasshive-harness"
     assert main_agent.get("voice_fallback_llm_model") == "claude-code:claude-opus-5-5"
