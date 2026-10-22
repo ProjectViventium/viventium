@@ -1,5 +1,17 @@
 # Prepared Direct Queen: request cost and real call
 
+## Summary
+
+- Result: PARTIAL overall; bounded loaded Direct Queen channel, inheritance, native action, Steer, callback and file cases passed. Sub-two-second speech and reliable optional preparation were not achieved.
+- Build/source under test: the sequence of Direct executor, context, stop/redaction and memory-source repairs below; later sections supersede only their named earlier contracts.
+- Runtime/artifact under test: supported loaded local Core, Chat, Voice and xPerfect candidate; reviewed source/build identities retained privately.
+- Environment: final shared Main/Voice Direct Grok 4.7 Low; native Codex GPT 6.1 Sol High workers with configured Opus 5.5 High fallback; optional prebuild Off.
+- Tester: bounded API/SDK experiments, agent-operated Chrome/Telegram and actual LiveKit PCM checks, with Opus source/evidence review.
+- Related change: preserve exact context, independent native work, controls and once-only presentation through existing Direct Queen mechanisms.
+- QA mode and authorizing instruction: blast-radius; benchmark requested configurations, then repair and verify affected real channels.
+- Selected cases and causal relevance: Direct Queen handoff, current Main compaction/scheduled silence and the exact presentation-only memory-digest regression.
+- Deferred / unselected cases (NOT RUN): hardware audio, endurance, general configured-fallback execution and every task/provider. Local SDK compatibility failed 0/4; no local Queen was activated.
+
 QA: blast-radius. Local development evidence; not a release or complete parity claim.
 
 **Read the [loaded shared-Direct checks](#r22-shared-direct-main-loaded-cross-channel-checks) and
@@ -701,3 +713,64 @@ that a personal fact was promoted or that the post-call hardener ran. The final 
 Voice remained Direct Grok 4.7 Low, optional prebuild remained Off, and all tools, prompts and
 worker options were unchanged across the final restart. Historical failed receipts were preserved.
 The earlier Voice latency, optional-prebuild, hardware, fallback and endurance limits still apply.
+
+## Scope Run
+
+| Selected case family | Result | Retained evidence and limit |
+| --- | --- | --- |
+| API and SDK comparisons | Completed experiments | Input/cache/timer/output distinctions above; mocks do not prove actions or speech. Local SDK failed 0/4, not activated. |
+| Direct Queen handoff journey | PASS for recorded cases | Loaded Chrome/Telegram/Voice PCM, inherited sources, A/B/C, exact Steer, callbacks and matching files; not every task/provider. |
+| Shared stop-processing repair | PASS for changed path | Causal replay and loaded Steer/concurrent-channel check; speech still 11.592–15.428 seconds. |
+| Main compaction/scheduled silence | PASS for frozen cases | Three fidelity cases/five stages and one real scheduler-gateway NTA case; no recurrence/all-history claim. |
+| Memory presentation-source regression | PASS | Fresh Telegram text-only reply, actual range removal during writer execution, native authorized noop, nine unchanged revisions. |
+| Speech speed and optional prebuild | NOT ACHIEVED | Recorded 120-second failures retained; daily prebuild Off; no sub-two-second/glitch-free claim. |
+
+## Traceability
+
+`feature -> requirement -> use case -> QA case -> expected result -> actual evidence -> remaining gap`
+
+Direct Queen → [approved flow](../../../docs/requirements_and_learnings/capabilities/voice.md#should--fixes--direct-queen), [Parallel Work](../../../docs/requirements_and_learnings/55_Parallel_Work_Orchestration.md) and [Memory](../../../docs/requirements_and_learnings/20_Memory_System.md) → A/B/C, exact correction, results and silent maintenance → existing handoff journey/current compaction/silence/memory checks → inherited context and independent native work with one presenter → dated and final loaded sections above → latency, optional-prebuild, hardware, endurance and fallback limits remain.
+
+## Full-View Evidence Checklist
+
+| Evidence surface | Recorded result |
+| --- | --- |
+| Requirement and user case | Approved ordered input/shared context/Queen/A…N: start, steer, continue, receive and retrieve actual results. |
+| Code owning path | Direct executor/output, existing broker/context readers, native controls, callbacks/presenters, redactor and text-part source digest. |
+| Docs and nested docs/repos | Voice/Parallel Work/Memory owners above; existing xPerfect Direct/LiveKit and Core consumer boundaries. |
+| Scripts/harnesses | Existing API/SDK probes, compaction Workbench, scheduler gateway, normal channel drivers and actual LiveKit PCM injection/receiver. |
+| Prerequisites | Final health/source identities matched; provider errors, unsupported Off and preparation timeouts remain distinct from successful answers. |
+| Logs | Joined admission/provider/tool/public-text/audio clocks; retained stop-log replay and ticker isolate shared blocking. |
+| DB/state/persistence | Context snapshots, work/action/callback/presenter receipts, saved settings and unchanged memory revisions. |
+| Generated/loaded artifact | Compiled API/config and final running source identities matched; not new-install or release acceptance. |
+| Real user path and visual result | Chrome/Telegram results and reload, native browser effects, authenticated exact file bytes and received Voice PCM. |
+| Not run / incomplete | Sub-two-second/reliable optional prebuild not achieved; hardware/glitch-free/endurance/general fallback unaccepted. |
+
+## User-Grade Evidence
+
+- Surface exercised: Chrome Web chat, Telegram Web/bot, LiveKit Voice and linked chat/downloads.
+- Real user path: converse, request browser/file work, correct active A, ask unrelated C while A/B run, receive callbacks and retrieve results.
+- Visible outcome: bounded cases produced correct replies, native effects and once-only completions/files; internal memory/status stayed out of conversation/TTS.
+- Expanded/detail state: native work identity, inherited context, same-work Steer and completed callback/presenter states inspected; grouped input was not mislabeled independent A/B.
+- Persistence/reload result: Chrome/Telegram outputs survived reload; downloads matched stored/native files; final saved configuration survived restart.
+- Backend/log/DB confirmation: route/sources/work/action/callback/delivery, received PCM and final native-memory noop authority joined; health alone was not acceptance.
+- Final model/runtime wording check: final Main/Voice Direct Grok Low, native Codex High workers/configured Opus High fallback; Low is not Off, configured is not executed fallback, prebuild Off retains ordinary cognition.
+- Substitution check: raw API speed, mocks, source/tests, logs/DB and Opus review support their stated contracts; they cannot replace browser/delivered audio/persistence or missing hardware/endurance/fallback evidence.
+
+## Automated Evidence
+
+Selected existing results are retained above: API/SDK diagnostics, compaction/silence checks, 107 credential and 31 host/privacy checks, 24 memory-source checks, 13 typed-control checks plus the separate managed-wrapper probe. Overlapping batches are not summed; original failures/observer defects remain. No new benchmark or channel QA was run to complete this report format.
+
+## Findings
+
+- Repaired: context/history carriers and inheritance, callback/claim defects, stopped-run workspace audits, shared redaction starvation and presentation-only memory authority churn, attributed in dated sections.
+- Measured: loaded Steer 518 ms, forwarding 88/229/129 ms, speech 12.206/15.428/11.592 s across different tasks, not a distribution.
+- Residual: provider/startup delay, 120-second prebuild failures, hardware/endurance/general fallback limits. No new orchestrator, phrase router or personal-memory cleanup.
+
+## Public-Safety Review
+
+- [x] No secrets, tokens, passwords, cookies or credential-bearing commands.
+- [x] No private chats/prompts/attachments/screenshots, personal emails, account identifiers or client data.
+- [x] No conversation/message/call/chat/database/provider identifiers.
+- [x] No absolute local paths, hostnames, device names, private stack traces, exports or raw runtime state.
+- [x] Private evidence is summarized only through sanitized observations, counts, measurements and conclusions.

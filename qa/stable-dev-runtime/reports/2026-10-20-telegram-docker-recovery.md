@@ -1,5 +1,17 @@
 # Telegram recovery and retained failed-reply controls
 
+## Summary
+
+- Result: PARTIAL overall; bounded restart and native Telegram recovery passed. Positive live stalled-reply cancellation and the helper failure menu remain unverified.
+- Build/source under test: local launcher, helper, startup summary, native liveness/deadline cleanup and exact foreground-control changes described below.
+- Runtime/artifact under test: supported local runtime and rebuilt, installed universal helper; exact matching source/artifact identities retained privately.
+- Environment: local development; configured native GPT 6.1 Sol High with unchanged account/session authority.
+- Tester: automated causal harnesses and agent-operated Telegram/browser/CLI checks, with independent source review.
+- Related change: restore availability through existing lifecycle, typed recovery and native cancellation owners.
+- QA mode and authorizing instruction: blast-radius; repair affected unavailable Telegram/runtime paths and reuse valid evidence.
+- Selected cases and causal relevance: SDR-015/016 and TR-031/032 cover the observed startup, native recovery and failed-reply causes.
+- Deferred / unselected cases (NOT RUN): reboot, off-network and full capability coverage; positive live stalled-reply cancellation and helper-menu acceptance remain PARTIAL.
+
 - Date: 2026-10-20.
 - QA mode: blast-radius.
 - Result: PASS for SDR-015 startup recovery. The initial two-message smoke check did not
@@ -225,3 +237,61 @@ reachability from this network. Those warnings were not counted as healthy or re
 Later Direct Queen configuration and cross-channel observations belong to the
 [prepared Direct Queen report](../../voice/reports/2026-10-21-prepared-direct-queen.md). The retained
 local measurements above do not certify a new installed release or change the current latency limits.
+
+## Scope Run
+
+| Case | Result | Retained evidence and limit |
+| --- | --- | --- |
+| SDR-015 restart recovery | PASS | Five causal checks, supported restart and real Telegram replies/reopen; Docker restored before final live restart. |
+| SDR-016 startup/failure status | PARTIAL | 59 helper and 84 summary checks; installed artifact matched. Exact helper-menu inspection blocked. |
+| TR-031 native recovery/deadline | PASS | Failed-before regressions, same-route natural replies, saved delivery and exact generation cleanup above. |
+| TR-032 failed-reply cancellation | PARTIAL | Native/Core/bot positive controls; live safe refusal and resumed chat. Positive active-stall UI unavailable. |
+
+## Traceability
+
+`feature -> requirement -> use case -> QA case -> expected result -> actual evidence -> remaining gap`
+
+Availability and exact foreground recovery → [runtime contract](../../../docs/requirements_and_learnings/50_Stable_Dev_Runtime.md), [Telegram contract](../../../docs/requirements_and_learnings/03_Telegram_Bridge.md) and native work authority → start/continue/cancel a verified stalled reply → SDR-015/016 and TR-031/032 → one truthful reply or exact recovery → lifecycle, Telegram, state and artifact observations above → positive live cancellation and helper-menu gaps remain.
+
+## Full-View Evidence Checklist
+
+| Evidence surface | Recorded result |
+| --- | --- |
+| Requirement and user case | SDR-015/016 and TR-031/032: start, continue, recover and cancel only the exact failed reply. |
+| Code owning path | Launcher prerequisite, helper readiness, summary claim reader, native event/Store cleanup and Core/Telegram control. |
+| Docs and nested docs/repos | Runtime/Telegram contracts above, existing Parallel Work native authority and named component checks. |
+| Scripts/harnesses | Existing helper/lifecycle, summary, native lease/deadline, Core and Telegram tests; supported launcher. |
+| Prerequisites | Initial Docker/Core/Redis outage; final services and Telegram polling recovered. Public-hostname/scheduled warnings not declared repaired. |
+| Logs and DB/state/persistence | Startup/native run/deadline receipts, complete saved replies and committed presentations; failed history/queue/context retained. |
+| Generated/installed artifact | Universal helper sections/UUID/signature/process and prepared Telegram/API artifacts matched reviewed source. |
+| Real user path and visual result | Telegram replies and unavailable `/cancel` read after reopen; CLI running status; browser sign-in page. |
+| Not run / blocked | Helper menu blocked; positive live stalled cancellation unavailable; reboot/off-network/full feature acceptance NOT RUN. |
+
+## User-Grade Evidence
+
+- Surface exercised: Telegram Desktop, browser sign-in page, CLI and installed helper artifact/process.
+- Real user path: start runtime, send normal/contextual messages, reopen Telegram, issue `/cancel`, then continue chatting.
+- Visible outcome: one reply with configured voice; unverified cancellation clearly refused without a model turn.
+- Expanded/detail state: exact failed reply, owner/topic/source proof and capacity release inspected in state and harnesses; live positive cancel detail/helper menu remain unaccepted.
+- Persistence/reload result: reopened Telegram retained matched complete replies and presentation records.
+- Backend/log/DB confirmation: startup, native run/deadline, saved assistant and delivery receipts support the bounded results.
+- Final model/runtime wording check: same native route/history; diagnostics are not typed retries, pending is not released capacity, and local checks are not release acceptance.
+- Substitution check: source, logs, DB/state, tests and review support observed paths; they do not replace missing positive live cancellation or helper-menu evidence.
+
+## Automated Evidence
+
+Exact previously run commands/counts appear above: five restart checks, 59 distinct helper checks, 84 summary checks and named native/Core/Telegram batches. Overlapping selections are not summed. Artifact review is separate from real Telegram acceptance. No product test, rebuild or new user QA was added to complete this report format.
+
+## Findings
+
+- Repaired: skipped existing Docker recovery, generic native diagnostics exhausting retry budget, exact expired-generation cleanup and retained failed-reply controls.
+- Preserved: stale/invoked/foreign-work fences, saved history, models and truthful uncertain control state.
+- Residual: positive active-stall Telegram UI and helper menu PARTIAL; reboot/off-network/full task coverage NOT RUN.
+
+## Public-Safety Review
+
+- [x] No secrets, tokens, passwords, cookies or credential-bearing commands.
+- [x] No private chats/prompts/attachments/screenshots, personal emails, account identifiers or client data.
+- [x] No conversation/message/call/chat/database/provider identifiers.
+- [x] No absolute local paths, hostnames, device names, private stack traces, exports or raw runtime state.
+- [x] Private evidence is summarized only through sanitized observations, counts, measurements and conclusions.
