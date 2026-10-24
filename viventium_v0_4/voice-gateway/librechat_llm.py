@@ -1076,7 +1076,9 @@ def _extract_final_response_text(final_event: dict[str, Any]) -> str:
                 "[LibreChatLLM] Final response contained error content; using voice-safe fallback (%s)",
                 _summarize_error_for_log(msg or "voice generation error"),
             )
-            return sanitize_voice_followup_text(_select_stream_error_message(msg or "voice generation error", code=part.get("error_class")))
+            return sanitize_voice_followup_text(_select_stream_error_message(
+                msg or "voice generation error", code=part.get("error_class"), metadata=part,
+            ))
     return "".join(sanitize_voice_delta_text(text) for text, silent in
                    _content_audio_segments(content, default_skipped=skipped) if not silent).strip()
 
@@ -1158,7 +1160,33 @@ def _get_voice_sse_retry_config() -> tuple[int, float]:
     return max_retries, retry_delay_s
 
 
-def _select_stream_error_message(error: Optional[str], *, code: Optional[str] = None) -> str:
+def _host_capacity_error_message(metadata: Any) -> str:
+    """Use only bounded measured shortages; never speak capacity exception prose."""
+    if (isinstance(metadata, dict)
+            and metadata.get("capacity_class", metadata.get("capacityClass")) == "resource_pressure"):
+        def amount(field: str, dimension: str) -> Optional[int]:
+            values = metadata.get("capacity_" + field, metadata.get(field))
+            value = values.get(dimension) if isinstance(values, dict) else None
+            return value if type(value) is int and 0 <= value <= 2**53 - 1 else None
+
+        for dimension, message in (
+            ("diskBytes", "The computer running Viventium is low on disk space and could not start this reply. Free some space, then retry."),
+            ("memoryBytes", "The computer running Viventium is low on memory and could not start this reply. Close unused apps, then retry."),
+        ):
+            shortage, available, required = (amount(field, dimension)
+                                            for field in ("shortage", "available", "required"))
+            if (shortage is not None and shortage > 0) or (
+                available is not None and required is not None and available < required
+            ):
+                return message
+    return "Local AI capacity is busy. Please try again shortly."
+
+
+def _select_stream_error_message(
+    error: Optional[str], *, code: Optional[str] = None, metadata: Any = None,
+) -> str:
+    if code == "host_capacity":
+        return _host_capacity_error_message(metadata)
     native_stop_messages = {
         "native_output_file_unavailable": "The file could not be attached.",
         "native_input_declined": "You declined that action. It was stopped.",
@@ -4145,6 +4173,7 @@ class _LibreChatLLMStream(llm.LLMStream):
         final_event: Optional[dict[str, Any]] = None
         stream_error: Optional[str] = None
         stream_error_code: Optional[str] = None
+        stream_error_metadata: Optional[dict[str, Any]] = None
         pending_insights: list[dict[str, Any]] = []
         saw_cortex_event = False
         saw_glasshive_tool_call = False
@@ -4558,6 +4587,7 @@ class _LibreChatLLMStream(llm.LLMStream):
                                 if stream_error:
                                     declared_code = event.get("error_class")
                                     stream_error_code = declared_code if isinstance(declared_code, str) else None
+                                    stream_error_metadata = event
                                     break
 
                                 if event.get("sync"):
@@ -4734,7 +4764,9 @@ class _LibreChatLLMStream(llm.LLMStream):
                         stream_id,
                         _summarize_error_for_log(stream_error),
                     )
-                    fallback = _select_stream_error_message(stream_error, code=stream_error_code)
+                    fallback = _select_stream_error_message(
+                        stream_error, code=stream_error_code, metadata=stream_error_metadata,
+                    )
                     fallback = sanitize_voice_followup_text(fallback)
                     if fallback:
                         collected_response.append(fallback)

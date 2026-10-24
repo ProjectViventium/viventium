@@ -434,3 +434,27 @@ def test_qa_test_account_cli_status_and_clear_are_redacted(tmp_path: Path) -> No
     assert "qa-person@example.com" not in clear.stdout
     updated = yaml.safe_load(config_path.read_text(encoding="utf-8"))
     assert "VIVENTIUM_QA_EMAIL" not in updated["runtime"]["extra_env"]
+
+
+def test_scheduled_wakes_cli_edits_only_source_settings_and_keeps_existing_cortex(tmp_path: Path):
+    config = minimal_config()
+    config['integrations']['glasshive'] = {'enabled': True}
+    config['integrations']['scheduling_cortex'] = {'enabled': True, 'preserved': 'existing-definition-owner'}
+    config_path = tmp_path / 'config.yaml'
+    backups = tmp_path / 'backups'
+    write_config(config_path, config)
+    command = [sys.executable, str(ROOT / 'scripts/viventium/config_settings.py'), '--config-file', str(config_path),
+               '--backup-dir', str(backups), 'scheduled-wakes-set', '--enabled', 'true', '--json']
+    result = subprocess.run(command, capture_output=True, text=True, check=True)
+    assert json.loads(result.stdout)['changed'] is True
+    stored = yaml.safe_load(config_path.read_text())
+    assert stored['integrations']['glasshive']['scheduled_wakes'] == {'enabled': True}
+    assert stored['integrations']['scheduling_cortex'] == config['integrations']['scheduling_cortex']
+    assert stored['llm'] == config['llm']
+    assert len(list(backups.iterdir())) == 1
+    again = subprocess.run(command, capture_output=True, text=True, check=True)
+    assert json.loads(again.stdout)['changed'] is False
+    assert len(list(backups.iterdir())) == 1
+    bad = subprocess.run(command[:-1] + ['--destination-id', 'arbitrary-untrusted-url', '--json'], capture_output=True, text=True)
+    assert bad.returncode != 0
+    assert yaml.safe_load(config_path.read_text()) == stored

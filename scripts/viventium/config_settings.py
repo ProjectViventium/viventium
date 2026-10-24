@@ -265,6 +265,39 @@ def command_qa_test_account_clear(args: argparse.Namespace) -> int:
     return 0
 
 
+def command_scheduled_wakes_status(args: argparse.Namespace) -> int:
+    config = load_config(args.config_file)
+    settings = ((config.get("integrations") or {}).get("glasshive") or {}).get("scheduled_wakes") or {}
+    emit({"enabled": settings.get("enabled") is True,
+          "destination_configured": bool(settings.get("destination_id")), "changed": False}, args.json)
+    return 0
+
+
+def command_scheduled_wakes_set(args: argparse.Namespace) -> int:
+    from config_compiler import resolve_runtime_profile, xperfect_scheduled_wake_environment
+    config = load_config(args.config_file)
+    candidate = json.loads(json.dumps(config))
+    integration = candidate.setdefault("integrations", {}).setdefault("glasshive", {})
+    settings = integration.setdefault("scheduled_wakes", {})
+    settings["enabled"] = args.enabled == "true"
+    if args.destination_id is not None:
+        if args.destination_id == "auto":
+            settings.pop("destination_id", None)
+        else:
+            settings["destination_id"] = args.destination_id
+    if args.receiver_url is not None:
+        settings["receiver_url"] = args.receiver_url
+    _, profile = resolve_runtime_profile(candidate)
+    xperfect_scheduled_wake_environment(candidate, api_port=profile["lc_api_port"], call_session_secret="validation-only")
+    changed = candidate != config
+    backup_path = backup_config(args.config_file, args.backup_dir) if changed else None
+    if changed:
+        write_config(args.config_file, candidate)
+    emit({"enabled": settings["enabled"], "destination_configured": bool(settings.get("destination_id")),
+          "changed": changed, "backup_path": backup_path, "requires_runtime_refresh": changed}, args.json)
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Patch canonical local Viventium config settings.")
     parser.add_argument("--config-file", required=True, type=Path)
@@ -297,6 +330,15 @@ def build_parser() -> argparse.ArgumentParser:
     qa_clear = subparsers.add_parser("qa-test-account-clear")
     qa_clear.add_argument("--json", action="store_true")
     qa_clear.set_defaults(handler=command_qa_test_account_clear)
+    wakes_status = subparsers.add_parser("scheduled-wakes-status")
+    wakes_status.add_argument("--json", action="store_true")
+    wakes_status.set_defaults(handler=command_scheduled_wakes_status)
+    wakes_set = subparsers.add_parser("scheduled-wakes-set")
+    wakes_set.add_argument("--enabled", required=True, choices=("true", "false"))
+    wakes_set.add_argument("--destination-id")
+    wakes_set.add_argument("--receiver-url")
+    wakes_set.add_argument("--json", action="store_true")
+    wakes_set.set_defaults(handler=command_scheduled_wakes_set)
     return parser
 
 

@@ -284,6 +284,11 @@ integrations:
     life_projection_dir: ~/Documents/Viventium/Life/Health/Wearables/WHOOP
   glasshive:
     enabled: true
+    # New app wakes use the generic xPerfect clock. Existing Cortex schedules are not migrated automatically.
+    scheduled_wakes:
+      enabled: false
+      # Setup reuses a protected owner-scoped destination; no API/model credentials are stored here.
+      # receiver_url defaults to this runtime profile's local due endpoint.
     provider:
       enabled: true
       # Defaults to the local GlassHive API for a source/Docker runtime.

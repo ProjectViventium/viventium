@@ -19,6 +19,8 @@ definition moving forward; runtime and feature docs own current delivery.
 
 **GOV-008:** This read order links each capability to its owning detailed contracts and acceptance.
 
+<a id="core-capability-owners"></a>
+
 ## Capabilities and acceptance
 
 | Capability | Start here | QA |

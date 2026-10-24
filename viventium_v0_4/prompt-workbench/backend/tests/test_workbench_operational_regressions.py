@@ -37,6 +37,68 @@ def test_native_terminal_schema_contract_is_visible_in_prompt_workbench(prompt_i
         assert rows[ref]["path"].startswith("viventium_v0_4/xPerfect/")
 
 
+def test_native_schedule_owner_is_visible_without_copying_its_prompt():
+    rows = {row["id"]: row for row in prompt_service.related_config_for_prompt("worker.native_capability_inventory")}
+    row = rows["worker-native-schedule-tools"]
+    assert row["path"].endswith("workers_projects_runtime/prompts/schedule-tools.json")
+    assert row["selector"] == "schedule_run_now"
+    assert row["status"] == "source"
+
+
+def test_direct_handoff_owner_is_visible_without_copying_its_prompt():
+    rows = {row["id"]: row for row in prompt_service.related_config_for_prompt("main.tools")}
+    row = rows["worker-native-coordination-tools"]
+    assert row["path"].endswith("workers_projects_runtime/prompts/coordination-tools.json")
+    assert row["selector"] == "hand_off_to"
+    assert row["status"] == "source"
+
+
+
+def test_cortex_action_claim_cases_keep_exact_source_lineage():
+    case_ids = [
+        "cortex_math_keeps_quantitative_result",
+        "cortex_concurrent_work_does_not_infer_global_inaction",
+        "cortex_verified_result_retains_actor_scope",
+    ]
+    selected = evals._selected_eval_cases(
+        prompt_service.load_eval_bank(),
+        family="cortex_assignment_role_boundary",
+        surface="web",
+        prompt_id="surface.cortex_output.base",
+        case_ids=case_ids,
+        max_cases=len(case_ids),
+    )
+    assert [row["case"]["id"] for row in selected] == case_ids
+    lineage = evals._eval_lineage_manifest(selected)
+    dependencies = {row["id"]: row for row in lineage["promptDependencies"]}
+    for prompt_id in (
+        "cortex.parietal_cortex.execution",
+        "surface.cortex_output.base",
+        "surface.cortex_output.web",
+        "cortex.execution_subject",
+    ):
+        assert dependencies[prompt_id]["status"] == "available"
+        assert dependencies[prompt_id]["renderedHash"]
+    assert {
+        "from": "surface.cortex_output.web",
+        "to": "surface.cortex_output.base",
+        "kind": "includes",
+    } in lineage["includeEdges"]
+
+
+@pytest.mark.parametrize("surface", ("web", "telegram", "voice", "playground"))
+def test_cortex_shared_claim_scope_survives_workbench_render_and_bundle(surface):
+    registry = prompt_service.load_prompt_registry(prompt_service.PROMPTS_ROOT)
+    base = registry["surface.cortex_output.base"].body.strip()
+    prompt_id = "surface.cortex_output." + surface
+    rendered = prompt_service._render_prompt_preview(prompt_id, registry)
+    bundle = prompt_service.prompt_bundle()
+    assert rendered.count(base) == 1
+    assert prompt_service.render_prompt(prompt_id, registry) == rendered
+    assert bundle["prompts"]["surface.cortex_output.base"]["body"].strip() == base
+    assert "surface.cortex_output.base" in registry[prompt_id].metadata["includes"]
+
+
 @pytest.mark.parametrize("private_source", (False, True))
 def test_workbench_never_reuses_generated_runtime_yaml_as_prompt_source(
     tmp_path: Path,

@@ -24,6 +24,7 @@ from TelegramVivBot.utils.librechat_bridge import (
     _start_chat_error_message,
     _start_chat_error_safe_to_retry,
     _stream_error_message,
+    _host_capacity_error_message,
     _is_file_attachment_payload,
     _empty_response_message,
     extract_completed_cortex_insights,
@@ -671,7 +672,7 @@ def test_stream_error_message_classifies_tool_errors():
         ),
         (
             "completion_error",
-            "The model provider could not complete this request.",
+            "Viventium could not complete this request. Please try again.",
         ),
         (
             "tool_cortex_deferred_main_response",
@@ -722,7 +723,7 @@ def test_extract_final_error_class_from_content_part():
             "content": [
                 {
                     "type": "error",
-                    "error": "The model provider could not complete this request.",
+                    "error": "Viventium could not complete this request. Please try again.",
                     "error_class": "completion_error",
                 }
             ]
@@ -2229,7 +2230,7 @@ async def test_stream_response_reports_expired_stream_as_non_spoken_bridge_error
         ({"_sse_event": "error", "error": {"message": "synthetic-private-diagnostic", "code": "provider_quota_exhausted"}},
          "The selected model provider quota is exhausted. Try again after the reset or use the configured fallback.", "provider_quota_exhausted"),
         ({"_sse_event": "error", "error": "synthetic-private-diagnostic", "error_class": "synthetic_unknown_code"},
-         "The model provider could not complete this request.", "synthetic_unknown_code"),
+         "Viventium could not complete this request. Please try again.", "synthetic_unknown_code"),
         ({"_sse_event": "error", "error": "synthetic timeout"}, "Connection error. Please retry.", None),
     ],
 )
@@ -2424,7 +2425,7 @@ async def test_stream_response_recoverable_final_error_starts_durable_followup(m
                 {"type": "cortex_brewing", "status": "brewing"},
                 {
                     "type": "error",
-                    "error": "The model provider could not complete this request.",
+                    "error": "Viventium could not complete this request. Please try again.",
                     "error_class": "completion_error",
                 },
             ],
@@ -2590,7 +2591,7 @@ async def test_recoverable_final_error_becomes_truthful_terminal_error_after_pol
     bridge._pending_stream_errors = {
         stream_id: {
             "error_class": "completion_error",
-            "message": "The model provider could not complete this request.",
+            "message": "Viventium could not complete this request. Please try again.",
         }
     }
     bridge._set_active_stream(chat_id, stream_id)
@@ -2599,7 +2600,7 @@ async def test_recoverable_final_error_becomes_truthful_terminal_error_after_pol
     await bridge._poll_for_followup(stream_id=stream_id, chat_id=chat_id)
 
     assert delivered == [
-        (111, "The model provider could not complete this request.", "HTML")
+        (111, "Viventium could not complete this request. Please try again.", "HTML")
     ]
 
 
@@ -3925,6 +3926,155 @@ async def test_ack_delivery_is_optional_generic_and_non_throwing(monkeypatch):
     }
     assert captured["url"].endswith("/api/viventium/interactions/delivery-ack")
     assert captured["headers"] == {"x-viventium-adapter-secret": "adapter-secret"}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("state", ["partial_removed", "failed"])
+async def test_main_non_delivery_receipt_survives_transport_outage_and_bridge_restart(
+    tmp_path, monkeypatch, state
+):
+    bridge = _make_bridge()
+    queue_path = tmp_path / "existing-acks.sqlite3"
+    bridge._cortex_ack_store = _CortexTelegramAckStore(queue_path, retry_delay_s=0)
+    monkeypatch.setenv("VIVENTIUM_DELIVERY_ACK_ENDPOINT", "/api/viventium/interactions/delivery-ack")
+    monkeypatch.setenv("VIVENTIUM_TELEGRAM_INTERACTION_ADAPTER_SECRET", "synthetic-adapter-secret")
+    attempts = []
+    core_available = False
+
+    class _Response:
+        def __init__(self, status):
+            self.status_code = status
+
+        def json(self):
+            return {"acknowledged": self.status_code == 200}
+
+    class _Client:
+        def __init__(self, **_kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_args):
+            return False
+
+        async def post(self, _url, *, json, headers):
+            assert bridge._cortex_ack_store.pending_count() == 1
+            attempts.append(dict(json))
+            return _Response(200 if core_available else 503)
+
+    async def no_delay(_seconds):
+        pass
+
+    async def no_user_output(*_args, **_kwargs):
+        pytest.fail("receipt retry must not resend or retract a user message")
+
+    import TelegramVivBot.utils.librechat_bridge as module
+    monkeypatch.setattr(module.httpx, "AsyncClient", _Client)
+    monkeypatch.setattr(module.asyncio, "sleep", no_delay)
+    expected = {"logical_turn_id": "main-turn", "revision": 1,
+                "state": state, "presentation_ref": "telegram:111"}
+    assert await bridge.ack_delivery("main-turn", 1, state, "telegram:111") is False
+    assert bridge._cortex_ack_store.pending_count() == 1
+    assert attempts == [expected] * 3
+
+    restarted = _make_bridge()
+    restarted._cortex_ack_store = _CortexTelegramAckStore(queue_path, retry_delay_s=0)
+    restarted.set_on_message_callback(no_user_output)
+    restarted.set_on_retraction_callback(no_user_output)
+    core_available = True
+    assert await restarted._drain_cortex_acknowledgements() == 1
+    assert restarted._cortex_ack_store.pending_count() == 0
+    assert attempts == [expected] * 4
+    assert await restarted._drain_cortex_acknowledgements() == 0
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("status", ["conflict", "stale_revision", "stale_source_order", "not_found"])
+async def test_main_non_delivery_outbox_retires_definitive_refusal_without_resending(
+    monkeypatch, status
+):
+    bridge = _make_bridge()
+    attempts = []
+
+    async def ack_status(*args, **kwargs):
+        assert bridge._cortex_ack_store.pending_count() == 1
+        attempts.append((args, kwargs))
+        return status
+
+    async def no_user_output(*_args, **_kwargs):
+        pytest.fail("a Main receipt refusal does not resend a message")
+
+    monkeypatch.setattr(bridge, "ack_delivery_status", ack_status)
+    bridge.set_on_message_callback(no_user_output)
+    bridge.set_on_retraction_callback(no_user_output)
+    assert await bridge.ack_delivery("main-turn", 1, "partial_removed", "telegram:111") is False
+    assert bridge._cortex_ack_store.pending_count() == 0
+    assert await bridge._drain_cortex_acknowledgements() == 0
+    assert attempts == [(("main-turn", 1, "partial_removed", "telegram:111", None),
+                         {"cortex_presentation": None})]
+
+
+@pytest.mark.asyncio
+async def test_committed_delivery_keeps_its_existing_immediate_acceptance_path(monkeypatch):
+    bridge = _make_bridge()
+    calls = []
+
+    async def ack_status(*args, **kwargs):
+        assert bridge._cortex_ack_store.pending_count() == 0
+        calls.append((args, kwargs))
+        return "unavailable"
+
+    monkeypatch.setattr(bridge, "ack_delivery_status", ack_status)
+    assert await bridge.ack_delivery("main-turn", 1, "committed", "telegram:111:42",
+                                     ["telegram:111:42"], effect_ref="accepted-work") is False
+    assert bridge._cortex_ack_store.pending_count() == 0
+    assert calls == [(("main-turn", 1, "committed", "telegram:111:42", ["telegram:111:42"]),
+                      {"effect_ref": "accepted-work"})]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("interruption", ["before-core-acceptance", "after-core-acceptance"])
+async def test_main_non_delivery_queue_recovers_interrupted_first_attempt(
+    monkeypatch, tmp_path, interruption
+):
+    bridge = _make_bridge()
+    path = tmp_path / "existing-ack-queue.sqlite3"
+    bridge._cortex_ack_store = _CortexTelegramAckStore(path, retry_delay_s=0)
+    accepted = []
+
+    async def acknowledge(*args, **kwargs):
+        assert bridge._cortex_ack_store.pending_count() == 1
+        if interruption == "before-core-acceptance":
+            raise asyncio.CancelledError()
+        accepted.append((args, kwargs))
+        return "recorded"
+
+    def interrupted_local_completion(_key):
+        raise RuntimeError("synthetic interruption after Core accepted the receipt")
+
+    monkeypatch.setattr(bridge, "ack_delivery_status", acknowledge)
+    if interruption == "after-core-acceptance":
+        monkeypatch.setattr(bridge._cortex_ack_store, "mark_done", interrupted_local_completion)
+    expected_error = asyncio.CancelledError if interruption == "before-core-acceptance" else RuntimeError
+    with pytest.raises(expected_error):
+        await bridge.ack_delivery("original-turn", 2, "partial_removed", "telegram:111")
+    assert bridge._cortex_ack_store.pending_count() == 1
+
+    restarted = _make_bridge()
+    restarted._cortex_ack_store = _CortexTelegramAckStore(path, retry_delay_s=0)
+
+    async def recovered_acknowledgement(*args, **kwargs):
+        accepted.append((args, kwargs))
+        return "recorded"
+
+    monkeypatch.setattr(restarted, "ack_delivery_status", recovered_acknowledgement)
+    assert await restarted._drain_cortex_acknowledgements() == 1
+    assert restarted._cortex_ack_store.pending_count() == 0
+    assert await restarted._drain_cortex_acknowledgements() == 0
+    expected = (("original-turn", 2, "partial_removed", "telegram:111", None),
+                {"cortex_presentation": None})
+    assert accepted == [expected] * (1 if interruption == "before-core-acceptance" else 2)
 
 
 @pytest.mark.asyncio
@@ -8803,3 +8953,50 @@ def test_public_success_identity_rejects_non_completion(patch):
     payload = {"final": True, "responseMessage": {"user": "owner", "messageId": "id", "unfinished": False}}
     payload.update(patch)
     assert _native_file_identity_from_final(payload) is None
+
+
+@pytest.mark.parametrize("dimension,expected", [
+    ("diskBytes", "The computer running Viventium is low on disk space and could not start this reply. Free some space, then retry."),
+    ("memoryBytes", "The computer running Viventium is low on memory and could not start this reply. Close unused apps, then retry."),
+])
+@pytest.mark.parametrize("final", [False, True])
+def test_host_capacity_uses_numeric_admission_cause_not_exception_prose(dimension, expected, final):
+    part = {"type": "error", "error_class": "host_capacity",
+            "capacity_class": "resource_pressure",
+            "error": "private diagnostic secret-placeholder",
+            "capacity_available": {dimension: 2}, "capacity_required": {dimension: 4},
+            "capacity_shortage": {dimension: 2}}
+    payload = {"responseMessage": {"content": [part]}} if final else part
+    assert _host_capacity_error_message(payload) == expected
+
+
+@pytest.mark.parametrize("capacity_class", [None, "resource_probe_unavailable", "family_lane"])
+@pytest.mark.parametrize("final", [False, True])
+def test_host_capacity_does_not_turn_unknown_probe_placeholders_into_disk_advice(capacity_class, final):
+    part = {"type": "error", "error_class": "host_capacity", "capacity_class": capacity_class,
+            "capacity_available": {"diskBytes": 0, "memoryBytes": 0},
+            "capacity_required": {"diskBytes": 4096, "memoryBytes": 2048},
+            "capacity_shortage": {"diskBytes": 4096, "memoryBytes": 2048}}
+    payload = {"responseMessage": {"content": [part]}} if final else part
+    assert _host_capacity_error_message(payload) == "Local AI capacity is busy. Please try again shortly."
+
+
+def test_host_capacity_rejects_malformed_counters_and_unknown_diagnostic_text():
+    payload = {"code": "host_capacity", "available": {"diskBytes": "0"},
+               "required": {"diskBytes": True}, "shortage": {"diskBytes": "4"},
+               "message": "private diagnostic secret-placeholder"}
+    assert _host_capacity_error_message(payload) == "Local AI capacity is busy. Please try again shortly."
+    assert _stream_error_message("secret-placeholder", error_class="host_capacity") == "Local AI capacity is busy. Please try again shortly."
+
+
+@pytest.mark.asyncio
+async def test_host_capacity_foreground_error_is_actionable_and_never_spoken():
+    bridge = object.__new__(LibreChatBridge)
+    event = await bridge._foreground_failure_event(
+        "generic", error_class="host_capacity", chat_id="synthetic-chat",
+        payload={"error": {"code": "host_capacity", "capacityClass": "resource_pressure", "available": {"diskBytes": 2},
+                            "required": {"diskBytes": 4}}},
+    )
+    assert event["text"] == "The computer running Viventium is low on disk space and could not start this reply. Free some space, then retry."
+    assert event["speak"] is False
+    assert event["error_class"] == "host_capacity"

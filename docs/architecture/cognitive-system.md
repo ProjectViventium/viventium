@@ -69,6 +69,96 @@ or database. Solid connections carry context, work, or results. Dashed connectio
 definitions. Across harnesses, channels, and background paths, parity means the same quality and
 allowed capabilities, subject to each surface's real limits.
 
+## Viventium cognition and xPerfect execution
+
+**Viventium defines the mind and the relationship. xPerfect runs the AI and coordinates its work.**
+Viventium owns identity, personality, Life context, memory, Feelings, cognitive prompts, and the
+meaning and behavior of its subconscious and cortices. It also owns which channels the user chose,
+what may be shown or spoken there, and the receipts that confirm delivery. These remain Viventium
+capabilities when their hosting changes; removing LibreChat does not remove cognition.
+
+xPerfect supplies the AI functions and runtime: direct model calls, native harnesses, configured
+models and effort, reusable sessions, the Queen and Worker Bees A…N, handoff, steering, execution,
+recovery, and the scheduling clock. Viventium supplies authorized context and capabilities through
+that runtime. It does not recreate a harness manager, worker router, or second clock. xPerfect does
+not decide what Viventium's Feelings mean, keep a second cognitive state, or require Viventium to
+serve another application. Cognitive agents can execute through xPerfect without moving the
+ownership of their definitions or state into xPerfect.
+
+### Independent projects
+
+**Viventium is a cognitive system and one of many applications that can use xPerfect. xPerfect is
+the independent control plane, orchestrator, manager and harness of harnesses.** Neither its native
+UI nor another application needs Viventium installed. This is a dependency direction, not only a
+diagram label.
+
+| Owner | Keeps and develops |
+| --- | --- |
+| xPerfect | Standalone UI/API/MCP, projects/goals/workers/runs, native coordination and configurable Queen, Direct/native execution, model/effort/accounts, authorized context/tools/files, sessions/warm capacity, workspaces, lifecycle controls, clock/outbox, artifacts, recovery and runtime evidence. |
+| Viventium | Identity/personality, Life/memory/Feelings, Workbench/cognitive prompts, subconscious/cortices, continuity and sleep/dreaming, channel policy/media, conversation bindings and user-facing delivery receipts. |
+| Viventium adapter | Translates Viventium identity, approved context, capabilities, files and channel bindings into generic xPerfect requests; receives generic results/due webhooks and calls ordinary Main. It owns application-specific configuration and migration. |
+| Other applications | Their own domain state, context preparation, endpoint and presentation. They use the same xPerfect contracts or its standalone operator interface. |
+
+New xPerfect code, schemas, configuration and defaults must not contain Viventium-specific routing,
+cognitive interpretation, database/prompt dependencies or folder discovery. Put those behaviors in
+Viventium's existing compiler/context/integration owners. xPerfect preserves authorized context,
+roles, ordering, hashes and capabilities without deciding what a Feeling means. Its execution
+history remains separate from Viventium's cognitive memory. Use one native management owner per
+work item; do not run competing hosted-Main and standalone-coordinator ledgers for the same work.
+
+Current source still contains host-specific environment, prompt/Feeling, authority/header and
+broker compatibility. That is explicit transition work, not proof this separation is already
+complete. Preserve exact context and authority while replacing the confirmed producers/consumers;
+do not purge old fields or disable working clients to make the diagram look clean.
+
+The xPerfect repository owns its generic technical plan and standalone success criteria in
+`docs/09_Application_Boundary_Contract.md`, linked from its own architecture and README. Viventium's
+[integration plan and success criteria](../requirements_and_learnings/capabilities/main-scheduling-continuity.md#viventium-integration-plan-and-success-criteria)
+own only its adapter, cognition, channels and migration. The repository boundary is an approved
+requirement. The runtime extension was approved on 2026-10-23; implementation and acceptance
+are tracked in the owning scheduling contract.
+
+### One relationship, with a fast Queen and capable workers
+
+Text, Telegram, and Voice feed the same ordered input owner. Preserve every original A, B, C…
+segment, files, history, authority, and unfinished work. The configured Queen is the Main: one
+speaking personality that can answer, continue an existing worker, or start more workers. A fast
+Direct Queen remains a valid configuration; cognition does not require an extra slow planning
+model before each reply.
+
+For the fast Direct profile, `hand_off_to` and `list_workers` are the small work interface. Action
+capabilities belong to the configured native workers. Scheduling uses the scoped native-worker
+tools described in the scheduling contract; existing Cortex definitions retain their service owner.
+Handoff shares the original authorized conversation and context; it does not require the Queen to
+rewrite a brief.
+An accepted handoff confirms admission, not that the requested action succeeded. Worker results,
+files, failures, and requests for needed input return to the same Queen, which talks naturally to
+the user. Internal status belongs in Active Work and logs, not repeated chat or speech.
+
+Subconscious activation and configured cortices run beside Main, without holding its first reply.
+The finite activated set may pass one settled useful batch to the same Queen, excluding silent
+“nothing to add” (NTA) results and without waiting for unrelated workers. Existing noninterrupting
+native steering
+is preferred where supported; otherwise use the existing durable Main follow-up. Keep memory
+maintenance in parallel. This is the required behavior, not a claim that every native harness
+supports live steering or that all cross-channel acceptance has passed.
+
+### Scheduling keeps this same split
+
+The approved scheduling integration uses xPerfect's existing clock to notify a configured
+application endpoint. Viventium receives that signed due notice in its own adapter, restores its
+current authorized cognitive context, and makes its ordinary xPerfect AI request. xPerfect runs
+the configured Queen and workers; Viventium presents the result through the saved selected channels.
+Another application can supply its own endpoint, context, and presentation without importing
+Viventium. A standalone xPerfect worker schedule needs no application endpoint.
+
+The [scheduling contract](../requirements_and_learnings/capabilities/main-scheduling-continuity.md#proposed-xperfect-scheduling-integration)
+owns the trigger, authority, receipts, migration, implementation record and acceptance details.
+The [Should-flow report](../../qa/parallel-orchestrator/reports/2026-10-23-should-flow-acceptance.md)
+records the loaded local integration and bounded real-channel results. Retained Scheduling Cortex
+definitions keep their existing owner until their migration is accepted; never run two clocks for
+one occurrence. Approval and local acceptance do not certify every release or channel case.
+
 ## New-user journey
 
 1. **Install** with a DMG or one command. Open-source distribution is the target.
@@ -136,3 +226,18 @@ For changes, use this vision with the [key principles](../requirements_and_learn
 and the [owning feature contract](../README.md#capabilities-and-acceptance). Earlier V0.5 proposals remain
 useful exploration; they cannot override this approved definition or approve unrelated UI,
 licensing, implementation, or release decisions.
+
+
+## Approved application boundary diagrams — 2026-10-23
+
+### Ordinary conversation
+
+![Viventium cognition uses the independent xPerfect runtime](assets/application-boundary/ordinary.svg)
+
+### Scheduled continuation
+
+![xPerfect sends a signed due request; Viventium continues ordinary Main](assets/application-boundary/scheduled.svg)
+
+Horizontal dashed boundaries separate application cognition from generic execution and orchestration.
+These are the approved ownership and flow diagrams. The scheduling capability contract owns current
+implementation, configuration, acceptance and retained compatibility; a diagram is not a test result.

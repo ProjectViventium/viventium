@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import base64
 import contextlib
 import fcntl
 import hashlib
@@ -439,9 +440,24 @@ def release_services(root: Path) -> tuple[str, ...]:
 
 def native_glasshive_transport_environment(
     root: Path, support: Path, *, database_path: Path | None = None,
+    runtime_env: dict[str, str] | None = None,
 ) -> dict[str, str]:
     if not native_body_paths(root):
         return {}
+    if runtime_env is None:
+        path = support / "runtime/runtime.env"
+        try:
+            runtime_env = load_native_runtime_env(path)
+        except RuntimeError_ as error:
+            if not isinstance(error.__cause__, FileNotFoundError):
+                raise
+            # Setup may not have installed the optional behavior contract yet.
+            try:
+                path.lstat()
+            except FileNotFoundError:
+                runtime_env = {}
+            else:
+                raise
     database_path = database_path or support / "state/runtime/native/glasshive/runtime.sqlite"
     key = bytes.fromhex(runtime_secrets(support)["CREDS_KEY"])
     token_domains = {
@@ -453,8 +469,12 @@ def native_glasshive_transport_environment(
         "VIVENTIUM_GLASSHIVE_CAPABILITY_BROKER_SECRET": "capability-broker",
         "VIVENTIUM_GLASSHIVE_ADMISSION_SECRET": "capability-admission",
         "GLASSHIVE_BOOTSTRAP_SOURCE_SECRET": "bootstrap-source",
+        "VIVENTIUM_XPERFECT_SCHEDULE_WEBHOOK_SECRET": "schedule-webhook",
     }
     environment = {name: hmac.new(key, f"viventium.native.glasshive.{domain}.v1".encode(), hashlib.sha256).hexdigest() for name, domain in token_domains.items()}
+    environment["VIVENTIUM_XPERFECT_SCHEDULE_WEBHOOK_SECRET"] = "whsec_" + base64.b64encode(
+        bytes.fromhex(environment["VIVENTIUM_XPERFECT_SCHEDULE_WEBHOOK_SECRET"])
+    ).decode("ascii")
     base = "http://127.0.0.1:3190"
     environment.update({
         "GLASSHIVE_PROVIDER_BASE_URL": base + "/__viventium_native_glasshive/v1",
@@ -462,6 +482,7 @@ def native_glasshive_transport_environment(
         "GLASSHIVE_RUNTIME_PUBLIC_BASE_URL": base + "/__viventium_native_glasshive",
         "GLASSHIVE_MCP_URL": base + "/__viventium_native_glasshive_mcp/mcp",
         "VIVENTIUM_GLASSHIVE_CALLBACK_URL": base + "/api/viventium/glasshive/callback",
+        "VIVENTIUM_XPERFECT_SCHEDULE_WEBHOOK_URL": base + "/api/viventium/scheduler/due",
         "VIVENTIUM_GLASSHIVE_ADMISSION_URL": base + "/api/viventium/glasshive/capabilities/admit",
         "VIVENTIUM_NATIVE_GLASSHIVE_SOCKET": str(native_glasshive_socket_path(support)),
         # Host workers read background beyond the inline limit through the runtime's
@@ -476,6 +497,13 @@ def native_glasshive_transport_environment(
             str(support / "data/uploads"), str(database_path.parent / "managed-files"),
         )),
     })
+    if runtime_env.get("VIVENTIUM_XPERFECT_SCHEDULED_WAKES_ENABLED") == "true":
+        environment.update({
+            "WPR_RECURRING_SCHEDULE_OWNER": "native",
+            "WPR_WEBHOOK_ALLOWED_PORTS": "443,3190",
+            "WPR_WEBHOOK_ALLOW_LOCAL_HTTP": "true",
+        })
+
     return environment
 
 
@@ -526,10 +554,11 @@ def native_glasshive_environment(root: Path, support: Path) -> dict[str, str]:
     }
     bodies = native_body_paths(root)
     if bodies:
-        environment.update({name: value for name, value in load_native_runtime_env(support / "runtime/runtime.env").items()
+        runtime_env = load_native_runtime_env(support / "runtime/runtime.env")
+        environment.update({name: value for name, value in runtime_env.items()
                             if name in NATIVE_ALLOWED_PLAIN_ENV or name.startswith("VIVENTIUM_")})
         environment.update(native_glasshive_transport_environment(
-            root, support, database_path=Path(environment["WPR_DB_PATH"]),
+            root, support, database_path=Path(environment["WPR_DB_PATH"]), runtime_env=runtime_env,
         ))
         environment.update(native_scheduling_environment(root, support))
         environment.update({
@@ -808,6 +837,8 @@ NATIVE_FIXED_ENV = {
     "SANDPACK_STATIC_BUNDLER_URL": "http://127.0.0.1:3191/",
 }
 NATIVE_ALLOWED_PLAIN_ENV = {
+    "WPR_RECURRING_SCHEDULE_OWNER", "WPR_WEBHOOK_ALLOW_LOCAL_HTTP",
+    "WPR_WEBHOOK_ALLOWED_PORTS", "WPR_WEBHOOK_ALLOWED_NETWORKS",
     "DEBUG_LOGGING",
     "MONGO_AUTO_INDEX",
     "OTUC_ACTIVATION_LLM",
@@ -2603,7 +2634,7 @@ def start(
         mongo_uri = mongodb_uri(support)
         env = native_child_environment(support)
         env.update(runtime_secrets(support, create=False))
-        env.update(native_glasshive_transport_environment(root, support))
+        env.update(native_glasshive_transport_environment(root, support, runtime_env=env))
         env.update(native_scheduling_environment(root, support))
         env.update(native_redis_environment(root, support))
         env.update(

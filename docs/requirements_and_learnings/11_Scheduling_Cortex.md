@@ -6,6 +6,16 @@ scheduling-specific page inside the Viventium core UI; Prompt Workbench owns tha
 A hosted GlassHive control plane may expose its own Schedules tab under the single-writer delegation
 contract below.
 
+## Retained service boundary
+
+This document owns the existing Scheduling Cortex service and its saved definitions. The separate
+[xPerfect scheduled-Main integration](capabilities/main-scheduling-continuity.md#proposed-xperfect-scheduling-integration)
+uses xPerfect's generic clock and native-worker scheduling, while Viventium owns cognition and
+channel presentation. Its source configuration is `integrations.glasshive.scheduled_wakes`; its
+[setup instructions](../../viventium_v0_4/docs/DEVELOPMENT_GUIDE.md#xperfect-scheduled-main)
+reuse the normal runtime compiler. Enabling that adapter does not migrate or delete Cortex rows.
+Cortex-only restrictions and defaults below do not restrict the independent xPerfect path.
+
 ## Executive Summary
 
 The dedicated Scheduling MCP server:
@@ -21,7 +31,7 @@ The dedicated Scheduling MCP server:
 
 1. Reuse Prompt Workbench for schedule authoring, effective-prompt inspection, and run history; do
    not add a continuity-specific page.
-2. Main is the only model/agent allowed to create schedules. Authenticated users may also author
+2. On this retained Cortex service, Main is the only model/agent allowed to create schedules. Authenticated users may also author
    through Prompt Workbench or a delegated Glass Drive UI; those surfaces call the selected
    recurrence owner and never create a shadow schedule store.
 3. Per-user isolation.

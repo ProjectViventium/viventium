@@ -84,6 +84,23 @@ save or emit current assistant prose. A `response_only` adapter stops stale pros
 without cancelling already accepted durable work. An unfinished assistant row is removed from
 conversation context and replaced only by content-free audit metadata; refresh must not restore B.
 
+Automatic parent selection must distinguish a live assistant draft from a persisted native Stop.
+The existing `finish_reason=incomplete` marker preserves that Stop's partial answer, interruption
+context and replay even when `unfinished=true`. The raw leaf selector remains available to
+callbacks that need to detect active Main. This does not weaken explicit source-edit or ownership
+guards, remove returned history, or add a wait before new input.
+
+A terminal system error bound to the current native request must settle its pending or prepared
+canonical reply through the existing native failure owner, then close its stream with the saved
+typed cause. Revoking an old producer must not suppress that terminal delivery. A failure may be
+recorded after its authored parent changed without accepting a stale successful answer. Committed,
+stopped, removed, revoked, explicitly edited and foreign replies remain protected; late Cortex
+results cannot reopen terminal text. Recovery reads that saved outcome without replaying work.
+If the terminal database write exhausts, proof of this request's own revocation still closes only
+its typed error stream. Existing recorded-failure recovery can later persist that historical failed
+reply from the exact matching durable error job and revocation receipt. It cannot replace a
+confirmed Stop, publish into a successor, change the failure payload, or replay the task.
+
 ### Adapter capabilities and delivery acknowledgement
 
 Every adapter declares:

@@ -744,6 +744,8 @@ def _config_source_path(path_name: str) -> Path | None:
             "agent_builder_control.py", "grok_runtime.py",
         )
     }
+    worker_owners.add(worker_root / "prompts" / "schedule-tools.json")
+    worker_owners.add(worker_root / "prompts" / "coordination-tools.json")
     if (
         candidate.is_file()
         and (

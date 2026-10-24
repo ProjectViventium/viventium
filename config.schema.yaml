@@ -634,6 +634,25 @@ properties:
         properties:
           enabled:
             type: boolean
+          scheduled_wakes:
+            type: object
+            description: Use xPerfect's generic clock to wake ordinary Viventium Main. Existing Cortex definitions retain their owner until migrated.
+            properties:
+              enabled:
+                type: boolean
+                default: false
+              destination_id:
+                type: string
+                pattern: '^whd_[a-f0-9]{32}$'
+                description: Protected owner-scoped destination returned by setup; omit for idempotent automatic setup.
+              receiver_url:
+                type: string
+                description: Operator-owned due endpoint. Defaults to the local profile; remote endpoints require HTTPS.
+              allowed_receiver_networks:
+                type: array
+                items:
+                  type: string
+                description: Explicit operator CIDRs for private HTTPS receivers. Public and local-loopback defaults need no entry.
           artifact_base_url:
             type: string
             description: User-facing base URL for generated GlassHive artifact links.

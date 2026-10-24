@@ -26,6 +26,13 @@ not select the main Viventium Telegram bridge's model.
   rerun tool actions. Starting execution again remains a distinct, authorized Retry action.
 - Telegram bot-token setup must stay truthful and reject malformed tokens.
 - Telegram must differentiate voice-note input vs text input and forward that mode to LibreChat.
+- An attachment-only message is a current input even when its caption is empty. Keep its source
+  identity and exact current file references in native replay and the shared source capsule.
+  Historical files remain available as context; they must not replace or masquerade as the new input.
+  Apply this contract to every supported attachment kind and surface. Models choose the useful
+  action through existing native capabilities; do not add file-type intent routing.
+- A generic completion failure does not establish a provider failure. Use neutral user-facing
+  wording unless a typed diagnosis identifies the failed prerequisite or provider.
 - Telegram media transcription failures must surface as explicit media errors, not as transcript text,
   and must not be forwarded into LibreChat as if the user said them.
 - Telegram text responses should use robust Telegram HTML generated from standard Markdown. Telegram
@@ -734,6 +741,21 @@ Prompt-layer ownership and the runtime-vs-prompt boundary are also recorded in
     minutes, capped at 10 minutes. A lost claim must be returned as a conflict and logged as
     observability, not silently treated as a successful status update.
   - These knobs must not replace the durable delivery ledger or become correctness requirements.
+
+## Foreground Typing Indicator
+
+- Typing belongs to the current foreground reply. Start its repeating task inside the reply's
+  existing cleanup scope, after setup. A setup error or cancellation must not leave a typing task.
+- Stop and cancel typing when the first answer appears and before any other cleanup await.
+  An in-flight Bot API action must not refresh typing after the reply has ended.
+- A superseded input stops refreshing typing through the existing local source-order fence.
+  Use the bound presentation sequence so coalesced inputs keep their current reply. Do not add a
+  remote Core check to each refresh.
+- Success, silent completion, failure and cancellation all release the task. Background memory,
+  cortices, callbacks and worker work do not keep foreground typing alive.
+- Keep bounded start/stop timing evidence without message text or per-refresh log spam. Historical
+  logs without this evidence cannot prove which cancellation or setup failure caused an incident.
+- Acceptance: [TR-033](../../qa/telegram-runtime/cases.md#case-tr-033-typing-stops-with-its-foreground-reply).
 
 ## Telegram Attachments
 

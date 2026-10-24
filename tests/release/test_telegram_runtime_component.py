@@ -354,6 +354,16 @@ def test_component_prepare_is_content_addressed_and_public_code_only(
     assert Path(selected["handoff_helper"]) == (
         code_root / "scripts" / "viventium" / "telegram_poller_handoff.py"
     )
+    process_owner = code_root / "scripts" / "viventium" / "parallel_work_release_gate.py"
+    assert process_owner.read_bytes() == (
+        REPO_ROOT / "scripts" / "viventium" / "parallel_work_release_gate.py"
+    ).read_bytes()
+    helper_help = subprocess.run(
+        [sys.executable, selected["handoff_helper"], "--help"],
+        cwd=tmp_path, check=False, capture_output=True, text=True,
+    )
+    assert helper_help.returncode == 0, helper_help.stderr
+    assert "wait-ready" in helper_help.stdout
     assert Path(selected["compat_cli"]) == code_root / "bin" / "viventium"
     # The controller launcher can run against an older predecessor checkout.
     # Its instance-secret command must travel with the controller, not that checkout.
@@ -1471,6 +1481,7 @@ def test_telegram_component_requires_shared_speech_and_media_library() -> None:
     module = _load_component_module()
     selected = dict((relative.as_posix(), source) for source, relative in module._selected_sources(REPO_ROOT))
     for relative in (
+        "scripts/viventium/parallel_work_release_gate.py",
         "viventium_v0_4/shared/telegram_tts.py",
         "viventium_v0_4/shared/telegram_audio.py",
         "viventium_v0_4/telegram-viventium/TelegramVivBot/utils/tts.py",

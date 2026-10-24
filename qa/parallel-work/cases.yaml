@@ -13,6 +13,14 @@ journeys:
     degradedAndRecovery: Exact replay returns the same receipt; changed payload under the same reference fails closed; capacity shortage stays queued truthfully.
     persistenceAndCleanup: Restart preserves both missions and one result each; synthetic work and artifacts are removed exactly.
     evidence: [source order, effect receipts, mission rows, overlap timing, visible useful reply with correlated admission/queue/native work/forwarding/channel timing and no demonstrated avoidable application delay, actual native tool calls and permissions, useful live results, cleanup proof]
+  - id: PAR-QA-SILENT-TERMINAL-001
+    requirements: [PW-026, PW-027, PW-028]
+    userAction: Start two independent synthetic jobs, stop only one, and ask Main a simple question while the other continues.
+    surfaces: [Web, Telegram, Voice, Active Work]
+    expectedResult: Only the selected job stops. Main answers, the sibling completes once, and ordinary silent outcomes settle without a presenter, pending delivery or repeated work reads. A cortex does not turn its own read-only limits into claims about other actors.
+    degradedAndRecovery: Retained terminal enqueued rows heal only from exact authoritative silent evidence. Foreign or stale evidence and a newer run or generation cannot be overwritten.
+    persistenceAndCleanup: Reload preserves the stopped and completed states. The next current roster clears settled work without hiding another active mission. Preserve scoped audit receipts.
+    evidence: [exact Stop action and sibling run identity, canonical result, silent delivery state, three reconciliation passes without repeated settled-work reads, fresh cortex disposition, next-turn roster and actual reloaded surface]
   - id: PAR-QA-PERF-001
     requirements: [PW-092]
     userAction: Change focused or parallel mode and send focused-mode control requests under representative load.

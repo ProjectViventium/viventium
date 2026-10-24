@@ -302,3 +302,27 @@ expose a dead copied/new-tab URL. Keyboard activation must work. A foreign owner
 or unavailable file must not gain download authority; unrelated references remain ordinary links.
 Reload the message and repeat the download. Correlate the exact loaded client bundle and File
 receipt. Current-batch user acceptance: NOT RUN until loaded.
+
+## Attachment-only current input after unrelated history
+
+Send a photo question, then a small CSV question, then a different audio file without a caption.
+Repeat the attachment-only input through another supported surface. The new source must retain
+its own identity, empty caption, declared kind and exact current file references. Historical media
+must remain context. Main must process or delegate the current attachment through declared native
+capabilities, or ask a useful clarification; it must not repeat an older answer or invent a
+transcription. Verify original bytes, native source labels, real tool receipts, visible result,
+next-message recovery and persistence. A native voice note retains its separate existing speech
+input contract. Apply missing-file and transcription-failure cases without treating error text as
+user speech. Keep synthetic fixtures out of personal memory and normal recall.
+
+### Historical audio selection and explicit limits
+
+Use two short synthetic audio files with different spoken questions and different expected answers.
+Do not use duplicate bytes under different file IDs: that cannot reveal a wrong selection. First
+send a current attachment without a caption. Then send another audio file with an explicit request
+to keep it for later without listening. Verify that limit is respected. On a later text-only request
+to listen to the latest file, correlate the selected historical file ID, its original bytes, the
+actual transcription result and the answer. Missing immediate tools do not prove that the combined
+Queen/worker system lacks an authorized capability. No keyword router or automatic modality-specific
+model branch may replace this intelligence check. The actual top-level tool argument descriptions
+and conditional requirements must be the same in mocked model cases and the delivered catalog.

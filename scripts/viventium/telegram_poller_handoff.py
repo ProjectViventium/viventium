@@ -24,6 +24,13 @@ import sys
 import time
 from typing import Any, Callable, Mapping, NamedTuple
 
+_previous_dont_write_bytecode = sys.dont_write_bytecode
+sys.dont_write_bytecode = True
+try:
+    from parallel_work_release_gate import _macos_process_cwd
+finally:
+    sys.dont_write_bytecode = _previous_dont_write_bytecode
+
 
 OWNER_KIND = "viventium-telegram-poller-owner"
 TRANSACTION_KIND = "viventium-telegram-poller-handoff"
@@ -265,14 +272,8 @@ def _darwin_process_identity(pid: int) -> ProcessIdentity | None:
         )
     command = _command_output(["/bin/ps", "-p", str(pid), "-o", "command="])
     uid_text = _command_output(["/bin/ps", "-p", str(pid), "-o", "uid="])
-    lsof = _command_output(
-        ["/usr/sbin/lsof", "-a", "-p", str(pid), "-d", "cwd", "-Fn"]
-    )
-    cwd = ""
-    for line in lsof.splitlines():
-        if line.startswith("n"):
-            cwd = line[1:].strip()
-            break
+    native_cwd = _macos_process_cwd(pid)
+    cwd = str(native_cwd) if native_cwd is not None else ""
     if not start_id or not command or not cwd or not uid_text.isdigit():
         return None
     return ProcessIdentity(pid, int(uid_text), start_id, command, cwd)

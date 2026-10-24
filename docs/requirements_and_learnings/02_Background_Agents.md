@@ -296,6 +296,11 @@ Canonical model-parameter rule:
   Main's `generation_completed` cleanup keeps detached cortex work and its accepted results active
   until their own terminal outcome. Results accepted before a later Stop remain complete; their
   diagnostic trace must agree with the saved terminal status.
+- Detached activation and execution retain the accepted request, agent and canonical run,
+  conversation and input identities before Main's client is disposed. Late detection, execution,
+  incremental persistence and completion use that captured context, without extending the chat
+  client's lifetime or restoring an obsolete foreground answer. Empty activation stays silent;
+  intentional owner cancellation still follows the existing typed cancellation gate.
 - Activation detection always judges the latest human/user message as the decision subject.
   Configured history depth provides context only. Older user requests in that history must not
   reactivate a cortex when the latest user turn is a simple reply, acknowledgement, test

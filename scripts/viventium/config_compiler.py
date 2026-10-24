@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import base64
 import copy
 import hashlib
 import ipaddress
@@ -132,6 +133,8 @@ GLASSHIVE_ENTERPRISE_WORKER_PROVIDER_ENV_KEYS = {
     "WPR_CLAUDE_CODE_USE_API_KEY",
     "XAI_API_KEY",
 }
+# Direct deployment credentials belong to the service, not the native-worker
+# projection. Keep their route in the OpenAI service set and provider env file.
 GLASSHIVE_OPENAI_PROVIDER_ENV_KEYS = {
     "WPR_OPENAI_API_KEY",
     "WPR_OPENAI_BASE_URL",
@@ -371,6 +374,61 @@ def glasshive_enabled(config: dict[str, Any]) -> bool:
             "run `bin/viventium bootstrap-components` and compile again"
         )
     return True
+
+
+def xperfect_scheduled_wake_environment(
+    config: dict[str, Any], *, api_port: int, call_session_secret: str,
+) -> dict[str, str]:
+    """Compile the cognitive app's adapter; the execution project remains generic."""
+    integration = (config.get("integrations") or {}).get("glasshive") or {}
+    settings = integration.get("scheduled_wakes") or {}
+    if not isinstance(settings, dict):
+        raise SystemExit("integrations.glasshive.scheduled_wakes must be an object")
+    enabled = resolve_bool(settings.get("enabled"), False)
+    result = {"VIVENTIUM_XPERFECT_SCHEDULED_WAKES_ENABLED": "true" if enabled else "false"}
+    if not enabled:
+        return result
+    if not resolve_bool(integration.get("enabled"), False):
+        raise SystemExit("xPerfect scheduled wakes require integrations.glasshive.enabled")
+    if not call_session_secret:
+        raise SystemExit("xPerfect scheduled wakes require the existing protected runtime secret")
+    url = str(settings.get("receiver_url") or f"http://127.0.0.1:{api_port}/api/viventium/scheduler/due").strip()
+    parsed = urlparse(url)
+    try:
+        port = parsed.port or (443 if parsed.scheme == "https" else 80)
+    except ValueError as exc:
+        raise SystemExit("xPerfect scheduled wake receiver URL is invalid") from exc
+    if (parsed.scheme not in {"http", "https"} or not parsed.hostname
+            or parsed.username or parsed.password or parsed.fragment or parsed.query
+            or parsed.path != "/api/viventium/scheduler/due"):
+        raise SystemExit("xPerfect scheduled wake receiver URL must name the exact due endpoint")
+    local = parsed.hostname in {"127.0.0.1", "::1", "localhost"}
+    if parsed.scheme == "http" and not local:
+        raise SystemExit("Remote xPerfect scheduled wake receivers require HTTPS")
+    networks = settings.get("allowed_receiver_networks") or []
+    if not isinstance(networks, list):
+        raise SystemExit("xPerfect scheduled wake allowed_receiver_networks must be an array")
+    try:
+        checked_networks = [str(ipaddress.ip_network(str(value), strict=True)) for value in networks]
+    except ValueError as exc:
+        raise SystemExit("xPerfect scheduled wake receiver network must be a CIDR") from exc
+    result.update({
+        "VIVENTIUM_XPERFECT_SCHEDULE_WEBHOOK_URL": url,
+        "VIVENTIUM_XPERFECT_SCHEDULE_WEBHOOK_SECRET": "whsec_" + base64.b64encode(
+            bytes.fromhex(scoped_secret(call_session_secret, "xperfect-schedule-webhook"))
+        ).decode("ascii"),
+        "WPR_RECURRING_SCHEDULE_OWNER": "native",
+        "WPR_WEBHOOK_ALLOW_LOCAL_HTTP": "true" if local and parsed.scheme == "http" else "false",
+        "WPR_WEBHOOK_ALLOWED_PORTS": ",".join(str(value) for value in sorted({443, port})),
+    })
+    if checked_networks:
+        result["WPR_WEBHOOK_ALLOWED_NETWORKS"] = ",".join(checked_networks)
+    destination = str(settings.get("destination_id") or "").strip()
+    if destination:
+        if not re.fullmatch(r"whd_[a-f0-9]{32}", destination):
+            raise SystemExit("xPerfect scheduled wake destination_id must be a protected destination ID")
+        result["VIVENTIUM_XPERFECT_SCHEDULE_DESTINATION_ID"] = destination
+    return result
 
 
 def glasshive_deployment_mode(config: dict[str, Any]) -> str:
@@ -5910,6 +5968,9 @@ def render_runtime_env(
         env["WPR_BOOTSTRAP_SOURCE_ROOTS"] = os.pathsep.join(bootstrap_source_roots)
         env["VIVENTIUM_GLASSHIVE_CALLBACK_URL"] = f"http://localhost:{profile['lc_api_port']}/api/viventium/glasshive/callback"
         env["VIVENTIUM_GLASSHIVE_CALLBACK_SECRET"] = scoped_secret(call_session_secret, "glasshive-callback")
+        env.update(xperfect_scheduled_wake_environment(
+            config, api_port=profile["lc_api_port"], call_session_secret=call_session_secret,
+        ))
         env["GLASSHIVE_BOOTSTRAP_SOURCE_SECRET"] = scoped_secret(
             call_session_secret,
             "glasshive-bootstrap-source",
@@ -6222,11 +6283,10 @@ def render_runtime_env(
                             glasshive_enterprise["oidc_principal_claim"]
                         )
 
-        # The pinned GlassHive runtime treats a non-empty Viventium callback as a
-        # delegated deployment marker and rejects native recurrence. Standalone
-        # enterprise deployments intentionally clear that callback and may own
-        # recurrence locally when Scheduling Cortex is not enabled.
-        recurrence_is_delegated = bool(
+        # Explicit app-wake setup selects the native clock for new xPerfect definitions.
+        # Existing Cortex definitions stay in Cortex; no data is copied or enabled twice.
+        scheduled_wakes_enabled = env.get("VIVENTIUM_XPERFECT_SCHEDULED_WAKES_ENABLED") == "true"
+        recurrence_is_delegated = not scheduled_wakes_enabled and bool(
             scheduling_cortex_enabled
             or str(env.get("VIVENTIUM_GLASSHIVE_CALLBACK_URL") or "").strip()
         )
@@ -7549,7 +7609,9 @@ def build_mcp_servers(
                     "schedule_search": {"access": "content_read"},
                     "schedule_last_delivery": {"access": "content_read"},
                     "schedule_preview_next": {"access": "content_read"},
-                    "schedule_create": {"access": "write"},
+                    "schedule_create": {"access": "none" if resolve_bool(
+                        integrations.get("glasshive", {}).get("scheduled_wakes", {}).get("enabled"), False
+                    ) else "write"},
                     "schedule_update": {"access": "write"},
                     "schedule_delete": {"access": "write"},
                     "sys__server__sys": {"access": "content_read"},

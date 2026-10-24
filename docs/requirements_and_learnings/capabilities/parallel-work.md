@@ -52,6 +52,10 @@ need no parallel-mode toggle, special delegation prompt, extra configuration, or
 - **PW-020 / PW-021 / HARD-004:** Stale or unavailable roster state is never shown as empty. Main reports only
   verified route, model, effort, Feeling, capability, state, and delivery facts.
 
+A cortex's read-only limits describe that invocation, not Main or another worker. It must not
+claim that another actor did or did not perform an action without that actor's verified result.
+If it has no independent useful evidence, the existing NTA contract keeps it silent.
+
 The native Main context encoder reuses the exact request-pinned roster projection after reserving
 attempt authority and the existing minimum capability capsule. Existing optional context priorities
 remain unchanged; required reviewed conversation summaries stay intact. Overflow retains truthful
@@ -71,6 +75,25 @@ be recalled, and completion before its Core receipt remains an asynchronous boun
   enabled input handler remains nonblocking while Core preserves ordering and idempotency.
   An unfinished reply may be revised, but completed work and its useful result retain an owner
   and delivery path. Typing/progress cannot remain active after its response work has settled.
+
+An ordinary silent terminal result settles delivery as `silent`, not `enqueued`; cleanup
+tombstones remain `suppressed`. Existing recovery may repair a retained terminal row only from
+matching authoritative mission evidence and a compare-and-swap of its observed identity. A newer
+run or generation wins. Settled silence must not keep a work item pending or trigger repeated
+work reads, a presenter, or a replay.
+
+A cancelled foreground native reply does not keep ownership of unanswered input. After the
+existing exact owner, response, source, removal acknowledgement and native release checks pass,
+the current Main receives those original inputs and fresh accepted-work facts. This applies to
+Web successors as well as Telegram and Voice. Existing accepted workers keep their own owners;
+taking over an unfinished reply grants no authority to repeat their effects.
+
+One message can contain independent objectives. `sourceOrdinals` selects original messages; the
+optional existing `instruction` can select one exact verbatim clause inside a selected message.
+The source owner rejects paraphrases, historical text and text from unselected sources. Omitting
+it retains the complete selected input. Full authorized conversation and files remain shared
+context; they are not extra work for every worker. This keeps a correction to one worker separate
+from a new objective without a generated task brief or another routing layer.
 
 ## Active Work and controls
 
@@ -135,6 +158,17 @@ be recalled, and completion before its Core receipt remains an asynchronous boun
 - Native conversation capacity retry logs retain the typed Main or Cortex role, hashed stream
   scope, retry delay, and elapsed wait in the rendered message. They contain no prompt, credential,
   or raw owner, conversation, or stream identity.
+- New foreground requests use the same conversation capacity guard on warm and cold sessions.
+  A pre-admission refusal does not advance the source cursor, change the bootstrap, or create an
+  accepted request. An already accepted or completed replay keeps its original admission and result.
+  If queued work never starts because capacity is unavailable, deadline handling preserves that
+  cause; it must not blame model inference. The existing error contract carries only declared
+  numeric capacity dimensions. Client surfaces explain a proved disk or memory shortage plainly;
+  raw diagnostics remain in logs and operational error text is not spoken.
+- Unknown probe values are not measured shortages. Preserve a healthy host's proved deficit if a
+  Docker snapshot is unavailable, using only the measured host vector. Otherwise retain the native
+  waiting path. Client disk or memory advice requires the declared resource-pressure class and a
+  proved numeric deficit; placeholder zeroes must not prompt users to remove files or close apps.
 
 ### Exactly once
 
@@ -193,3 +227,29 @@ failure, restart, isolation, callback, and delivery evidence.
 ## Detailed contracts
 
 - [Parallel Work Orchestration](../55_Parallel_Work_Orchestration.md)
+
+### Source evidence and the assigned task
+
+The declared task instruction is the worker's assignment. Original selected inputs, files and
+conversation history remain evidence and context. Render these roles explicitly; do not append a
+compound original as a second assignment. Preserve original bytes, source identity and validation.
+For multi-message or file-only guidance, derive the trusted assignment once before applying the
+existing exact work control. Never validate a runtime-derived whole-source default as a new model
+quote on a second pass. Keep all limits, conditions and output requirements in a selected clause,
+or assign the whole source. Acceptance and delivery checks stay internal; Main gives a brief
+natural acknowledgment and later presents useful results.
+
+### Exact assignment and continuing work
+
+An exact selected clause defines a worker's assignment; the complete original source and its
+applicable conditions, limits and output requirements remain context. Context must not assign
+sibling objectives or turn a generated brief into authority over the user's originals. Shared
+conditions outside a contiguous selected clause stay visible without fabricating a quote. The
+existing source-selection validator rejects paraphrases and concatenated noncontiguous clauses.
+
+A terminal native run and a terminal durable work item are distinct. When an authenticated callback
+says that the work remains nonterminal, settle the old run's presentation and suppression normally,
+while explaining that the same work remains active. Do not show the old run's internal error as a
+new conversational failure or speak it.
+
+See the [bounded cross-channel acceptance report](../../../qa/parallel-orchestrator/reports/2026-10-23-should-flow-acceptance.md).

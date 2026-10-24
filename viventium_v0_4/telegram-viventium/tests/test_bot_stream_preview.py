@@ -971,6 +971,266 @@ class _LinkRequiredRobot:
         _ = args, kwargs
 
 
+@pytest.fixture
+def typing_response(monkeypatch):
+    """Exercise the real response owner without network, credentials or durable recovery data."""
+    async def noop(*_args, **_kwargs):
+        return None
+
+    async def unblocked(*_args, **_kwargs):
+        return False
+
+    monkeypatch.setattr(tg_bot, "is_bot_blocked", unblocked)
+    monkeypatch.setattr(tg_bot, "_retry_source_order_retractions", noop)
+    monkeypatch.setattr(tg_bot, "_retry_pending_source_order_terminals", noop)
+    monkeypatch.setattr(tg_bot, "_cleanup_obsolete_retry_terminals", noop)
+    monkeypatch.setattr(tg_bot, "Users", types.SimpleNamespace(get_config=lambda *_a: False))
+    monkeypatch.setattr(tg_bot.config, "VIVENTIUM_TELEGRAM_TYPING_INTERVAL_S", 0.01)
+
+    async def invoke(context, robot, source_guard=None):
+        return await tg_bot.getViventiumResponse(
+            update_message=_FakeUpdateMessage(), context=context, title="", robot=robot,
+            message="Synthetic lifecycle request.", chatid=111, messageid=222,
+            convo_id="typing-lifecycle", message_thread_id=None, trace_id="typing-lifecycle",
+            telegram_message_id=222, _source_guard=source_guard,
+        )
+
+    return invoke
+
+
+def _pending_typing_tasks():
+    return [task for task in asyncio.all_tasks() if not task.done()
+            and getattr(task.get_coro(), "__qualname__", "").endswith("._typing_loop")]
+
+
+@pytest.mark.parametrize("exit_path", ["cancel_preflight", "timezone_error"])
+def test_typing_never_outlives_pre_stream_failure(monkeypatch, typing_response, exit_path):
+    async def scenario():
+        entered = asyncio.Event()
+
+        async def held_preflight(*_args, **_kwargs):
+            entered.set()
+            await asyncio.Future()
+
+        def read_setting(_key, setting):
+            if setting == "CLIENT_TIMEZONE":
+                raise RuntimeError("synthetic timezone read failure")
+            return False
+
+        if exit_path == "cancel_preflight":
+            monkeypatch.setattr(tg_bot, "_retry_source_order_retractions", held_preflight)
+        else:
+            monkeypatch.setattr(tg_bot, "Users", types.SimpleNamespace(get_config=read_setting))
+        owner = asyncio.create_task(typing_response(_FakeContext(), _FakeRobot()))
+        try:
+            if exit_path == "cancel_preflight":
+                await asyncio.wait_for(entered.wait(), 0.5)
+                owner.cancel()
+                with pytest.raises(asyncio.CancelledError):
+                    await owner
+            else:
+                with pytest.raises(RuntimeError, match="timezone read failure"):
+                    await owner
+            assert not _pending_typing_tasks()
+        finally:
+            owner.cancel()
+            leftovers = _pending_typing_tasks()
+            for task in leftovers:
+                task.cancel()
+            await asyncio.gather(owner, *leftovers, return_exceptions=True)
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("terminal", ["empty", "quiet", "nta", "input_pending", "superseded", "error", "cancel"])
+def test_typing_terminal_cancels_and_joins_blocked_bot_action(typing_response, terminal):
+    async def scenario():
+        sending = asyncio.Event()
+        stopped = asyncio.Event()
+        cancelling = asyncio.Event()
+
+        class HeldActionBot(_FakeTelegramBot):
+            async def send_chat_action(self, **_kwargs):
+                sending.set()
+                try:
+                    await asyncio.Future()
+                finally:
+                    stopped.set()
+
+        class TerminalRobot(_FakeRobot):
+            async def ask_stream_async(self, *_args, **_kwargs):
+                await sending.wait()
+                if terminal == "cancel":
+                    cancelling.set()
+                    await asyncio.Future()
+                elif terminal == "error":
+                    raise RuntimeError("synthetic stream failure")
+                elif terminal == "nta":
+                    yield "{NTA}"
+                elif terminal == "quiet":
+                    yield {"type": "delivery_disposition", "quiet_completion": True,
+                           "required": True, "present": True,
+                           "delivery_disposition": {"audio": "skip", "valid": True,
+                                                    "required": True, "source": "model"}}
+                elif terminal != "empty":
+                    yield {"type": terminal}
+
+        context = _FakeContext()
+        context.bot = HeldActionBot()
+        owner = asyncio.create_task(typing_response(context, TerminalRobot()))
+        try:
+            if terminal == "cancel":
+                await asyncio.wait_for(cancelling.wait(), 0.5)
+                owner.cancel()
+                with pytest.raises(asyncio.CancelledError):
+                    await asyncio.wait_for(owner, 0.2)
+            else:
+                await asyncio.wait_for(owner, 0.2)
+            assert stopped.is_set()
+            assert not _pending_typing_tasks()
+        finally:
+            owner.cancel()
+            leftovers = _pending_typing_tasks()
+            for task in leftovers:
+                task.cancel()
+            await asyncio.gather(owner, *leftovers, return_exceptions=True)
+
+    asyncio.run(scenario())
+
+
+def test_typing_first_bubble_cancels_action_before_stream_finishes(typing_response):
+    async def scenario():
+        sending = asyncio.Event()
+        stopped = asyncio.Event()
+        visible = asyncio.Event()
+        finish = asyncio.Event()
+
+        class VisibleReplyBot(_FakeTelegramBot):
+            async def send_chat_action(self, **_kwargs):
+                sending.set()
+                try:
+                    await asyncio.Future()
+                finally:
+                    stopped.set()
+
+            async def send_message(self, **kwargs):
+                reply = await super().send_message(**kwargs)
+                visible.set()
+                return reply
+
+        class HeldReplyRobot(_FakeRobot):
+            async def ask_stream_async(self, *_args, **_kwargs):
+                await sending.wait()
+                yield "A useful answer."
+                await finish.wait()
+
+        context = _FakeContext()
+        context.bot = VisibleReplyBot()
+        owner = asyncio.create_task(typing_response(context, HeldReplyRobot()))
+        try:
+            await asyncio.wait_for(visible.wait(), 0.5)
+            await asyncio.wait_for(stopped.wait(), 0.2)
+            assert not owner.done()
+            assert not _pending_typing_tasks()
+            finish.set()
+            await asyncio.wait_for(owner, 0.5)
+            assert _final_delivered_texts(context) == ["A useful answer."]
+        finally:
+            owner.cancel()
+            leftovers = _pending_typing_tasks()
+            for task in leftovers:
+                task.cancel()
+            await asyncio.gather(owner, *leftovers, return_exceptions=True)
+
+    asyncio.run(scenario())
+
+
+def test_typing_stops_before_cancelled_preview_cleanup_awaits(typing_response):
+    async def scenario():
+        preview_started = asyncio.Event()
+        cleaning_preview = asyncio.Event()
+        release_preview = asyncio.Event()
+
+        class HeldPreviewBot(_FakeTelegramBot):
+            async def send_message(self, **_kwargs):
+                preview_started.set()
+                try:
+                    await asyncio.Future()
+                except asyncio.CancelledError:
+                    cleaning_preview.set()
+                    await release_preview.wait()
+                    raise
+
+        class CancelledPreviewRobot(_FakeRobot):
+            async def ask_stream_async(self, *_args, **_kwargs):
+                yield {"type": "assistant_preview", "text": "Synthetic preview."}
+                await preview_started.wait()
+                raise asyncio.CancelledError()
+
+        context = _FakeContext()
+        context.bot = HeldPreviewBot()
+        owner = asyncio.create_task(typing_response(context, CancelledPreviewRobot()))
+        try:
+            await asyncio.wait_for(cleaning_preview.wait(), 0.5)
+            assert not _pending_typing_tasks()
+            owner.cancel()  # A second cancellation during preview cleanup must not orphan typing.
+        finally:
+            owner.cancel()
+            release_preview.set()
+            leftovers = _pending_typing_tasks()
+            for task in leftovers:
+                task.cancel()
+            await asyncio.gather(owner, *leftovers, return_exceptions=True)
+        assert not _pending_typing_tasks()
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("presentation_sequence", [222, 223])
+def test_typing_stops_refreshing_superseded_source(typing_response, presentation_sequence):
+    async def scenario():
+        sent = asyncio.Event()
+        finish = asyncio.Event()
+        checks = []
+
+        class CountingBot(_FakeTelegramBot):
+            async def send_chat_action(self, **_kwargs):
+                checks.append("typing")
+                sent.set()
+
+        class HeldStreamRobot(_FakeRobot):
+            async def ask_stream_async(self, *_args, **_kwargs):
+                await finish.wait()
+                yield {"type": "input_pending"}
+
+        context = _FakeContext()
+        context.bot = CountingBot()
+        robot = HeldStreamRobot()
+        guard = tg_bot._TelegramSourceOrderGuard(
+            bot=context.bot, robot=robot, telegram_user_id=_FakeUser.id,
+            chat_id=111, thread_id=None, source_sequence=222,
+        )
+        guard.presentation_source_sequence = presentation_sequence
+        tg_bot._note_telegram_source_message(111, None, presentation_sequence, _FakeUser.id)
+        owner = asyncio.create_task(typing_response(context, robot, guard))
+        try:
+            await asyncio.wait_for(sent.wait(), 0.5)
+            tg_bot._note_telegram_source_message(111, None, presentation_sequence + 1, _FakeUser.id)
+            await asyncio.sleep(0.04)
+            assert checks == ["typing"]
+            assert not _pending_typing_tasks()
+            finish.set()
+            await asyncio.wait_for(owner, 0.2)
+        finally:
+            owner.cancel()
+            leftovers = _pending_typing_tasks()
+            for task in leftovers:
+                task.cancel()
+            await asyncio.gather(owner, *leftovers, return_exceptions=True)
+
+    asyncio.run(scenario())
+
+
 def test_get_viventium_response_always_voice_stays_text_mode_with_audio(monkeypatch, caplog):
     timings = []
     monkeypatch.setattr(tg_bot, "_tg_timing_log", lambda trace, stage, start, **fields: timings.append((stage, fields)))
@@ -4581,7 +4841,7 @@ def test_get_viventium_response_recoverable_error_stays_pending_without_commit_a
             yield {"type": "logical_turn", "logical_turn_id": "turn-1", "revision": 1}
             yield {
                 "type": "bridge_error",
-                "text": "The model provider could not complete this request.",
+                "text": "Viventium could not complete this request. Please try again.",
                 "speak": False,
                 "error_class": "completion_error",
                 "recoverable": True,
@@ -4709,6 +4969,252 @@ def test_failed_main_stream_without_output_shows_only_failure_and_acks_failed(mo
         "Connection error. Please retry."
     ]
     assert robot.acks == [("turn-1", 1, "failed", "telegram:111")]
+
+
+@pytest.mark.parametrize(
+    ("has_preview", "delete_fails"),
+    [(False, False), (True, False), (True, True)],
+    ids=["no-preview", "preview-removed", "preview-delete-failed"],
+)
+def test_failed_stream_after_newer_input_records_actual_removal(
+    monkeypatch, tmp_path, has_preview, delete_fails
+):
+    """A newer retained input wins before its replacement generation is admitted."""
+    monkeypatch.setenv(
+        "VIVENTIUM_TELEGRAM_RETRACTION_STORE_PATH", str(tmp_path / "retractions.sqlite3")
+    )
+    preview_visible = asyncio.Event()
+    latest_sequence = 222
+
+    class _OverlapBot(_FakeTelegramBot):
+        async def send_message(self, **kwargs):
+            result = await super().send_message(**kwargs)
+            preview_visible.set()
+            return result
+
+        async def delete_message(self, **kwargs):
+            if delete_fails:
+                self.deletes.append(kwargs)
+                raise ConnectionError("synthetic Telegram deletion failure")
+            return await super().delete_message(**kwargs)
+
+    class _OverlapRobot(_FailingMainStreamRobot):
+        async def ask_stream_async(self, *args, **kwargs):
+            nonlocal latest_sequence
+            yield {"type": "logical_turn", "logical_turn_id": "turn-1", "revision": 1}
+            if has_preview:
+                yield {"type": "assistant_preview", "text": "Unfinished older answer."}
+                await asyncio.wait_for(preview_visible.wait(), timeout=1)
+            latest_sequence = 223
+            tg_bot._note_telegram_source_message(111, None, latest_sequence, "12345")
+            yield {
+                "type": "bridge_error",
+                "text": "Viventium could not complete this request. Please try again.",
+                "speak": False,
+                "error_class": "completion_error",
+            }
+
+        async def source_order_is_current(self, **kwargs):
+            return int(kwargs["source_sequence"]) >= latest_sequence
+
+    async def run_overlap():
+        async def no_attachments(**_kwargs):
+            return None
+
+        monkeypatch.setattr(
+            tg_bot, "Users", types.SimpleNamespace(get_config=lambda *_a, **_k: False)
+        )
+        monkeypatch.setattr(tg_bot, "should_send_voice_reply", lambda **_k: False)
+        monkeypatch.setattr(tg_bot, "send_librechat_attachments", no_attachments)
+        context = _FakeContext()
+        context.bot = _OverlapBot()
+        robot = _OverlapRobot()
+        await tg_bot.getViventiumResponse(
+            update_message=_FakeUpdateMessage(), context=context, title="", robot=robot,
+            message="first source", chatid=111, messageid=222, convo_id="chat-1",
+            message_thread_id=None, telegram_message_id=222, telegram_update_id=333,
+            trace_id="test-stream-error-overlap",
+        )
+        return context, robot
+
+    context, robot = asyncio.run(run_overlap())
+    assert robot.acks == [
+        ("turn-1", 1, "failed" if delete_fails else "partial_removed", "telegram:111")
+    ]
+    assert _final_delivered_texts(context) == (
+        ["Unfinished older answer."] if delete_fails else []
+    )
+
+
+@pytest.mark.parametrize("outcome", ["newer-input", "core-outage"])
+def test_retry_terminal_race_retains_actual_removal_or_restart_recovery(
+    monkeypatch, tmp_path, outcome
+):
+    monkeypatch.setenv(
+        "VIVENTIUM_TELEGRAM_RETRACTION_STORE_PATH", str(tmp_path / "retractions.sqlite3")
+    )
+    preview_visible = asyncio.Event()
+    latest_sequence = 222
+    watermark_available = True
+
+    class _TerminalRaceBot(_FakeTelegramBot):
+        async def send_message(self, **kwargs):
+            result = await super().send_message(**kwargs)
+            preview_visible.set()
+            return result
+
+        async def edit_message_text(self, **kwargs):
+            nonlocal latest_sequence, watermark_available
+            result = await super().edit_message_text(**kwargs)
+            if outcome == "newer-input":
+                latest_sequence = 223
+                tg_bot._note_telegram_source_message(111, None, latest_sequence, "12345")
+            else:
+                watermark_available = False
+            return result
+
+    class _TerminalRaceRobot(_FailingMainStreamRobot):
+        async def ask_stream_async(self, *args, **kwargs):
+            yield {"type": "logical_turn", "logical_turn_id": "turn-1", "revision": 1}
+            yield {"type": "assistant_preview", "text": "Unfinished older answer."}
+            await asyncio.wait_for(preview_visible.wait(), timeout=1)
+            yield {"type": "bridge_error", "text": "Connection error.", "speak": False}
+
+        async def source_order_is_current(self, **kwargs):
+            if not watermark_available:
+                raise ConnectionError("synthetic Core outage during terminal edit")
+            return int(kwargs["source_sequence"]) >= latest_sequence
+
+    async def run_overlap():
+        async def no_attachments(**_kwargs):
+            return None
+
+        monkeypatch.setattr(
+            tg_bot, "Users", types.SimpleNamespace(get_config=lambda *_a, **_k: False)
+        )
+        monkeypatch.setattr(tg_bot, "should_send_voice_reply", lambda **_k: False)
+        monkeypatch.setattr(tg_bot, "send_librechat_attachments", no_attachments)
+        context = _FakeContext()
+        context.bot = _TerminalRaceBot()
+        robot = _TerminalRaceRobot()
+        await tg_bot.getViventiumResponse(
+            update_message=_FakeUpdateMessage(), context=context, title="", robot=robot,
+            message="first source", chatid=111, messageid=222, convo_id="chat-1",
+            message_thread_id=None, telegram_message_id=222, telegram_update_id=333,
+            trace_id="test-retry-terminal-overlap",
+        )
+        return context, robot
+
+    context, robot = asyncio.run(run_overlap())
+    assert _final_delivered_texts(context) == []
+    if outcome == "newer-input":
+        assert robot.acks == [("turn-1", 1, "partial_removed", "telegram:111")]
+        return
+
+    assert robot.acks == []
+    restarted_store = tg_bot._TelegramRetractionStore(
+        tmp_path / "retractions.sqlite3", retry_delay_s=0
+    )
+    assert restarted_store.pending_terminal_count() == 1
+    recovery_now = tg_bot.time.time() + 31
+    monkeypatch.setattr(tg_bot.time, "time", lambda: recovery_now)
+
+    class _RecoveredRobot:
+        async def source_order_is_current(self, **_kwargs):
+            return True
+
+    class _RecoveredBot(_FakeTelegramBot):
+        async def edit_message_text(self, **kwargs):
+            raise RuntimeError("synthetic removed message cannot be edited")
+
+    recovery_bot = _RecoveredBot()
+    recovered = asyncio.run(tg_bot._retry_pending_source_order_terminals(
+        recovery_bot, _RecoveredRobot(), restarted_store
+    ))
+    assert recovered == 1
+    assert restarted_store.pending_terminal_count() == 0
+    assert _final_delivered_texts(types.SimpleNamespace(bot=recovery_bot)) == [
+        "I could not safely confirm that reply. It was removed. Please retry your message."
+    ]
+
+
+def test_non_delivery_latch_keeps_one_durable_bridge_receipt_through_core_outage(
+    monkeypatch, tmp_path
+):
+    from utils import librechat_bridge as bridge_module
+
+    monkeypatch.setenv("VIVENTIUM_DELIVERY_ACK_ENDPOINT", "/api/viventium/interactions/delivery-ack")
+    monkeypatch.setenv("VIVENTIUM_TELEGRAM_INTERACTION_ADAPTER_SECRET", "synthetic-adapter-secret")
+    path = tmp_path / "existing-ack-queue.sqlite3"
+    core_available = False
+    requests = []
+
+    def bridge():
+        instance = bridge_module.LibreChatBridge(
+            get_conversation_id=lambda _chat_id: "synthetic-conversation",
+            set_conversation_id=lambda *_args: None,
+        )
+        instance.base_url = "http://core.test"
+        instance._cortex_ack_store = bridge_module._CortexTelegramAckStore(path, retry_delay_s=0)
+        return instance
+
+    class _Response:
+        @property
+        def status_code(self):
+            return 200 if core_available else 503
+
+        def json(self):
+            return {"acknowledged": core_available}
+
+    class _Client:
+        def __init__(self, **_kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_args):
+            return False
+
+        async def post(self, _url, *, json, headers):
+            requests.append(dict(json))
+            return _Response()
+
+    async def no_delay(_seconds):
+        pass
+
+    async def run():
+        nonlocal core_available
+        robot = bridge()
+        telegram = _FakeTelegramBot()
+        preview = await telegram.send_message(chat_id=111, text="Unfinished earlier reply.")
+        guard = tg_bot._TelegramSourceOrderGuard(
+            bot=telegram, robot=robot, telegram_user_id="12345",
+            chat_id=111, thread_id=None, source_sequence=222,
+        )
+        guard.bind_delivery("original-turn", 1)
+        guard._retain(111, preview.message_id)
+        tg_bot._note_telegram_source_message(111, None, 223, "12345")
+        assert await guard.mark_stale() is True
+        assert telegram.current_messages == {}
+        assert robot._cortex_ack_store.pending_count() == 1
+        await guard.acknowledge_non_delivery("failed")
+        assert len(requests) == 3
+        assert robot._cortex_ack_store.pending_count() == 1
+
+        restarted = bridge()
+        core_available = True
+        assert await restarted._drain_cortex_acknowledgements() == 1
+        assert restarted._cortex_ack_store.pending_count() == 0
+        assert len(telegram.deletes) == 1
+        assert telegram.messages == telegram.audios == []
+        expected = {"logical_turn_id": "original-turn", "revision": 1,
+                    "state": "partial_removed", "presentation_ref": "telegram:111"}
+        assert requests == [expected] * 4
+
+    monkeypatch.setattr(bridge_module.httpx, "AsyncClient", _Client)
+    monkeypatch.setattr(bridge_module.asyncio, "sleep", no_delay)
+    asyncio.run(run())
 
 
 def test_get_viventium_response_superseded_delete_failure_reports_failed_not_removed(monkeypatch):
@@ -6665,7 +7171,7 @@ def test_input_transcript_survives_typed_main_failure(monkeypatch, tmp_path):
     ("provider_progress_stalled", "The model needs attention because progress stopped."),
     ("source_context_unavailable", "The conversation context could not be preserved. Please retry this turn."),
     ("provider_auth_missing", "The configured model provider authentication is unavailable. Open Viventium in the browser, reconnect the AI provider, then retry."),
-    ("unknown-private-diagnostic", "The model provider could not complete this request."),
+    ("unknown-private-diagnostic", "Viventium could not complete this request. Please try again."),
 ])
 def test_typed_failure_replaces_only_assistant_preview(monkeypatch, tmp_path, error_class, expected):
     monkeypatch.setenv("VIVENTIUM_TELEGRAM_RETRACTION_STORE_PATH", str(tmp_path / "retractions.sqlite3"))
@@ -6798,3 +7304,26 @@ def test_input_transcript_late_send_keeps_source_but_fences_assistant(monkeypatc
         assert len(context.bot.current_messages) == 1
         assert context.bot.deletes == []
     asyncio.run(run())
+
+
+@pytest.mark.parametrize("state", ["failed", "partial_removed"])
+def test_late_stale_cleanup_does_not_replace_a_terminal_receipt(monkeypatch, tmp_path, state):
+    monkeypatch.setenv("VIVENTIUM_TELEGRAM_RETRACTION_STORE_PATH", str(tmp_path / "retractions.sqlite3"))
+    robot = _TypedFailingMainStreamRobot()
+    bot = _FakeTelegramBot()
+    bot.current_messages[1001] = {"text": "Old preview"}
+    guard = tg_bot._TelegramSourceOrderGuard(
+        bot=bot, robot=robot, telegram_user_id=9,
+        chat_id=111, thread_id=None, source_sequence=222,
+    )
+    guard.bind_delivery("turn-1", 1)
+    guard._retain(111, 1001)
+
+    async def run():
+        await guard.acknowledge_non_delivery(state)
+        await guard.mark_stale()
+        await guard.mark_stale()
+
+    asyncio.run(run())
+    assert robot.acks == [("turn-1", 1, state, "telegram:111")]
+    assert len(bot.deletes) == 1

@@ -19,6 +19,12 @@ truthful Main presentation without losing or repeating durable work.
 
 ### Native continuation after retraction
 
+- Automatic conversation reuse must not select an assistant still generating its reply as a
+  stable parent. Its text can change while another reply runs. A stopped partial with the existing
+  typed interruption marker remains a stable parent, so Main can see where it was interrupted.
+  Select without waiting, changing stored history, or hiding active work. Explicit parent proofs
+  still reject real source edits. Callback ownership must still see the raw latest leaf so it can
+  detect an active Main reply.
 - Removing an unfinished reply does not by itself prove a user changed branches. Native context
   may continue only when trusted Core receipts identify that exact removed predecessor and its
   next accepted revision, the predecessor has released execution, and all original input content,
@@ -26,6 +32,34 @@ truthful Main presentation without losing or repeating durable work.
 - Missing, stale or conflicting proof preserves branch isolation. Genuine branch edits and
   regeneration still require fresh context. Continuation admission is idempotent and checks the
   latest admitted predecessor atomically; configured model, effort and permissions stay unchanged.
+- A newer source can revoke publication before its replacement reply is admitted. An error from
+  the old producer must not overwrite the adapter's successful removal receipt with `failed`.
+  Recheck source ownership after asynchronous failure presentation; actual removal failure remains
+  a failure and cannot authorize native continuation.
+- Send one noncommitted receipt per revision. Persist that receipt before transport and retry the
+  same payload through the existing durable acknowledgment queue after an outage or restart.
+  Retrying a receipt must not send another answer, invent removal proof, or change its outcome.
+- Completing a superseded response does not close its logical turn before the successor is
+  claimed. Confirmed removal lets that successor carry the original ordered inputs; a genuine
+  failed receipt still starts fresh. Expiry must not discard retained unadmitted inputs.
+- A saved input can resume after confirmed removal even if its first admission never reached the
+  store. Require the exact current removal receipt and revoked native publication identity.
+  Existing native release and source-recovery checks still gate execution; a live, unmatched or
+  unconfirmed predecessor stays busy.
+- Rolling back an unadmitted replacement must not reactivate a reply whose delivery already
+  committed or failed. Retain unanswered source segments and their original author ownership in
+  the existing turn ledger so a later retry neither loses input nor repeats accepted work.
+- A terminal failed reply does not block later input or supply removal proof. Admit new input
+  and retained unadmitted sources without inheriting that failed reply's native continuation.
+  Keep its original input, failed state and accepted effects discoverable; do not silently replay
+  its work. A failure receipt does not require an assistant Message that was never published.
+  Successful delivery still requires its exact saved presentation.
+- Refused native publication must leave its exact response terminal through the native owner.
+  A system error snapshot cannot silently leave it pending. Preserve committed publication,
+  stopped partials, revocation and source identity; later background augmentation cannot reopen
+  the failed answer or replace its terminal body.
+- Report a typed internal conversation-context conflict as a context failure. Provider-failure
+  wording requires a provider failure; do not infer the class from message text.
 
 ### Effect preservation
 

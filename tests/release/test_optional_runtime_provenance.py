@@ -9,6 +9,8 @@ import subprocess
 import time
 from pathlib import Path
 
+import pytest
+
 
 ROOT = Path(__file__).resolve().parents[2]
 OPENCLAW_BRIDGE = ROOT / "viventium_v0_4" / "MCPs" / "openclaw-bridge"
@@ -439,6 +441,59 @@ def test_noncanonical_stop_without_runtime_group_fails_closed(tmp_path: Path) ->
     )
 
     assert completed.returncode != 0
+
+
+def test_detached_group_receipt_ignores_caller_locale(tmp_path: Path) -> None:
+    english_env = dict(os.environ, LC_ALL="C")
+    english_start = subprocess.run(
+        ["ps", "-p", str(os.getpid()), "-o", "lstart="],
+        env=english_env, check=True, capture_output=True, text=True,
+    ).stdout.strip()
+    locales = subprocess.run(
+        ["locale", "-a"], check=True, capture_output=True, text=True,
+    ).stdout.splitlines()
+    localized_env = dict(os.environ)
+    localized_env.pop("LC_ALL", None)
+    localized_env.pop("LC_CTYPE", None)
+    for name in ("ca_AD.UTF-8", "fr_CA.UTF-8", "fr_FR.UTF-8", "de_DE.UTF-8"):
+        if name not in locales:
+            continue
+        localized_env["LANG"] = name
+        localized_start = subprocess.run(
+            ["ps", "-p", str(os.getpid()), "-o", "lstart="],
+            env=localized_env, check=True, capture_output=True, text=True,
+        ).stdout.strip()
+        if localized_start != english_start:
+            break
+    else:
+        pytest.skip("No installed locale changes the process start date")
+
+    owner = subprocess.Popen(["sleep", "120"], start_new_session=True)
+    try:
+        pgid, members = _write_runtime_group_receipt(tmp_path / "state", owner)
+        start = subprocess.run(
+            ["ps", "-p", str(owner.pid), "-o", "lstart="],
+            env=english_env, check=True, capture_output=True, text=True,
+        ).stdout.strip()
+        members.write_text(f"{owner.pid}\t{start}\n", encoding="utf-8")
+        script = f"""
+set -euo pipefail
+DETACHED_LAUNCH_PGID_FILE={str(pgid)!r}
+DETACHED_LAUNCH_MEMBERS_FILE={str(members)!r}
+VIVENTIUM_APP_SUPPORT_ROOT={str(tmp_path / 'alternate-root')!r}
+{_runtime_start_boundary_defs()}
+runtime_process_group_receipt_valid
+record_detached_launch_process_group_members
+"""
+        result = subprocess.run(
+            ["bash", "-c", script], env=localized_env, capture_output=True, text=True,
+        )
+        assert result.returncode == 0, result.stderr
+        assert members.read_text(encoding="utf-8") == f"{owner.pid}\t{start}\n"
+        assert owner.poll() is None
+    finally:
+        owner.terminate()
+        owner.wait(timeout=5)
 
 
 def test_detached_group_receipt_survives_launcher_leader_exit(tmp_path: Path) -> None:

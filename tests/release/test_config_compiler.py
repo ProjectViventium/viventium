@@ -552,6 +552,7 @@ def test_direct_openai_deployment_secret_is_runtime_only(tmp_path: Path, securit
     provider = (service_dir / "glasshive-runtime-provider.env").read_text()
     for key in ("WPR_OPENAI_API_KEY", "WPR_OPENAI_BASE_URL"):
         assert key in config_compiler.GLASSHIVE_OPENAI_PROVIDER_ENV_KEYS
+        assert key not in config_compiler.GLASSHIVE_ENTERPRISE_WORKER_PROVIDER_ENV_KEYS
         assert key not in config_compiler.GLASSHIVE_ANTHROPIC_PROVIDER_ENV_KEYS
         assert f"{key}={env[key]}" in provider
         assert key not in (service_dir / "glasshive-runtime.env").read_text()
@@ -830,7 +831,11 @@ def test_glasshive_enterprise_provider_env_allowlist_matches_worker_projection_c
         for element in assignment.value.elts
     }
     worker_keys.discard("GLASSHIVE_CAPABILITY_BROKER_TOKEN")
-    worker_keys.difference_update({"GLASSHIVE_CONTEXT_TOKEN", "GLASSHIVE_PEER_TOKEN"})
+    # These grants are issued to one live attempt; they are not deployment
+    # provider credentials to compile into a service environment.
+    worker_keys.difference_update({
+        "GLASSHIVE_CONTEXT_TOKEN", "GLASSHIVE_PEER_TOKEN", "GLASSHIVE_SCHEDULE_TOKEN",
+    })
 
     assert config_compiler.GLASSHIVE_ENTERPRISE_WORKER_PROVIDER_ENV_KEYS == worker_keys
 
@@ -12359,3 +12364,102 @@ def test_direct_xperfect_selectors_preserve_native_defaults() -> None:
     assert capability["main_chat"] is True
     assert capability["cortex_execution"] is True
     assert "openclaw-general" in config_compiler.SUPPORTED_GLASSHIVE_WORKER_PROFILES
+
+
+def test_xperfect_scheduled_wake_compiler_is_opt_in_and_keeps_cortex_definitions():
+    config = minimal_compile_config()
+    config['integrations']['glasshive'] = {'enabled': True}
+    before = copy.deepcopy(config)
+    assert config_compiler.xperfect_scheduled_wake_environment(config, api_port=3180, call_session_secret='fixture-secret') == {
+        'VIVENTIUM_XPERFECT_SCHEDULED_WAKES_ENABLED': 'false',
+    }
+    config['integrations']['glasshive']['scheduled_wakes'] = {'enabled': True}
+    config['integrations']['scheduling_cortex'] = {'enabled': True}
+    result = config_compiler.xperfect_scheduled_wake_environment(config, api_port=3180, call_session_secret='fixture-secret')
+    assert result['VIVENTIUM_XPERFECT_SCHEDULE_WEBHOOK_URL'] == 'http://127.0.0.1:3180/api/viventium/scheduler/due'
+    assert result['WPR_RECURRING_SCHEDULE_OWNER'] == 'native'
+    assert result['WPR_WEBHOOK_ALLOWED_PORTS'] == '443,3180'
+    assert result['WPR_WEBHOOK_ALLOW_LOCAL_HTTP'] == 'true'
+    assert config['integrations']['scheduling_cortex'] == {'enabled': True}
+    assert config['llm'] == before['llm']
+    assert 'VIVENTIUM_XPERFECT_SCHEDULE_DESTINATION_ID' not in result
+    import base64
+    key = base64.b64decode(result['VIVENTIUM_XPERFECT_SCHEDULE_WEBHOOK_SECRET'][6:])
+    assert len(key) == 32
+    assert key.hex() != config_compiler.scoped_secret('fixture-secret', 'glasshive-callback')
+
+
+@pytest.mark.parametrize('url', [
+    'http://receiver.example.test/api/viventium/scheduler/due',
+    'https://user:pass@receiver.example.test/api/viventium/scheduler/due',
+    'https://receiver.example.test/wrong',
+    'https://receiver.example.test/api/viventium/scheduler/due?token=secret',
+    'https://receiver.example.test/api/viventium/scheduler/due#fragment',
+])
+def test_xperfect_scheduled_wake_rejects_untrusted_endpoint_setup(url):
+    config = minimal_compile_config()
+    config['integrations']['glasshive'] = {'enabled': True, 'scheduled_wakes': {'enabled': True, 'receiver_url': url}}
+    with pytest.raises(SystemExit):
+        config_compiler.xperfect_scheduled_wake_environment(config, api_port=3180, call_session_secret='fixture-secret')
+
+
+def test_xperfect_scheduled_wake_remote_policy_and_protected_id():
+    config = minimal_compile_config()
+    config['integrations']['glasshive'] = {'enabled': True, 'scheduled_wakes': {'enabled': True,
+        'receiver_url': 'https://receiver.example.test:8443/api/viventium/scheduler/due',
+        'destination_id': 'whd_' + 'a' * 32, 'allowed_receiver_networks': ['10.0.0.0/24']}}
+    result = config_compiler.xperfect_scheduled_wake_environment(config, api_port=3180, call_session_secret='fixture-secret')
+    assert result['WPR_WEBHOOK_ALLOW_LOCAL_HTTP'] == 'false'
+    assert result['WPR_WEBHOOK_ALLOWED_PORTS'] == '443,8443'
+    assert result['WPR_WEBHOOK_ALLOWED_NETWORKS'] == '10.0.0.0/24'
+    assert result['VIVENTIUM_XPERFECT_SCHEDULE_DESTINATION_ID'] == 'whd_' + 'a' * 32
+    config['integrations']['glasshive']['scheduled_wakes']['destination_id'] = 'model-chosen-url'
+    with pytest.raises(SystemExit, match='protected destination ID'):
+        config_compiler.xperfect_scheduled_wake_environment(config, api_port=3180, call_session_secret='fixture-secret')
+
+
+def test_xperfect_scheduled_wake_compile_and_native_secret_boundary(monkeypatch, tmp_path):
+    configure_synthetic_glasshive_runtime(tmp_path, monkeypatch)
+    config = minimal_compile_config()
+    config['integrations']['glasshive'] = {'enabled': True, 'provider': {'enabled': True}, 'scheduled_wakes': {'enabled': True}}
+    assignments = config_compiler.build_agent_assignments(config)
+    result = config_compiler.render_runtime_env(config, assignments)
+    assert result['VIVENTIUM_XPERFECT_SCHEDULED_WAKES_ENABLED'] == 'true'
+    assert result['WPR_RECURRING_SCHEDULE_OWNER'] == 'native'
+    native = config_compiler.render_native_runtime_env(config, result)
+    assert native['VIVENTIUM_XPERFECT_SCHEDULED_WAKES_ENABLED'] == 'true'
+    assert native['WPR_RECURRING_SCHEDULE_OWNER'] == 'native'
+    assert 'VIVENTIUM_XPERFECT_SCHEDULE_WEBHOOK_SECRET' not in native
+    assert 'VIVENTIUM_XPERFECT_SCHEDULE_WEBHOOK_URL' not in native
+
+
+def test_xperfect_scheduled_wake_native_uses_machine_secret_and_local_profile_only_when_enabled(monkeypatch, tmp_path):
+    import base64
+    import native_runtime
+    monkeypatch.setattr(native_runtime, 'native_body_paths', lambda _root: {'librechat': tmp_path})
+    monkeypatch.setattr(native_runtime, 'runtime_secrets', lambda _support: {'CREDS_KEY': 'ab' * 32})
+    monkeypatch.setattr(native_runtime, 'load_native_runtime_env', lambda _path: {})
+    disabled = native_runtime.native_glasshive_transport_environment(tmp_path, tmp_path)
+    assert 'WPR_WEBHOOK_ALLOW_LOCAL_HTTP' not in disabled
+    monkeypatch.setattr(native_runtime, 'load_native_runtime_env', lambda _path: {
+        'VIVENTIUM_XPERFECT_SCHEDULED_WAKES_ENABLED': 'true'})
+    enabled = native_runtime.native_glasshive_transport_environment(tmp_path, tmp_path)
+    assert enabled['WPR_WEBHOOK_ALLOWED_PORTS'] == '443,3190'
+    assert enabled['WPR_WEBHOOK_ALLOW_LOCAL_HTTP'] == 'true'
+    assert enabled['WPR_RECURRING_SCHEDULE_OWNER'] == 'native'
+    assert enabled['VIVENTIUM_XPERFECT_SCHEDULE_WEBHOOK_URL'] == 'http://127.0.0.1:3190/api/viventium/scheduler/due'
+    assert len(base64.b64decode(enabled['VIVENTIUM_XPERFECT_SCHEDULE_WEBHOOK_SECRET'][6:])) == 32
+    assert enabled['VIVENTIUM_XPERFECT_SCHEDULE_WEBHOOK_SECRET'] != enabled['VIVENTIUM_GLASSHIVE_CALLBACK_SECRET']
+
+
+@pytest.mark.parametrize("scheduled_wakes", [False, True])
+def test_xperfect_scheduled_wake_keeps_legacy_management_but_one_create_clock(scheduled_wakes):
+    config = minimal_compile_config()
+    config["integrations"]["scheduling_cortex"] = {"enabled": True}
+    config["integrations"]["glasshive"] = {"enabled": True, "scheduled_wakes": {"enabled": scheduled_wakes}}
+    servers = config_compiler.build_mcp_servers(config, {"lc_api_port": 3180}, "agent-main")
+    policy = servers["scheduling-cortex"]["viventiumGlassHive"]["toolPolicies"]
+    assert policy["schedule_create"]["access"] == ("none" if scheduled_wakes else "write")
+    assert policy["schedule_update"]["access"] == "write"
+    assert policy["schedule_delete"]["access"] == "write"
+    assert policy["schedule_list"]["access"] == "content_read"

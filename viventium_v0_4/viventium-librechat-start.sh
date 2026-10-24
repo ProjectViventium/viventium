@@ -2797,7 +2797,7 @@ read_detached_launch_process_group() {
 process_start_identity() {
   local pid="${1:-}"
   [[ "$pid" =~ ^[0-9]+$ ]] || return 1
-  ps -p "$pid" -o lstart= 2>/dev/null | sed 's/^[[:space:]]*//;s/[[:space:]]*$//'
+  LC_ALL=C ps -p "$pid" -o lstart= 2>/dev/null | sed 's/^[[:space:]]*//;s/[[:space:]]*$//'
 }
 
 record_detached_launch_process_group_members() {
@@ -8111,7 +8111,7 @@ librechat_sandpack_healthy() {
   local sandpack_pids=""
   local pid=""
   if ! curl -fsS --max-time 3 "${SANDPACK_BUNDLER_URL}index.html" 2>/dev/null |
-    grep -Fq 'IS_ONPREM:"true"'; then
+    grep -F 'IS_ONPREM:"true"' >/dev/null; then
     return 1
   fi
   api_pids="$(find_port_listener_pids "$LC_API_PORT")"

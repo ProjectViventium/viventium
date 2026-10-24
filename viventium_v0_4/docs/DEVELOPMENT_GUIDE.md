@@ -261,3 +261,147 @@ npm run test:ci
 ```bash
 mongosh --eval "db = db.getSiblingDB('LibreChat'); db.agents.find({'background_cortices.0': {$exists: true}}, {name: 1}).pretty()"
 ```
+
+
+## xPerfect scheduled Main
+
+Viventium is the cognitive application. xPerfect owns the generic clock, native AI work and
+orchestration. The [capability contract](../../docs/requirements_and_learnings/capabilities/main-scheduling-continuity.md)
+owns behavior and acceptance; xPerfect's own application-boundary document owns its standalone
+webhook and scheduling API. This setup adds no second scheduler or work manager.
+
+### Source settings and setup
+
+`integrations.glasshive.scheduled_wakes.enabled` is opt-in and defaults to `false`. An existing
+installation can enable it through the canonical settings helper, then use its supported compile
+and runtime activation path:
+
+```sh
+python3 scripts/viventium/config_settings.py \
+  --config-file "$VIVENTIUM_CONFIG_FILE" \
+  --backup-dir "$VIVENTIUM_STATE_DIR/config-backups" \
+  scheduled-wakes-set --enabled true --json
+bin/viventium compile
+```
+
+Use the runtime owner's restart or activation command for the installation. Do not copy generated
+environment files into place or patch database state. Native payloads regenerate the signer and
+local due URL from the existing protected machine secret; secret-free payload configuration retains
+the opt-in flag. Source installations derive a distinct Standard Webhooks key from the existing
+Keychain-backed runtime secret. No provider/model key is needed for clock setup.
+
+Optional settings under `scheduled_wakes`:
+
+| Setting | Meaning |
+| --- | --- |
+| `destination_id` | Protected owner-scoped `whd_…` returned by xPerfect setup. Omit for automatic idempotent setup; the settings helper accepts `--destination-id auto` to return to that mode. |
+| `receiver_url` | Exact operator-owned `/api/viventium/scheduler/due` endpoint. Defaults to the current local profile. Remote endpoints require HTTPS. |
+| `allowed_receiver_networks` | Explicit operator CIDRs for private HTTPS receivers. Public HTTPS and the scoped local loopback profile need no entry. |
+
+The trusted native worker launch registers or reuses the owner's protected destination through the
+ordinary authenticated xPerfect API, then supplies labeled opaque targets. A fast Direct Queen
+reply does no scheduling setup; its existing handoff prepares these grants only when native work
+starts. A full native Main receives the same authority during its normal bootstrap. Setup
+reads the native request's trusted original source segments; it must not require a duplicate
+top-level `text` field that the native request does not carry. Acceptance must inspect the
+actual worker's protected grant and scheduling MCP, then a saved clock and its due return.
+When that scheduled turn creates another schedule, Core resolves its server-authored due admission
+back to the authorized original request binding. Its original text, event identity and source
+conversation remain the source; the internal scheduler prompt is never recast as the user's request.
+The current accepted stream, owner, tenant and source permissions must still match. The saved
+schedule's own instruction remains the specific work to perform, independently of the original title
+source and fallback. Delivery choices store ordered original-message references and a text digest,
+not copied request text. Core verifies those references against the current owner's source history
+before use. Repeated grants for the same originals reuse that reference identity. Existing text-only
+bindings remain readable; missing, changed or foreign original messages settle the occurrence as
+`failed` with `schedule_task_source_unavailable`. This permanent source failure is not reclaimed or
+restored on the next recovery pass. Transient storage failures remain retryable. Conversation deletion
+removes its source/destination bindings through the existing deletion
+path. Sleeping inside a worker and printing a reminder is not a saved schedule.
+Setup uses a stable owner/integration identity; secret changes update that protected destination. A URL
+change creates a replacement and moves only matching future schedule targets through the normal
+version-checked API. Existing occurrence snapshots, admitted work and receipts are not replayed.
+Owner-scoped URL hashes let explicit destination IDs be checked without exposing the URL. Startup
+reuses the existing recovery path to refresh known owners; due requests return retryable 503 until
+that setup is ready, so a key change cannot turn the first wake into a permanent signature failure.
+URLs and signer keys stay protected; workers receive only a destination ID and request reference. A configured
+fixed destination must belong to the current owner. The authenticated existing scheduler gateway
+also exposes `POST /api/viventium/scheduler/targets` for setup/diagnostics, using the same
+`x-viventium-scheduler-secret` and owner lookup as its other operations. Supply a real owned
+conversation, a source message identity and the original task; the response contains authorized
+targets, never credentials. Do not expose that service secret to a model or browser.
+
+### Normal execution and useful evidence
+
+The fast Queen keeps `hand_off_to` / `list_workers`. Native workers use xPerfect's existing scoped
+schedule tools. `schedule_list` exposes labeled authorized targets before creation: web chat,
+Telegram when linked, or both; same conversation, a new conversation when due, or an explicitly
+selected owned conversation. Structured `viventiumScheduleConversationIds` values are checked
+against the current owner before a target is supplied. The normal native request courier preserves
+that structured selection; it does not infer another conversation from prompt text. Unselected channels and other owners'
+conversations never become destinations. Linked Telegram private-chat targets reuse the existing
+account mapping: the stored Telegram user ID is also the private-chat ID when no separate chat ID
+is present. Creation and later permission checks use that same rule.
+Existing-worker queue, message, steer, retry and resume
+actions refresh the current original-source grant through the existing continuation bundle. A
+failed refresh cannot silently retain a prior task's create reference. Worker-supplied explicit
+timing remains intact; omitted one-time timing uses the existing catch-up window (12 hours by
+default, capped at 24 hours), and repeating timing uses the existing strict grace (15 minutes by
+default). The protected destination rejects a body over the receiver's 64 KiB limit at schedule
+creation instead of accepting a schedule that cannot be delivered.
+
+A Telegram request defaults to Telegram delivery, with the result retained in its bound
+conversation. Web/call requests default to web chat. An eligible, already open call in that same
+selected chat may speak the result; this path never starts a call. New-conversation targets create
+no empty conversations during setup. Actual new IDs are bound by normal Main admission when due.
+The original source conversation is recorded separately from the selected destination. For a new
+or different destination, Core checks both owners, reads the source's current authorized branch,
+and passes its exact raw inherited context and owner-resolved files through the normal Main
+formatter. It does not ask a model to rewrite the request. Same-conversation execution uses its
+ordinary current history without a second history load. Source permission is rechecked at delivery.
+
+When due, xPerfect sends its immutable signed occurrence and saved task instruction. Viventium
+verifies the exact bytes and current binding, commits one intent in the existing scheduler dispatch
+collection, and releases acknowledgement and ordinary Main independently. The original task and
+conversation remain Viventium-owned. Distinct scheduled tasks from one source request retain
+their own signed instructions, so an A-at-nine / B-at-ten request does not execute both at each
+wake. Existing Workbench scheduler envelope prompts, current memory/Feelings/tools/context and
+parallel subconscious paths are reused. Native workers never receive an invented Queen brief.
+
+The normal generation receipt is retained before its HTTP response. Duplicate/lost replies recover
+that stream; an already accepted but unavailable result stays unknown instead of repeating tool
+work. A stored canonical result message can finish presentation after a restart without requiring
+the former in-memory generation job or running Main again. A prior unknown state caused only by
+that missing stream is eligible for this check when it has a saved result ID; a missing canonical
+message stays unknown. The canonical Main result uses the
+existing Core channel outbox and per-channel receipts.
+Main presentation authority is its accepted due admission, persisted canonical response, and
+current owner/conversation/binding/channel permissions. Telegram and an eligible live call use the
+existing outbox claim and dispatch permit lifecycle; no synthetic worker receipt or new queue is
+created. Voice also checks the exact canonical response hash before speech and never marks
+interrupted or unconfirmed audio as heard. Intent states such as `delivery_queued` prove enqueue,
+not delivery. `{NTA}` remains silent; file-only output keeps its files and adds no empty speech.
+
+Private structured `schedule_due_stage` records split native target preparation (owner permission,
+destination setup, channel lookup, binding writes and total), signature verification, durable
+admission, ordinary Main admission and presenter enqueue. A wake that arrives too early returns
+retryable 425; the same occurrence can be admitted when the clock reaches its due time. Independent destination/channel reads
+and selected-conversation permission reads run in parallel. Bindings retain each exact source;
+setup does not overwrite an earlier request or expire a reference that an active schedule may use. Correlate the admission identity with xPerfect's
+occurrence/delivery trace and the Core channel receipt. These durations exclude downstream
+provider, harness and network work unless that stage actually measures them.
+
+### Compatibility and acceptance
+
+Existing Cortex definitions, effective lateness/windows, receipts and in-flight effects retain
+Cortex ownership. When this new path is on, the existing compiled capability policy disables only
+legacy `schedule_create`; list/update/delete and old clock execution remain available. The broker
+omits tools explicitly marked `access: none`, so new work has one creation clock. Enabling the new adapter does not copy those definitions or silently activate a
+replacement. Before any migration, inspect and fence old dispatch and delivery, retain identity
+mapping and uncertainty, and accept the replacement behavior. An empty native store is evidence
+for that candidate only, not a universal migration rule.
+
+The [scheduling journey](../../qa/main-scheduling-continuity/cases.yaml) owns actual clock-to-Main
+and selected-surface acceptance, including lost ACK/restart, changed-body conflict, revoked
+bindings, late/expired wakes, current call ownership, files, silence and cross-turn schedule
+management. Deterministic tests and a saved definition do not prove natural user/channel delivery.

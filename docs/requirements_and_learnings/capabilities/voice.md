@@ -78,6 +78,9 @@ visible until the user dismisses them; terminal tasks without an error keep the 
 display. Dismissal changes only the displayed card, not the task outcome or action authority.
 Recovered native error results settle the Call task as failed rather than completed.
 Typed completion errors also settle non-native Call tasks as failed, including context failures.
+The current Voice stream preserves typed host-capacity failures. Measured disk or memory advice
+requires the resource-pressure class and valid bounded numeric shortage facts. Without those
+facts, use the safe local-busy message; do not blame a provider rate limit or expose raw diagnostics.
 An empty interactive assistant answer is a typed `provider_response_failed` outcome, so the existing
 configured fallback can recover before speech starts. If recovery returns no answer, the task fails
 and speech reports that result. Empty graph transfers, declared silence and background turns keep

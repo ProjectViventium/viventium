@@ -1,5 +1,11 @@
 # Parallel Work QA
 
+Current cross-channel Direct Queen acceptance and its remaining gates are recorded in the
+[2026-10-23 Should-flow report](reports/2026-10-23-should-flow-acceptance.md).
+The [approved-flow regression map](cases.md#approved-flow-regression-map) connects the public
+diagram, reusable user journeys, existing executable tests and rerun instructions. Start there
+when changing the shared Queen, worker, input, callback or channel path; select only affected rows.
+
 This folder is the living acceptance source for account-wide Parallel Work, authoritative Active
 Work visibility, bounded durable GlassHive concurrency, native worker teams, and cross-surface
 delivery/control.
@@ -52,9 +58,9 @@ and the case-specific minimum real-surface proof. It cannot turn a mock, source 
 or self-declared partial result into `PASS`. Feed its private receipt manifest to
 `bin/viventium qa-evidence record` only after the runner returns `PASS`.
 
-## Current acceptance status — reconciled 2026-08-30
+## Historical release certification — 2026-08-30
 
-The feature remains dark and is not release-ready. The 50-case catalog currently records 13 PASS,
+At that evaluation the feature was dark and was not release-ready. That 50-case catalog recorded 13 PASS,
 25 PARTIAL, and 12 NOT RUN cases. `PWK-026` passes clean seed/reseed and live restart;
 `PWK-031` passes the independent Direct/Codex/Claude quality bank; `PWK-035` passes canonical
 new-chat route, cache, retry identity, and headed reload continuity; and `PWK-037` passes the exact

@@ -146,7 +146,16 @@ def test_workbench_exposes_sources_and_exact_consumer_relationships(monkeypatch)
         assert detail['rendered'].strip() == detail['body'].strip()
         related = prompt_service.related_config_for_prompt(prompt_id)
         consumer = '_host_harness_prompt' if prompt_id == 'worker.host_native_harness' else '_instruction_with_completion_contract'
-        assert {row['selector'] for row in related} == {'_worker_prompt', consumer}
+        expected_consumers = {'_worker_prompt', consumer}
+        if prompt_id == 'worker.native_capability_inventory':
+            expected_consumers.add('schedule_run_now')
+            schedule_source = BOOTSTRAP.with_name('prompts') / 'schedule-tools.json'
+            schedule_rows = [row for row in related if row['selector'] == 'schedule_run_now']
+            assert len(schedule_rows) == 1
+            assert schedule_rows[0]['path'] == str(schedule_source.relative_to(ROOT))
+            assert prompt_service._config_source_path(schedule_rows[0]['path']) == schedule_source.resolve()
+            assert 'schedule_run_now' in json.loads(schedule_source.read_text())['tools']
+        assert {row['selector'] for row in related} == expected_consumers
     assert prompt_service._config_source_path(str(BOOTSTRAP.relative_to(ROOT))) == BOOTSTRAP.resolve()
     profile = BOOTSTRAP.with_name('profile_runtime.py')
     assert prompt_service._config_source_path(str(profile.relative_to(ROOT))) == profile.resolve()
