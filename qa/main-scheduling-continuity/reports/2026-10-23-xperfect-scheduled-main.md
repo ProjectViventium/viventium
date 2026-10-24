@@ -1,5 +1,48 @@
 # Scheduled Main and simple schedule editor — 2026-10-23
 
+## Summary
+
+**Result: PARTIAL.** Bounded scheduled-Main and schedule-editor acceptance passed; hardware input, perceptual audio and endurance remain outside the evidence.
+
+## Scope Run
+
+Blast-radius local development checks dated 2026-10-23, with explicitly dated follow-ups below.
+This publication retains their existing evidence; it performs no new live-account or provider QA.
+
+## Traceability
+
+The scheduled-Main requirements and cases linked below own timing, selected channels, cognitive context and recovery. Expected behavior, observed results and remaining gaps stay separate below.
+
+## Full-View Evidence Checklist
+
+- Requirements, owning code, nested component contracts and affected causal checks are linked or named below.
+- Browser/channel observations, logs, DB/state/persistence and generated/loaded identity support only their recorded paths.
+- Omitted required coverage keeps the overall result PARTIAL; hardware, endurance and universal readiness are not inferred.
+
+## User-Grade Evidence
+
+- Surface exercised: Chrome schedule forms, Web chat, Telegram and an existing LiveKit call.
+- Real user path: Create a real clock through the configured worker, let it become due, then inspect the delivered reply or file.
+- Visible outcome: A due reply appeared automatically; actual Telegram image/document outputs arrived; the editor remained usable on narrow screens.
+- Expanded/detail state: Create/edit controls, history, delivery status and uncertain-receipt warning were inspected.
+- Persistence/reload result: Editor reload retained saved changes; supported runtime reload retained canonical results and delivery identities without replay.
+- Backend/log/DB confirmation: Saved clocks, due admissions, canonical Main proofs, channel receipts and loaded-source identity were checked as detailed below.
+- Final model/runtime wording check: Save acceptance stayed distinct from completed work and delivered artifacts; omitted speech-content and hardware checks remain explicit.
+- Substitution check: deterministic checks, logs, DB rows and model review support the recorded user path; they do not replace omitted visible, detail, persistence or wording evidence.
+
+## Automated Evidence
+
+Affected checks and their counts are retained below. Banks may overlap. Historical failures, simulated
+effects and omitted live paths remain identified; publication review does not turn them into passes.
+
+## Public-Safety Review
+
+The public report contains sanitized behavior and bounded conclusions. Raw prompts, account/client
+identities, credentials, private paths, screenshots, recordings and detailed receipts remain private.
+The publication candidate passed the staged public-safety scan.
+
+## Findings
+
 QA mode: **blast-radius**. Local development candidate. This report does not authorize a public
 release or claim whole-product acceptance.
 

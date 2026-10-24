@@ -1,5 +1,48 @@
 # Direct Queen and native worker acceptance — 2026-10-23
 
+## Summary
+
+**Result: PARTIAL.** Bounded shared-flow acceptance passed, including the documented 24 October follow-up. Universal parity, provider fault UI and always-on latency are not certified.
+
+## Scope Run
+
+Blast-radius local development checks dated 2026-10-23, with explicitly dated follow-ups below.
+This publication retains their existing evidence; it performs no new live-account or provider QA.
+
+## Traceability
+
+The parallel-work, interaction-delivery and voice owners define the one-Queen, original-context and native Workers A…N contracts; the journey rows below map their checks and gaps. Expected behavior, observed results and remaining gaps stay separate below.
+
+## Full-View Evidence Checklist
+
+- Requirements, owning code, nested component contracts and affected causal checks are linked or named below.
+- Browser/channel observations, logs, DB/state/persistence and generated/loaded identity support only their recorded paths.
+- Omitted required coverage keeps the overall result PARTIAL; hardware, endurance and universal readiness are not inferred.
+
+## User-Grade Evidence
+
+- Surface exercised: Web chat in Chrome, Telegram and LiveKit with real PCM input/output.
+- Real user path: Send rapid A/B/C, correct an existing worker, request another task, then inspect the result in the call and linked chat.
+- Visible outcome: Distinct workers completed their exact assignments; arithmetic remained conversational; files appeared and downloaded through the expected channel.
+- Expanded/detail state: The call displayed Work continues for replaced work; current and historical attachments retained distinct file evidence.
+- Persistence/reload result: Browser reload retained file actions and call context; worker work completed after hang-up and its PDF remained downloadable.
+- Backend/log/DB confirmation: Native task clauses, callbacks, durable receipts, source identity, saved outputs and loaded bundles agreed with the bounded user-path observations.
+- Final model/runtime wording check: Internal status did not replace Main conversation. Recorded speech-start samples remain well above two seconds; scoped fault-injection gaps are not passed.
+- Substitution check: deterministic checks, logs, DB rows and model review support the recorded user path; they do not replace omitted visible, detail, persistence or wording evidence.
+
+## Automated Evidence
+
+Affected checks and their counts are retained below. Banks may overlap. Historical failures, simulated
+effects and omitted live paths remain identified; publication review does not turn them into passes.
+
+## Public-Safety Review
+
+The public report contains sanitized behavior and bounded conclusions. Raw prompts, account/client
+identities, credentials, private paths, screenshots, recordings and detailed receipts remain private.
+The publication candidate passed the staged public-safety scan.
+
+## Findings
+
 Scope: `blast-radius`. Local development acceptance of the approved one-continuous-relationship
 flow across Web chat, Telegram and LiveKit. This is not release certification or an endurance test.
 Only synthetic tasks and files are described here; private receipts and original prompts remain

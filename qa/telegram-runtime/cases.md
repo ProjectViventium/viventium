@@ -63,7 +63,7 @@
 - **Evidence to capture:** Actual old/new parent digest and writer timeline, causal selector
   checks, completed/user/legacy controls, affected Telegram and scheduler routes, callback
   active-Main controls, loaded source identity and a fresh real Telegram reply.
-- **Last run:** Source checks passed locally, 2026-10-23: 46 selected checks cover stable selection,
+- **Last run:** PARTIAL, 2026-10-23. Source checks passed locally: 46 selected checks cover stable selection,
   the actual native Stop writer and persisted partial, interruption context, replay, Telegram,
   scheduler, protected Main carrier and callback consumers. The first 30-check filter was rejected
   in review because it also removed confirmed Stops; that result does not prove this final contract.

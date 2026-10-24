@@ -1,5 +1,48 @@
 # Telegram overlapping-reply recovery
 
+## Summary
+
+**Result: PARTIAL.** The dated overlap candidate passed reply recovery but retained reminder and missing-file failures. Later evidence is linked; these historical failures are not erased.
+
+## Scope Run
+
+Blast-radius local development checks dated 2026-10-23, with explicitly dated follow-ups below.
+This publication retains their existing evidence; it performs no new live-account or provider QA.
+
+## Traceability
+
+Telegram reply lifecycle and ordered-source requirements map to the Telegram runtime cases and the later Should-flow report linked below. Expected behavior, observed results and remaining gaps stay separate below.
+
+## Full-View Evidence Checklist
+
+- Requirements, owning code, nested component contracts and affected causal checks are linked or named below.
+- Browser/channel observations, logs, DB/state/persistence and generated/loaded identity support only their recorded paths.
+- Omitted required coverage keeps the overall result PARTIAL; hardware, endurance and universal readiness are not inferred.
+
+## User-Grade Evidence
+
+- Surface exercised: Telegram bot chat and a Web Stop-to-Telegram continuation.
+- Real user path: Send a request with two corrections while earlier work is unfinished, then send another independent message and reopen the chat.
+- Visible outcome: One final reply retained the original request and corrections; another message received a committed answer; typing ended.
+- Expanded/detail state: Detailed work-card inspection was not separately certified. Visible chat output and source ancestry were checked; remaining work failures are listed below.
+- Persistence/reload result: The final saved reply remained visible after reopening the chat; retained-input checks preserved source ownership without replaying old personal requests.
+- Backend/log/DB confirmation: Ordered source ledger, removal/commit receipts, final logs and loaded Telegram/Core source identity were checked as recorded below.
+- Final model/runtime wording check: The report preserves unsupported missing-file behavior and the late reminder instead of treating source checks or review approval as user acceptance.
+- Substitution check: deterministic checks, logs, DB rows and model review support the recorded user path; they do not replace omitted visible, detail, persistence or wording evidence.
+
+## Automated Evidence
+
+Affected checks and their counts are retained below. Banks may overlap. Historical failures, simulated
+effects and omitted live paths remain identified; publication review does not turn them into passes.
+
+## Public-Safety Review
+
+The public report contains sanitized behavior and bounded conclusions. Raw prompts, account/client
+identities, credentials, private paths, screenshots, recordings and detailed receipts remain private.
+The publication candidate passed the staged public-safety scan.
+
+## Findings
+
 QA mode: **blast-radius**. Scope: the reported Telegram reply failure and its confirmed
 generation, source-order, receipt, rollback and retained-input consumers.
 
