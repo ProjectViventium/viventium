@@ -283,6 +283,11 @@ serves all goals; no prompt-specific route, task-type allowlist, or special work
   Missing, deleted, foreign, or other-branch selections reject the launch. Current source uploads
   keep their normal source selection and order. Exact file selection cannot bypass rapid-input
   source ordinals; unselected current siblings and historical files do not cross the boundary.
+  The existing Main source-selection capsule retains a single attached input, including an empty
+  caption, and binds its S-number to bounded original file IDs, names, media types and sizes. This
+  applies to all attachment types and surfaces. Historical file choices cannot become the current
+  input. Additive authoring exposes only the sources this invocation owns; metadata omissions are
+  explicit. The model still decides how to use the files and declared capabilities.
   Selected files use the existing signed upload projection for original bytes or their declared
   extracted-text input. A filename or a copied text snippet does not grant access to an original file.
   Historical file selection preserves the existing source-local `media_group_index` separately
@@ -2062,6 +2067,13 @@ Selecting Direct does not replace the workers with the Queen's provider or reduc
 authority, memory, Feelings or relevant context. Optional context preparation may remain off;
 it must not become a prerequisite for a valid handoff. xPerfect owns the existing delegation and
 work-control mechanisms. Viventium supplies authorized context and channel presentation.
+
+The two callable coordination tools stay separate from worker capability discovery. The existing
+broker brief also carries the current host-authorized service names and action-tool names as data.
+This is a partial discovery scope, not proof that a worker has that exact grant, a live connection,
+or a completed action. Worker authorization is resolved independently at launch. Conversation
+controls and the voice-task tool are not worker action capabilities. This adds no tool, lookup,
+or routing rule; full-mode broker briefs keep their existing contract.
 
 The [Voice contract](capabilities/voice.md#queen-execution-and-worker-execution-are-separate-settings)
 and [local acceptance report](../../qa/voice/reports/2026-10-17-direct-queen-action-handoff.md)

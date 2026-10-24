@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import subprocess
+import pytest
 from pathlib import Path
 
 
@@ -107,6 +108,8 @@ def test_staged_public_safety_rejects_owner_and_runtime_env_paths(
         "state/dev-runtime-activation.synthetic/snapshots/accepted-librechat.env",
         "viventium_v0_4/LibreChat/.env.viventium-private-synthetic/owner.env",
         "viventium_v0_4/LibreChat/.env.viventium-retired-env-synthetic",
+        "claude/synthetic-session/harness-prompt.md",
+        "codex/synthetic-session/project-definition.md",
     ):
         path = repo / relative
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -131,6 +134,24 @@ def test_gitignore_excludes_complete_dev_runtime_activation_transactions() -> No
             check=False,
         )
         assert completed.returncode == 0, relative
+
+
+@pytest.mark.parametrize("harness", ["claude", "codex"])
+def test_staged_public_safety_rejects_private_session_prose_without_a_secret(
+    tmp_path: Path, harness: str,
+) -> None:
+    repo = init_repo(tmp_path)
+    relative = f"{harness}/synthetic-session/harness-prompt.md"
+    source = repo / relative
+    source.parent.mkdir(parents=True)
+    source.write_text("Private operator instructions without a token.\n", encoding="utf-8")
+    subprocess.run(["git", "-C", str(repo), "add", relative], check=True)
+
+    completed = run_staged_safety(repo)
+
+    assert completed.returncode != 0
+    assert "forbidden staged private session path" in completed.stderr
+    assert "Private operator instructions" not in completed.stderr
 
 
 def test_staged_public_safety_rejects_high_confidence_secret_content(

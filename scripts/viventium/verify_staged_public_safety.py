@@ -16,6 +16,7 @@ FORBIDDEN_DIRECTORY_NAMES = {
     "successor-bridge",
     "upgrade-backups",
 }
+FORBIDDEN_ROOT_DIRECTORIES = {"claude", "codex"}
 FORBIDDEN_DIRECTORY_PREFIXES = (
     "dev-runtime-activation.",
     ".env.viventium-",
@@ -98,6 +99,9 @@ def verify(repo: Path) -> dict[str, object]:
     findings: list[str] = []
     for raw_path in paths:
         path = PurePosixPath(raw_path)
+        if len(path.parts) > 1 and path.parts[0] in FORBIDDEN_ROOT_DIRECTORIES:
+            findings.append(f"forbidden staged private session path: {path.as_posix()}")
+            continue
         if (
             path.name in FORBIDDEN_FILE_NAMES
             or any(part in FORBIDDEN_DIRECTORY_NAMES for part in path.parts)

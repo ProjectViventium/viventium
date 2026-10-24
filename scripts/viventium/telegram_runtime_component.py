@@ -131,6 +131,7 @@ PREDECESSOR_REQUIRED_COMPONENT_FILES = (
     "viventium_v0_4/voice-gateway/sse.py",
 )
 CURRENT_REQUIRED_COMPONENT_FILES = (
+    "scripts/viventium/parallel_work_release_gate.py",
     *PREDECESSOR_REQUIRED_COMPONENT_FILES,
     "viventium_v0_4/shared/voice/tts_provider_capabilities.json",
     "viventium_v0_4/shared/telegram_tts.py",
@@ -290,6 +291,7 @@ def _selected_sources(
     for relative in (
         Path("bin") / "viventium",
         Path("scripts") / "viventium" / "telegram_poller_handoff.py",
+        Path("scripts") / "viventium" / "parallel_work_release_gate.py",
         Path("scripts") / "viventium" / "telegram_runtime_component.py",
         Path("scripts") / "viventium" / "telegram_user_config_migration.py",
         Path("scripts") / "viventium" / "native_runtime.py",

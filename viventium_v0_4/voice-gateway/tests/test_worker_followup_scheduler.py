@@ -2966,6 +2966,62 @@ class TestCortexFollowupScheduler(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(released)
         self.assertTrue(settled)
 
+    async def test_scheduled_main_exact_publication_uses_existing_speech_and_permit(self):
+        session = _DummySession()
+        scheduler = self._build_scheduler(session=session)
+        text = "The scheduled result is ready."
+        proof = {"version": 1, "streamId": "scheduled-stream", "admissionId": "scheduled-admission",
+                 "responseMessageId": "scheduled-response",
+                 "responseDigest": "sha256:" + hashlib.sha256(text.encode()).hexdigest()}
+        delivery = {"deliveryId": "scheduled-delivery", "claimId": "scheduled-claim",
+                    "callbackMessageId": "scheduled-response", "voiceCallSessionId": "call_123",
+                    "voiceRequestId": "scheduled-stream", "event": "main.followup", "text": text,
+                    "mainGenerationPresentation": proof, "presentationTask": {"taskId": "scheduled-task"}}
+        self.assertEqual(scheduler._validate_glasshive_main_presentation(delivery, text), proof)
+        scheduler._claim_glasshive_delivery = mock.AsyncMock(return_value=delivery)
+        permit = _dispatch_permit(delivery_id="scheduled-delivery", claim_id="scheduled-claim")
+        scheduler._authorize_glasshive_delivery = mock.AsyncMock(return_value=permit)
+        scheduler._renew_glasshive_delivery_permit = mock.AsyncMock(return_value=permit)
+        scheduler._maintain_glasshive_speech_permit = mock.AsyncMock(return_value=True)
+        with mock.patch.object(worker.aiohttp, "ClientSession", _FakeClientSession):
+            result = await scheduler._run(scheduler._seq, "scheduled-response", [],
+                should_poll_cortex=False, should_poll_glasshive=True,
+                allow_stale_delivery=True, presentation_is_current=lambda: True,
+                task_ref={"taskId": "scheduled-task", "streamId": "glasshive-delivery:scheduled-delivery"},
+                published_worker_callback_id="scheduled-callback")
+        self.assertTrue(result)
+        self.assertEqual([row["text"] for row in session.say_calls], [text])
+        scheduler._authorize_glasshive_delivery.assert_awaited_once()
+        scheduler._maintain_glasshive_speech_permit.assert_awaited_once()
+        for change in ({"event": "run.completed"}, {"voiceCallSessionId": "other-call"},
+                       {"voiceRequestId": "other-stream"}, {"callbackMessageId": "other-response"},
+                       {"mainGenerationPresentation": {**proof, "responseDigest": "sha256:" + "0" * 64}}):
+            with self.subTest(change=change):
+                self.assertIsNone(scheduler._validate_glasshive_main_presentation({**delivery, **change}, text))
+        await scheduler.close()
+
+    async def test_scheduled_main_permit_settles_only_after_audible_completion(self):
+        for interrupted in (False, True):
+            with self.subTest(interrupted=interrupted):
+                session = _DummySession()
+                scheduler = self._build_scheduler(session=session)
+                speech = session.say("Scheduled result", allow_interruptions=True, add_to_chat_ctx=False)
+                speech.interrupted = interrupted
+                speech.complete(audible=True)
+                delivery = {"deliveryId": "scheduled-delivery", "claimId": "scheduled-claim",
+                            "mainGenerationPresentation": {"version": 1}}
+                permit = _dispatch_permit(delivery_id="scheduled-delivery", claim_id="scheduled-claim")
+                scheduler._mark_glasshive_delivery_status = mock.AsyncMock(return_value=True)
+                scheduler._complete_glasshive_worker_presentation = mock.AsyncMock(return_value=True)
+                result = await scheduler._maintain_glasshive_speech_permit(_FakeClientSession(),
+                    delivery, permit, speech, seq=scheduler._seq, allow_stale_delivery=True,
+                    presentation_is_current=lambda: True)
+                self.assertEqual(result, not interrupted)
+                self.assertEqual(scheduler._mark_glasshive_delivery_status.await_args.args[2],
+                                 "delivery_unknown" if interrupted else "sent")
+                scheduler._complete_glasshive_worker_presentation.assert_not_awaited()
+                await scheduler.close()
+
     async def test_exact_pending_question_accepts_identical_future_native_expiry_cap_only(self):
         scheduler = self._build_scheduler(session=_DummySession())
         expiry = datetime.now(timezone.utc) + timedelta(seconds=30)

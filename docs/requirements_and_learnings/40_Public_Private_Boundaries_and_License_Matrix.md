@@ -20,6 +20,9 @@ This document defines what belongs in public, private personal, and private ente
   text, absolute private paths, or token-like examples.
 - Machine-local continuity manifests, recall markers, helper logs, and restore pre-backups are
   runtime artifacts, not public repo content.
+- Generated harness-session folders contain private prompts and connection state. Keep them in
+  private runtime storage. Root `claude/` and `codex/` folders are ignored and rejected by the
+  staged publication check, including files whose names alone do not reveal their private content.
 - Continuity manifests may exist under App Support or private companion storage only as
   public-safe metadata:
   - sanitized `~/...`-style paths are acceptable

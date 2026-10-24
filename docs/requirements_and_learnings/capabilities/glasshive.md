@@ -79,6 +79,16 @@ The Direct request projection keeps the first trusted Core archive copy and omit
 duplicates only when admitted origin and content hashes match. It preserves the earlier request
 prefix, all unique content and the raw SDK journal. Unmarked legacy inputs remain unchanged. This
 reduces provider input; it does not compact the journal or prove a latency or reliability gain.
+The same request-copy projection can retain one exact inline source prefix across consecutive
+identical versions. It requires the trusted Core protocol, owner and epoch, a bound input digest
+and part index, and a valid manifest with exact source identity, full hash and prefix bytes.
+Keep the earliest visible copy; changed, unknown or tampered versions break reuse. Source
+manifests, unique instructions, model messages, tool and reasoning protocol, files, images and
+the raw journal stay intact. Content-free block and byte counts do not establish a speedup.
+Outgoing metadata must describe the projected bytes: an emptied source has `inline_chars: 0`
+and `delivery: retrieval`, with `retained_inline` pointing to the exact earlier visible copy.
+Per-source and aggregate inline/retrievable counts must agree. Missing or inconsistent native
+carrier identity, counts or delivery fields preserve the original carrier and break reuse.
 
 Direct uses the shared native conversation-parts collector for streamed replies, terminal text and
 mixed speech dispositions. Final output must pass the owning schema and conversation controls;
@@ -211,6 +221,11 @@ tools; the worker chooses a service with `capability_describe` and invokes it th
 reuses the existing grant-and-server cache for describe and invoke, after current user, policy and stored-credential
 checks. A selected service still uses normal connection/authentication and can report unavailable.
 This saves eager startup and schema tokens; a genuinely needed service can add a discovery tool round.
+
+Conversation bootstrap may add bounded descriptions from that same authorized catalog to worker
+discovery facts. These optional descriptions must not evict a catalog that already fits the complete
+bootstrap carrier: keep the original bundle and catalog if description enrichment exceeds its limit.
+This changes neither grants nor callable tools and starts no additional discovery.
 
 The explicit eager/deferred partition belongs to the durable authorization fingerprint, signed
 run grant, worker projection and visible instruction context. Existing authorizations without this

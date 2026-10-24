@@ -5574,6 +5574,9 @@ class CortexFollowupScheduler:
                                         != f"glasshive-delivery:{delivery.get('deliveryId')}"
                                         or delivery.get("callbackMessageId") != message_id
                                         or not (isinstance(delivery.get("workerCompletionPresentation"), dict)
+                                            or self._validate_glasshive_main_presentation(
+                                                delivery, str(delivery.get("fullText") or delivery.get("text") or "")
+                                            ) is not None
                                             or (delivery.get("event") == "run.needs_input"
                                                 and isinstance(delivery.get("nativeInputBinding"), dict)))
                                         or (delivery.get("presentationTask") or {}).get("taskId")
@@ -5604,6 +5607,12 @@ class CortexFollowupScheduler:
                                                 error="voice_worker_completion_presentation_invalid",
                                             )
                                             return
+                                    main_presentation = delivery.get("mainGenerationPresentation")
+                                    if main_presentation is not None and self._validate_glasshive_main_presentation(delivery, text) is None:
+                                        await self._mark_glasshive_delivery_status(
+                                            session, delivery, "failed", error="voice_main_presentation_invalid"
+                                        )
+                                        return
                                     if is_no_response_only(text):
                                         if log_latency:
                                             logger.info(
@@ -5656,6 +5665,12 @@ class CortexFollowupScheduler:
                                             "delivery_unknown",
                                             dispatch_permit=permit,
                                             reason="voice_worker_completion_presentation_changed",
+                                        )
+                                        return
+                                    if main_presentation is not None and self._validate_glasshive_main_presentation(delivery, text) is None:
+                                        await self._mark_glasshive_delivery_status(
+                                            session, delivery, "delivery_unknown", dispatch_permit=permit,
+                                            reason="voice_main_presentation_changed",
                                         )
                                         return
                                     spoken, speech_handle, _speech_reason = self._start_speech(
@@ -6046,6 +6061,29 @@ class CortexFollowupScheduler:
         return len(suffix) == length and all(
             character in "0123456789abcdef" for character in suffix
         )
+
+    def _validate_glasshive_main_presentation(
+        self, delivery: dict[str, Any], text: str,
+    ) -> Optional[dict[str, Any]]:
+        """Retain the canonical Main reply; Core rechecks its durable admission on permit use."""
+        presentation = delivery.get("mainGenerationPresentation")
+        if not isinstance(presentation, dict) or set(presentation) != {
+            "version", "streamId", "admissionId", "responseMessageId", "responseDigest",
+        }:
+            return None
+        if (presentation.get("version") != 1 or isinstance(presentation.get("version"), bool)
+                or delivery.get("event") != "main.followup"
+                or delivery.get("voiceCallSessionId") != self._auth.call_session_id
+                or presentation.get("streamId") != delivery.get("voiceRequestId")
+                or presentation.get("responseMessageId") != delivery.get("callbackMessageId")
+                or any(not isinstance(presentation.get(key), str) or not presentation[key]
+                       or len(presentation[key]) > 512
+                       for key in ("streamId", "admissionId", "responseMessageId"))
+                or not str(text or "").strip()
+                or presentation.get("responseDigest") != "sha256:" + hashlib.sha256(
+                    str(text).encode("utf-8")).hexdigest()):
+            return None
+        return dict(presentation)
 
     def _validate_glasshive_worker_presentation(
         self,

@@ -65,6 +65,8 @@ internals.
   process group. A missing or removed group receipt cannot authorize a same-checkout sweep.
   Legacy recovery remains limited to configured service ports and owned PID files; another
   runtime using the same source stays outside that recovery scope.
+- Record and compare process start identities with a fixed locale; caller locale changes must not reject the same owned process.
+- On macOS, read the poller's exact working directory from kernel identity data. A slow open-file scan must not mark a live poller dead; missing or mismatched proof stays unready.
 - Native GUI installation releases the lifecycle lock before opening the installed helper, which
   starts fresh worker services. Upgrade retires only the owned prior helper; failed startup restores
   the prior app, configuration, and runtime state. Setup acknowledgement and user preferences survive.
@@ -90,6 +92,10 @@ internals.
   source/live drift before mutation.
 - **ONB-011:** Use the smallest reviewable manifest and checks. Add another registry or launcher only
   after measured drift or isolation needs prove its value.
+
+Health checks that inspect an HTTP response must consume it fully and retain transfer failures.
+Finding the artifact marker must not close the response pipe early and cause a healthy Core restart.
+The existing API/artifact listener ownership check still applies.
 
 ### Local native database
 
@@ -185,3 +191,12 @@ for the applicable hardened app. Its [responsible-code guidance](https://develop
 explains why a helper's launch relationship and clean-machine tests matter. Keep consent in native
 macOS controls; do not edit TCC databases, reset unrelated grants, or grant a development tool's
 permissions and report the installed product as repaired.
+
+### Development acceptance window
+
+Do not run a package clean build while user-path acceptance is using that same serving checkout.
+A missing compiled module during a build is a local runtime interruption, not evidence of provider
+or media failure. Finish compilation, confirm source-to-artifact identity, load through the current
+runtime owner, and only then exercise affected channels. Persistent local availability uses the
+existing supported background lifecycle; verify the owning supervisors before relying on an
+individual service reload. Keep unrelated work and saved user configuration intact.

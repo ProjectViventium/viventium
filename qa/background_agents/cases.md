@@ -49,6 +49,7 @@ When adding a new production-miss regression, add the case to `03_eval_prompt_ba
 | `ACT-48` | Phase B compares concrete new value, honors conditional-continuation consent, and suppresses redundant or unauthorized additions | Adjudicator prompt/unit tests plus generated and `{NTA}` real-browser controls, refresh persistence, logs, DB decision metadata, and no visible internal marker |
 | `ACT-49` | One finite completed cortex cohort enters the exact active native Main without cancel/replay | Deterministic host/producer/control checks, actual native capability, original product structured response, visible/reloaded cards, and truthful fallback |
 | `ACT-50` | Native follow-ups retain current declared tools through copies, discard inherited Main credentials and mint their own scoped authority; empty, denied and non-workspace routes retain no Main grant | Actual Run.create consumer checks on text and owner-authorized voice, mixed-case inherited headers, fresh message/stream/conversation binding, canonical hydration/merge proof, unchanged Main source and scoped endpoint fixtures |
+| `ACT-51` | Activation that finishes after Main client disposal still executes and settles through its original background owner | Actual client/disposer regression with late activation, active-client and empty-activation controls, superseded foreground suppression, incremental persistence identity, and loaded Telegram log/DB evidence; no new Main invocation or restored obsolete answer |
 
 ## Required User-Grade Loop For Card Regressions
 

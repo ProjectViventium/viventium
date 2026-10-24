@@ -19,6 +19,11 @@
 
 ## Interpretation
 
+- `ACT-51` covers the shared client lifecycle for every configured cortex. A positive late
+  activation must reach the existing execution and completion lane after Main disposal; an empty
+  activation stays silent. Preserve canonical request/run/input identities and suppress obsolete
+  foreground output. See the [Telegram recovery follow-up](../telegram-runtime/reports/2026-10-23-overlap-recovery.md).
+
 - Coverage in this matrix is activation coverage, not full execution QA.
 - Cases with outcome assertions (`ACT-13`, `ACT-14`, `ACT-15`, `ACT-16`, `ACT-17`, `ACT-18`, `ACT-19`, `ACT-20`, `ACT-21`, `ACT-22`, `ACT-23`, `ACT-24`, `ACT-25`, `ACT-26`, `ACT-27`, `ACT-33`, `ACT-34`, `ACT-35`, `ACT-36`, `ACT-37`, `ACT-38`, `ACT-39`, `ACT-46`, `ACT-47`, `ACT-48`) are promoted incident regressions. They
   are not satisfied by an activation-only pass; QA must verify user-visible quality, named cortex

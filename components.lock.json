@@ -8,7 +8,7 @@
       "path": "viventium_v0_4/LibreChat",
       "origin": "https://github.com/ProjectViventium/viventium-librechat.git",
       "upstream": "https://github.com/danny-avila/LibreChat.git",
-      "ref": "610394b65113e2e34ba3d85f085533d0c7e3817b"
+      "ref": "43fc33dd3013598e1e094a67c844de7675d49925"
     },
     {
       "name": "agents-playground",
@@ -43,7 +43,7 @@
       "path": "viventium_v0_4/xPerfect",
       "origin": "https://github.com/xPerfectAI/xPerfect.git",
       "upstream": "",
-      "ref": "2ec9d5d4b34f1f65ebb17d508461ca6bdaea60aa"
+      "ref": "0e9e18293226c82b8416bbc94bb6b2e92c0c4a57"
     },
     {
       "name": "Viventium-Health",
@@ -57,7 +57,7 @@
       "path": "viventium_v0_4/MCPs/ms-365-mcp-server",
       "origin": "https://github.com/ProjectViventium/ms-365-mcp-server.git",
       "upstream": "https://github.com/softeria/ms-365-mcp-server.git",
-      "ref": "c4c6f33b5e395a96780576cf0b55e5c420309e31"
+      "ref": "ce8b0fca86c00b95249c2acfb304192ac6e1880a"
     },
     {
       "name": "google_workspace_mcp",

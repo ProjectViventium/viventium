@@ -6578,6 +6578,56 @@
             "Deep Memory stays within its evidence role, returns exactly {NTA} for no new relevant evidence, and does not answer the arithmetic itself.",
             "The source-only constraint is preserved; no unrelated LIFE browsing or externally visible work occurs."
           ]
+        },
+        {
+          "id": "cortex_math_keeps_quantitative_result",
+          "surface": "web",
+          "promptRefs": [
+            "cortex.parietal_cortex.execution",
+            "surface.cortex_output.base",
+            "surface.cortex_output.web",
+            "cortex.execution_subject"
+          ],
+          "context": "The quantitative specialist invocation is read-only. No worker or other action results are supplied.",
+          "prompt": "What is 9 times 7?",
+          "rubric": [
+            "The quantitative specialist returns 63 with no invented action status.",
+            "Read-only access does not prevent mathematical reasoning or require an irrelevant tool disclaimer."
+          ]
+        },
+        {
+          "id": "cortex_concurrent_work_does_not_infer_global_inaction",
+          "surface": "web",
+          "promptRefs": [
+            "cortex.parietal_cortex.execution",
+            "surface.cortex_output.base",
+            "surface.cortex_output.web",
+            "cortex.execution_subject"
+          ],
+          "context": "Main owns execution of the requested background work. This quantitative specialist invocation is read-only and has received no verified launch or failure results for Main or other workers. Its assignment is independent quantitative reasoning.",
+          "prompt": "For this disposable validation, leave persistent memory unchanged. Run an amber task and a teal task concurrently in separate workspaces. The amber task writes amber.txt with the value 18 after an 18-second process wait. The teal task writes teal.txt with the value 37 after a 37-second process wait. Do not create schedules. While those tasks run, calculate 6 multiplied by 9 in this conversation.",
+          "rubric": [
+            "The quantitative specialist may return 54 or stay silent if it has no independent finding; it does not execute the background tasks.",
+            "It does not claim either task started, did not start, failed, or was blocked without verified results for that actor and action.",
+            "It does not turn its own read-only access or tool limits into a claim about Main, other workers, or personal memory."
+          ]
+        },
+        {
+          "id": "cortex_verified_result_retains_actor_scope",
+          "surface": "web",
+          "promptRefs": [
+            "cortex.parietal_cortex.execution",
+            "surface.cortex_output.base",
+            "surface.cortex_output.web",
+            "cortex.execution_subject"
+          ],
+          "context": "Verified current-run tool evidence supplied to the quantitative specialist: Main launched task A successfully; the task B launch was rejected before starting. Task A reports 12 completed checks and 3 remaining checks. This specialist itself has read-only access.",
+          "prompt": "Using only the verified results, what percentage of task A checks are complete?",
+          "rubric": [
+            "Returns 80 percent from 12 of 15 checks.",
+            "May accurately describe the supplied Main launch outcomes, including the verified task B rejection.",
+            "Does not deny Main or task A activity because this specialist is read-only, and does not claim to have performed Main actions itself."
+          ]
         }
       ],
       "semanticJudge": true

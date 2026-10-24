@@ -5464,6 +5464,51 @@ class TestStreamErrorHelpers(unittest.TestCase):
         payload = {"_sse_event": "error", "error": "boom"}
         self.assertEqual(_extract_stream_error(payload), "boom")
 
+    def test_capacity_advice_requires_bounded_measured_resource_pressure(self) -> None:
+        busy = "Local AI capacity is busy. Please try again shortly."
+        cases = [
+            None, [], {},
+            {"capacity_class": "host_worker_slots", "capacity_shortage": {"diskBytes": 1}},
+            {"capacity_shortage": {"diskBytes": 1}},
+            {"capacity_class": "resource_pressure", "capacity_shortage": {"threads": 1}},
+            {"capacity_class": "resource_pressure", "capacity_shortage": {"childProcesses": 1}},
+            {"capacity_class": "resource_pressure", "capacity_shortage": [1]},
+            {"capacity_class": "resource_pressure", "capacity_available": {"diskBytes": 5},
+             "capacity_required": {"diskBytes": 5}},
+            {"capacity_class": "resource_pressure", "capacity_required": {"diskBytes": 5}},
+            {"capacity_class": "resource_pressure", "capacity_available": {"diskBytes": True},
+             "capacity_required": {"diskBytes": 5}},
+            {"capacity_class": "resource_pressure", "capacity_available": {"diskBytes": 0},
+             "capacity_required": {"diskBytes": 2**53}},
+        ]
+        cases.extend({"capacity_class": "resource_pressure", "capacity_shortage": {"diskBytes": value}}
+                     for value in (0, -1, True, 1.5, float("nan"), float("inf"), 2**53,
+                                   "PRIVATE_CAPACITY_CANARY", {"private": 1}, None))
+        for metadata in cases:
+            with self.subTest(metadata=metadata):
+                self.assertEqual(_select_stream_error_message(
+                    "503 authentication MCP PRIVATE_CAPACITY_CANARY", code="host_capacity", metadata=metadata,
+                ), busy)
+
+    def test_capacity_advice_accepts_shortage_or_measured_gap_without_private_prose(self) -> None:
+        for metadata, recovery in (
+            ({"capacity_class": "resource_pressure", "capacity_shortage": {"diskBytes": 1}}, "Free some space"),
+            ({"capacity_class": "resource_pressure", "capacity_available": {"memoryBytes": 0},
+              "capacity_required": {"memoryBytes": 1}}, "Close unused apps"),
+            ({"capacityClass": "resource_pressure", "shortage": {"memoryBytes": 2**53 - 1}}, "Close unused apps"),
+        ):
+            with self.subTest(metadata=metadata):
+                message = _select_stream_error_message(
+                    "503 PRIVATE_CAPACITY_CANARY", code="host_capacity", metadata=metadata,
+                )
+                self.assertIn(recovery, message)
+                self.assertNotIn("PRIVATE_CAPACITY_CANARY", message)
+                self.assertNotIn("503", message)
+        self.assertEqual(_select_stream_error_message(
+            "Synthetic", code="provider_access_denied",
+            metadata={"capacity_class": "resource_pressure", "capacity_shortage": {"diskBytes": 1}},
+        ), "The model provider denied access to this request.")
+
     def test_selects_tool_error_message(self) -> None:
         os.environ["VIVENTIUM_VOICE_STREAM_ERROR_MESSAGE"] = "Stream down."
         os.environ["VIVENTIUM_VOICE_TOOL_ERROR_MESSAGE"] = "Tool down."
@@ -7725,6 +7770,14 @@ class TestErrorSpeechCallAuthority(unittest.TestCase):
                 "content": [{"type": "error", "error": "Synthetic private failure",
                              "error_class": "provider_response_failed"}]}}
 
+    def _capacity_error(self, *, final=False):
+        part = {"type": "error", "error": "503 PRIVATE_CAPACITY_CANARY",
+                "error_class": "host_capacity", "capacity_class": "resource_pressure",
+                "capacity_shortage": {"diskBytes": 1}}
+        if final:
+            return {"final": True, "responseMessage": {"messageId": "message_1", "content": [part]}}
+        return {"event": "error", "error": part["error"], "error_class": part["error_class"]}
+
     async def _run(self, events, *, state=None, status=200, connected=True,
                    reconnect=True, during_read=None, unavailable=False, hook=None):
         class ErrorSseContent:
@@ -7781,7 +7834,7 @@ class TestErrorSpeechCallAuthority(unittest.TestCase):
 
     def test_ended_or_failed_call_suppresses_both_error_fallback_producers(self):
         for status in ("ended", "failed"):
-            for error in (self._error(), self._final_error()):
+            for error in (self._error(), self._final_error(), self._capacity_error(), self._capacity_error(final=True)):
                 with self.subTest(status=status, final="final" in error):
                     text, state, _ = asyncio.run(self._run([error], state=self._state(status=status)))
                     self.assertEqual(text, "")
@@ -7810,6 +7863,31 @@ class TestErrorSpeechCallAuthority(unittest.TestCase):
                 self.assertEqual(text, "The model provider denied access to this request.")
                 self.assertNotIn("PRIVATE_WORKSPACE_CANARY", text)
                 self.assertEqual(len(state.get_calls), 1)
+
+    def test_host_capacity_keeps_measured_recovery_in_canonical_final_speech(self):
+        for dimension, expected in (
+            ("diskBytes", "The computer running Viventium is low on disk space and could not start this reply. Free some space, then retry."),
+            ("memoryBytes", "The computer running Viventium is low on memory and could not start this reply. Close unused apps, then retry."),
+        ):
+            part = {"type": "error", "error": "503 PRIVATE_CAPACITY_CANARY",
+                    "error_class": "host_capacity", "capacity_class": "resource_pressure",
+                    "capacity_available": {dimension: 3}, "capacity_required": {dimension: 5},
+                    "capacity_shortage": {dimension: 2}}
+            final = {"final": True, "responseMessage": {"messageId": "message_1", "content": [part]}}
+            with self.subTest(dimension=dimension):
+                self.assertEqual(_extract_final_response_text(final), expected)
+                text, state, _ = asyncio.run(self._run([final], state=self._state()))
+                self.assertEqual(text, expected)
+                self.assertEqual(len(state.get_calls), 1)
+                self.assertNotIn("PRIVATE_CAPACITY_CANARY", text)
+
+    def test_current_raw_capacity_error_string_uses_local_busy_speech(self):
+        # voice.js /stream currently emits a string plus error_class, without measurements.
+        event = {"event": "error", "error": "503 PRIVATE_CAPACITY_CANARY",
+                 "error_class": "host_capacity"}
+        text, state, _ = asyncio.run(self._run([event], state=self._state()))
+        self.assertEqual(text, "Local AI capacity is busy. Please try again shortly.")
+        self.assertEqual(len(state.get_calls), 1)
 
     def test_unknown_foreign_malformed_or_unavailable_authority_preserves_live_error(self):
         cases = [({}, {}), (None, {}), (self._state(callSessionId="foreign"), {}),
@@ -7868,7 +7946,7 @@ class TestErrorSpeechCallAuthority(unittest.TestCase):
         self.assertEqual(text, "Useful reply.")
 
     def test_current_listen_only_state_suppresses_error_speech(self):
-        for error in (self._error(), self._final_error()):
+        for error in (self._error(), self._final_error(), self._capacity_error(), self._capacity_error(final=True)):
             with self.subTest(final="final" in error):
                 text, state, _ = asyncio.run(self._run([error], state=self._state(mode="listen_only")))
                 self.assertEqual(text, "")

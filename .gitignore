@@ -26,6 +26,9 @@ pip-wheel-metadata/
 .codex/
 .codex-artifacts/
 .codex_worktrees/
+# Generated native-harness sessions contain private prompts and connection state.
+/claude/
+/codex/
 html_explain/
 # Jupyter / temp
 .ipynb_checkpoints/

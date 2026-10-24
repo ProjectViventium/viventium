@@ -1437,6 +1437,7 @@ _STRUCTURED_STREAM_ERROR_MESSAGES = {
         "The model response exceeded this turn's configured deadline and was stopped. Please retry the turn."
     ),
     "provider_progress_stalled": "The model needs attention because progress stopped.",
+    "host_capacity": "Local AI capacity is busy. Please try again shortly.",
     "provider_temporarily_unavailable": (
         "The model provider is temporarily unavailable. Please try again shortly."
     ),
@@ -1462,7 +1463,8 @@ _STRUCTURED_STREAM_ERROR_MESSAGES = {
         "This conversation was still finishing an earlier reply, so this message did not start. "
         "Send it again to continue."
     ),
-    "completion_error": "The model provider could not complete this request.",
+    # This is a generic completion failure; it does not prove a provider failure.
+    "completion_error": "Viventium could not complete this request. Please try again.",
 }
 
 _FOLLOWUP_RECOVERABLE_ERROR_CLASSES = {
@@ -1702,6 +1704,41 @@ def extract_final_error_class(payload: dict[str, Any]) -> str:
                 if isinstance(value, str) and value.strip():
                     return value.strip().lower()
     return ""
+
+
+def _host_capacity_error_message(payload: Any) -> str:
+    """Render only declared numeric capacity evidence; never forward exception prose."""
+    candidates = []
+    if isinstance(payload, dict):
+        candidates.append(payload)
+        if isinstance(payload.get("error"), dict):
+            candidates.append(payload["error"])
+        response = payload.get("responseMessage")
+        if isinstance(response, dict):
+            candidates.append(response)
+            content = response.get("content")
+            if isinstance(content, list):
+                candidates.extend(part for part in content[:128]
+                                  if isinstance(part, dict) and part.get("type") == "error")
+    for part in candidates:
+        if (extract_final_error_class(part) != "host_capacity" or
+                part.get("capacity_class", part.get("capacityClass")) != "resource_pressure"):
+            continue
+        def amount(field: str, dimension: str) -> Optional[int]:
+            values = part.get("capacity_" + field, part.get(field))
+            value = values.get(dimension) if isinstance(values, dict) else None
+            return value if type(value) is int and 0 <= value <= 2**53 - 1 else None
+        for dimension, message in (
+            ("diskBytes", "The computer running Viventium is low on disk space and could not start this reply. Free some space, then retry."),
+            ("memoryBytes", "The computer running Viventium is low on memory and could not start this reply. Close unused apps, then retry."),
+        ):
+            shortage, available, required = (amount(field, dimension)
+                                            for field in ("shortage", "available", "required"))
+            if (shortage is not None and shortage > 0) or (
+                available is not None and required is not None and available < required
+            ):
+                return message
+    return _STRUCTURED_STREAM_ERROR_MESSAGES["host_capacity"]
 
 
 def _diagnose_empty_response(payload: dict[str, Any]) -> str:
@@ -3747,6 +3784,8 @@ class LibreChatBridge:
         stream_id: str = "", identity: Optional[dict[str, str]] = None,
         source_sequence: str = "",
     ) -> dict[str, Any]:
+        if error_class == "host_capacity":
+            message = _host_capacity_error_message(payload)
         event = _bridge_error_event(message, speak=False, error_class=error_class or None)
         if error_class != "provider_progress_stalled":
             return event
@@ -4882,7 +4921,26 @@ class LibreChatBridge:
         *,
         effect_ref: str = "",
     ) -> bool:
-        """Best-effort acknowledgement to an optional generic core lifecycle endpoint."""
+        """Persist non-delivery receipts before using the existing Core acknowledgement path."""
+
+        if state in {"partial_removed", "failed"}:
+            try:
+                normalized_revision = int(revision)
+            except (TypeError, ValueError):
+                return False
+            if not logical_turn_id:
+                return False
+            payload = {
+                "logical_turn_id": str(logical_turn_id),
+                "revision": normalized_revision,
+                "state": state,
+            }
+            if presentation_ref:
+                payload["presentation_ref"] = str(presentation_ref)
+            if presentation_refs:
+                payload["presentation_refs"] = [str(value) for value in presentation_refs if value]
+            ack_key = self._cortex_ack_store.enqueue(payload)
+            return await self._settle_cortex_acknowledgement(ack_key, payload) == "recorded"
 
         return (
             await self.ack_delivery_status(

@@ -1,5 +1,128 @@
 # Telegram Runtime Cases
 
+## Case TR-037: A Live Poller Keeps Its Proven Process Identity
+
+- **Expected outcome:** Handoff and steady health use the existing native macOS working-directory
+  reader while retaining exact UID, process start, command and directory guards. Unavailable proof
+  stays unavailable; a timed-out inspection must not be invented evidence that the poller exited.
+  Captured helpers remain immutable after import and pass a second integrity verification.
+- **Forbidden result:** Supervision repeatedly replaces a healthy owned poller because `lsof`
+  missed its deadline; weaken identity checks; increase timeouts or add retry machinery to hide
+  the cause; or write bytecode into a captured component during inspection.
+- **Evidence to capture:** Old causal failure, shared identity/handoff controls, actual captured
+  helper import and post-import integrity, exact unchanged live process health and a fresh normal
+  reply with matching source, native completion, committed delivery and settled durable ingress.
+- **Last run:** PASS for this bounded repair locally, 2026-10-23. All 38 final checks passed,
+  including captured-helper import and second integrity verification; three fresh active-helper
+  health reads passed with the same live process and start identity. A normal recovery reply
+  passed all 13 source/native/delivery checks and its ingress completed after normal lease
+  reconciliation. No signals, restarts, data/config changes or general endurance proof were used.
+  The first candidate's bytecode-integrity failure was corrected with the existing temporary
+  no-bytecode-write guard. See the [dated result](reports/2026-10-23-overlap-recovery.md).
+
+## Case TR-036: Fast Queen Handoff Preserves Context And Reports Actual Work
+
+- **Expected outcome:** A natural request for work outside Direct Queen's own capabilities reaches
+  the configured worker through the existing coordination tools. The worker inherits the original
+  authorized conversation; Queen does not rewrite a replacement brief. Report accepted, running,
+  completed and delivered only when each has its own evidence. Respect explicit no-handoff limits,
+  and keep ordinary conversation direct. Return the actual result or a truthful prerequisite.
+- **Forbidden result:** Refuse solely because Queen cannot directly use a worker capability;
+  promise a due result from acceptance alone; claim computer work is running without execution
+  evidence; replace context with a lossy brief; or treat a guided success as natural acceptance.
+- **Evidence to capture:** Exact configured Queen and worker receipts, retained source context,
+  actual native tool/file/browser evidence, terminal callback and delivery ledger, visible user
+  result, positive/negative/adjacent exact-model checks and unchanged supported configuration.
+- **Last run:** PARTIAL locally, 2026-10-23. Earlier guided file work and natural Chrome work passed.
+  On the latest loaded typed-scope metadata, a natural contextual file request inherited the
+  original facts, ran native Codex at High and delivered the correct 77-byte document with one
+  Main follow-up. A natural reminder also reached that worker, but its two-minute cue arrived
+  47.336 seconds late with no durable timer record or observable timer action: handoff and
+  delivery passed, precise timing failed. A missing-file request received an unsupported assertion
+  without inspection or handoff and failed. Full-context mock tool selection was 5/5 in both old
+  and proposed arms; proposed receipt truth was 3/5 versus 4/5 old, so there is no causal selection
+  improvement or broad truthfulness pass. The earlier four-case candidate passed selection but
+  only two truthfulness checks. Workers were not shown running concurrently. Telegram and Web
+  document clicks downloaded the 71-byte and 77-byte files with exact native manifest hashes;
+  Web reload retained the replies and file. The earlier download-event wait timed out, but the
+  resulting local file reconciled it as a completed download, not a product failure. See the
+  [dated result](reports/2026-10-23-overlap-recovery.md).
+
+## Case TR-035: A Scheduled Reply Finishes While New Input Arrives
+
+- **Expected outcome:** Automatic conversation reuse selects an existing stable parent while an
+  assistant reply is unfinished. Do not wait for that draft, remove history, lose the new input,
+  or hide active work. A persisted native Stop remains valid parent evidence through its existing
+  `finish_reason=incomplete` marker; its retained partial answer and interruption context survive
+  reuse and replay. Once finalized, an ordinary assistant can be selected normally. Keep the raw
+  latest leaf available to worker callbacks so they can detect an active Main reply.
+- **Forbidden result:** Capture mutable draft text as immutable parent evidence, then reject the
+  new reply when that draft naturally finishes; weaken genuine source-edit/deletion protection;
+  discard a confirmed Stop merely because it retains `unfinished=true`; or globally filter active
+  Main out of callback ownership checks.
+- **Evidence to capture:** Actual old/new parent digest and writer timeline, causal selector
+  checks, completed/user/legacy controls, affected Telegram and scheduler routes, callback
+  active-Main controls, loaded source identity and a fresh real Telegram reply.
+- **Last run:** Source checks passed locally, 2026-10-23: 46 selected checks cover stable selection,
+  the actual native Stop writer and persisted partial, interruption context, replay, Telegram,
+  scheduler, protected Main carrier and callback consumers. The first 30-check filter was rejected
+  in review because it also removed confirmed Stops; that result does not prove this final contract.
+  On the loaded repair candidate, real Web Stop persisted a cancelled reply with no authored text.
+  A later real Telegram reply completed and committed while both its user parent and native source
+  parent retained that exact stopped reply. A nonempty stopped partial and replay are covered by
+  the deterministic checks, not this live run. The precise scheduled-overlap recurrence was not
+  separately injected. See the [dated result](reports/2026-10-23-overlap-recovery.md) for these
+  bounded passes and the still-failed reminder handoff path; full readiness is not claimed.
+
+## Case TR-034: A New Message Arrives As The Previous Reply Fails
+
+- **Expected outcome:** Send another message while an unfinished reply reaches publication or
+  its failure notice is being sent. The old preview is removed and its exact removal receipt is
+  retained. The latest reply covers the original ordered input, without repeating accepted work.
+  A failed replacement admission retains unanswered input and source-author ownership for retry.
+  Confirmed removal carries A then B into the successor; a genuinely failed A stays failed and
+  discoverable while new input proceeds. A lost receipt retries through the existing durable
+  acknowledgment owner, without sending another conversational message.
+- **Forbidden result:** Successful removal recorded as `failed`; a later failure overwriting
+  `partial_removed`; rollback reopening a committed or failed reply; lost input; duplicate work;
+  or treating a source-order outage or failed deletion as proof of successful removal.
+- **Evidence to capture:** Causal old/new bot and memory/Redis checks, genuine failure and outage
+  controls, compiled and installed identities, real Telegram overlapping replies and recovery,
+  persisted source and delivery receipts, and a normal reply after reopening the conversation.
+  Include a watermark recorded before the successor claim, both job-store implementations,
+  and a retained input batch whose first parent reply was never published.
+- **Last run:** PARTIAL locally, 2026-10-23. The repaired installed runtime passed real Telegram
+  ordinary replies and rapid A/B/C input, with one correct final reply, committed source coverage,
+  stopped typing and an empty acknowledgment outbox. Controller (167), receipt-route (86),
+  job-store consumer (218) and Telegram stream consumer (176) checks passed. Follow-up fixes passed
+  234 store/consumer, 67 selected route and 450 client cases on final source. After loading, ordinary
+  and rapid A/B/C replies, saved receipts and detached background completion passed. Real Core
+  receipt recovery returned 200 after a local outage; invalid credentials returned 401 and kept
+  the receipt pending. Retained-batch, singleton missing-parent and missed-successor-claim recovery
+  passed actual route/store/carrier checks; fault-injected live acceptance was NOT RUN. The banks
+  overlap and are not a unique total. See the [dated result](reports/2026-10-23-overlap-recovery.md).
+  A later loaded-candidate A/B/C check again produced one correct committed final answer with all
+  three original sources. A later capture confirmed all three durable ingress records completed,
+  with no remaining lease, retry, failure, missing parent or pending acknowledgment.
+
+## Case TR-033: Typing Stops With Its Foreground Reply
+
+- **Expected outcome:** One current reply may refresh typing while it prepares its first answer.
+  Setup errors and cancellation leave no typing task. The first answer, a silent result, failure,
+  cancellation or superseding input ends that reply's indicator. Coalesced inputs use their bound
+  presentation sequence. Background work continues independently without foreground typing.
+- **Forbidden result:** An orphan task refreshes typing while no reply is in flight; a pending Bot
+  API action lands after completion; preview cleanup delays stopping typing; an old reply keeps
+  typing after a newer reply; or each refresh adds a remote source-order lookup.
+- **Evidence to capture:** Fail-before/pass-after lifecycle cases, no pending indicator tasks,
+  exact installed component/source identity, bounded start/stop trace, and real Telegram ordinary
+  and rapid-input replies followed by an idle interval longer than the refresh period.
+- **Last run:** PASS locally, 2026-10-22. All 13 new lifecycle cases failed against the saved
+  preimage and passed against the repair; all 169 affected stream-preview cases passed. The
+  installed component changed only the bot source and retained its dependencies. Real Telegram
+  showed the ordinary reply, then only the corrected reply for rapid inputs; typing stayed off
+  through a further 12-second idle observation. Other services kept their running processes.
+
 ## Case TR-021: Nested Provider Authentication Failure Remains Actionable
 
 - **Expected outcome:** When Main hands a turn to a GlassHive-backed participant whose provider

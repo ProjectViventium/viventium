@@ -20,8 +20,75 @@ def load_helper():
     spec = importlib.util.spec_from_file_location("telegram_poller_handoff", HELPER_PATH)
     assert spec and spec.loader
     module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
+    with pytest.MonkeyPatch.context() as context:
+        context.syspath_prepend(str(HELPER_PATH.parent))
+        spec.loader.exec_module(module)
     return module
+
+
+def test_import_does_not_probe_processes_or_signal_them(monkeypatch) -> None:
+    def unexpected_action(*_args, **_kwargs):
+        raise AssertionError("Import must not inspect or signal processes")
+
+    monkeypatch.setattr(subprocess, "run", unexpected_action)
+    monkeypatch.setattr(os, "kill", unexpected_action)
+    assert load_helper().SCHEMA_VERSION == 2
+
+
+@pytest.mark.parametrize("kernel_available", [True, False])
+def test_darwin_owner_cwd_does_not_depend_on_lsof(
+    tmp_path: Path, monkeypatch, kernel_available: bool,
+) -> None:
+    helper = load_helper()
+    expected_cwd = tmp_path.resolve()
+    monkeypatch.setattr(
+        helper, "_macos_process_cwd",
+        lambda _pid: expected_cwd if kernel_available else None,
+        raising=False,
+    )
+    probes = []
+
+    def command_output(args):
+        probes.append(args)
+        if args[0] == "/usr/sbin/lsof":
+            return ""  # Existing command runner maps its timeout to no proof.
+        return {
+            "lstart=": "boot-a:99",
+            "command=": "/opt/python bot.py",
+            "uid=": str(os.getuid()),
+        }[args[-1]]
+
+    monkeypatch.setattr(helper, "_command_output", command_output)
+    identity = helper._darwin_process_identity(os.getpid())
+    if kernel_available:
+        assert identity is not None
+        assert identity.cwd == str(expected_cwd)
+        assert identity.uid == os.getuid()
+        assert identity.command == "/opt/python bot.py"
+        assert identity.start_id
+    else:
+        assert identity is None
+    assert all(args[0] != "/usr/sbin/lsof" for args in probes)
+
+
+@pytest.mark.skipif(sys.platform != "darwin", reason="macOS kernel process API")
+def test_darwin_native_identity_recognizes_live_cwd_and_rejects_exit(
+    tmp_path: Path,
+) -> None:
+    helper = load_helper()
+    child = subprocess.Popen(["sleep", "120"], cwd=tmp_path)
+    try:
+        live = helper._darwin_process_identity(child.pid)
+        assert live is not None
+        assert live.cwd == str(tmp_path.resolve())
+        assert live.uid == os.getuid()
+        child.terminate()
+        child.wait(timeout=5)
+        assert helper._darwin_process_identity(child.pid) is None
+    finally:
+        if child.poll() is None:
+            child.terminate()
+            child.wait(timeout=5)
 
 
 def extract_shell_function(text: str, name: str) -> str:

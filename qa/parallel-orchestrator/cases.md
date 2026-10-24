@@ -50,6 +50,71 @@ existing conversation view without trying to speak empty text. Verify the linked
 settles with the exact saved attachments before and after Call End; restart/replay must not leave
 it retrying or create another message, file import, or speech task.
 
+## Approved-flow regression map
+
+The public [Should / fixes diagram](../../docs/requirements_and_learnings/capabilities/voice.md#should--fixes--direct-queen)
+is the shared behavior contract. The [latest Should-flow report](reports/2026-10-23-should-flow-acceptance.md)
+records the loaded repairs and bounded real-channel evidence, including its 24 October follow-up.
+Older Last Run rows below retain their original candidate and scope; they are not current runtime
+defaults or an instruction to rebuild a feature. Open broader acceptance gates remain open.
+
+Use this map when a change affects the named owner. These are existing behavioral tests and QA
+journeys, not another runner or a mandatory full sweep. Follow the selected QA mode in
+[the QA contract](../README.md#verification-scope-and-handoff). Reuse still-valid real-channel
+evidence; rerun the affected surface when its behavior, configuration or loaded artifact changes.
+
+| Approved outcome to preserve | Existing executable regressions | Real-user QA owner |
+| --- | --- | --- |
+| Ordered A/B/C; revise only an unfinished reply; retain original context and exact assigned clauses without a Queen-written brief. | Core API: `src/agents/sourceSelectionContext.spec.ts`, `src/glasshive/sourceSelection.spec.ts`; Core server: `ViventiumMainContextService.spec.js`; xPerfect: `test_coordination_toolset.py`. | [Parallel journeys](../parallel-work/cases.yaml): `PAR-QA-RESPONSIVE-001`, `PAR-QA-E2E-001`; [interaction delivery](../interaction-delivery/cases.yaml): `cross-surface-supersession`. |
+| One Direct Queen with `hand_off_to` and `list_workers`; independently configured native workers A…N, full authorized capabilities and fallback. Explicit alternatives stay supported. | xPerfect: `test_coordination_toolset.py`, `test_native_context_integration.py`; Core server: `GlassHiveCapabilityBroker.spec.js`; root: `tests/release/test_parallel_work_contract.py`. | [Voice journeys](../voice/cases.yaml): `direct-queen-independent-action-handoff`; retained `PWK-011` / `PWK-UC-019` compose full capability parity. Include ordinary native browser/computer actions and non-file tasks. |
+| Exact Steer/Stop affects A only; B continues; callbacks and files arrive once through Main. Silent work does not remain pending or poll forever. | Core API: `src/glasshive/callbackRecovery.spec.ts`, `src/glasshive/knownExternalWork.spec.ts`; the existing native control and callback banks remain required for changed controls. | [Parallel journeys](../parallel-work/cases.yaml): `PAR-QA-SILENT-TERMINAL-001`, `PAR-QA-E2E-001`. Check native identity, actual sibling result, current roster and reload. |
+| Memory, Feelings and cortices remain available; background work does not hold Main; only useful findings reach the same Queen. A cortex cannot infer another actor's failure from its own limits. | Core server: `ViventiumMainContextService.spec.js`; Workbench: `test_workbench_operational_regressions.py` (`cortex_action_claim` / `cortex_shared_claim_scope`); existing `cortex_assignment_role_boundary` eval family. | [Background journey](../background-cognition/cases.yaml): `background-help-without-delay`; [Voice journey](../voice/cases.yaml): `audible-main-and-interruption`. NTA stays silent; a model replay that also passes before the change is not causal proof. |
+| Telegram/Voice retain text, audio, files/history and the same worker controls. Internal memory or mission-status messages never become conversation or speech. | Voice: `tests/test_librechat_llm.py`; Telegram: `tests/test_native_input_callback_presentation.py`; existing file, stream and interruption banks stay at their owning components. | [Telegram](../telegram-channels/cases.yaml): `telegram-main-parity`; [Voice](../voice/cases.yaml): `direct-queen-independent-action-handoff`, `audible-main-and-interruption`; file parity `TGDOC-010`. |
+| Relative schedules retain the original authenticated receipt; one clock wakes ordinary Viventium cognition and sends to the selected surface once. | Core server: `ViventiumMainContextService.spec.js`, `ScheduleSourceBinding.integration.spec.js`; existing native schedule and receiver banks. | [Scheduling](../main-scheduling-continuity/cases.yaml): `xperfect-scheduled-main`, `xperfect-due-recovery`. Measure original receipt→due, clock lateness and due→actual delivery separately; missing receipt is unknown. |
+| Omitted worker performance settings remain saved; explicit zero still disables warming; defaults and supported routes do not silently change. | xPerfect: `test_worker_configuration.py`; root: `tests/release/test_parallel_work_contract.py`. | [Voice](../voice/cases.yaml): `native-process-warm-count`; normal owner MCP save/reload/omit/restore on a disposable worker. Never alter the user's Queen to manufacture this test. |
+| Local capacity, provider auth/outage, cancellation and delivery failure remain distinct; recovery does not duplicate accepted effects. | Voice: `tests/test_librechat_llm.py`; xPerfect: `test_direct_runtime.py`; Core server: `agentLlmFallback.spec.js`, `client.test.js`. | Retained `PWK-UC-016` / `PWK-UC-017` and [scheduling recovery](../main-scheduling-continuity/cases.yaml). A synthetic fault record or terminated worker does not prove a real typed provider outage through Main. |
+
+### Rerun the affected checks
+
+Use the owning component's normal development environment and dependencies. Paths in the table
+are relative to these owners: Core API `viventium_v0_4/LibreChat/packages/api/`; Core server test
+files under `viventium_v0_4/LibreChat/api/server/`; xPerfect tests under
+`viventium_v0_4/xPerfect/runtime_phase1/tests/`; Workbench under
+`viventium_v0_4/prompt-workbench/backend/tests/`. No personal account, private prompt or saved local
+evidence is needed for the deterministic checks.
+
+```bash
+# Repository root: native worker defaults and shared authority contract.
+python3 -m pytest tests/release/test_parallel_work_contract.py -q
+
+# LibreChat/packages/api: silent settlement, stale authority and known-work recovery.
+../../node_modules/.bin/jest --runInBand src/glasshive/callbackRecovery.spec.ts src/glasshive/knownExternalWork.spec.ts
+
+# LibreChat/api: inherited input, files, provenance, original receipt and timing facts.
+../node_modules/.bin/jest --runInBand server/services/viventium/__tests__/ViventiumMainContextService.spec.js
+
+# xPerfect/runtime_phase1: two-tool coordination and saved-option compatibility.
+python3 -m pytest tests/test_coordination_toolset.py tests/test_worker_configuration.py -q
+
+# prompt-workbench: shared cortex claim rule reaches every supported surface.
+python3 -m pytest backend/tests/test_workbench_operational_regressions.py -k 'cortex_action_claim or cortex_shared_claim_scope' -q
+
+# voice-gateway: existing stream/error, speech-ownership and recovery contracts.
+python3 -m pytest tests/test_librechat_llm.py -q
+```
+
+For a real-channel run, use the linked natural journey and record exact expected/actual results,
+configured routes, source/build/runtime identity, visible or audible result, once-only delivery,
+failure/recovery and persistence. Select an authorized disposable scope for faults and verify
+the fault actually reaches Main. If that prerequisite is absent, keep that gate `BLOCKED` or
+`NOT RUN`; do not change global keys, safety limits or provider settings. Existing evidence
+verifiers remain the owner of installed acceptance. No new evidence framework is implied.
+
+The latency goal remains useful speech within two seconds. Report measured delivered speech;
+a passing handoff, mock, bare API probe or fast clock does not prove it. New development must
+preserve quality and full authorized ability as well as performance. The test default tuple
+protects the shipped native-worker policy; it does not forbid a supported explicit alternative.
+
 ## Case catalog
 
 | Case | Requirement and expected result | Required evidence | Last Run |

@@ -23,3 +23,53 @@ journeys:
     degradedAndRecovery: A retryable capacity failure retains its immutable capacity snapshot and attempt provenance. Bounded same-occurrence retry or an authorized fallback ends in one terminal delivery or typed terminal drop, without silent deferral; forgery and unauthorized effects fail closed.
     persistenceAndCleanup: Catch-up selects only the latest eligible occurrence and cleanup preserves audit history.
     evidence: [lease and attempt state, execution snapshot, effect receipts, channel outcomes, installed runtime identity]
+
+  - id: xperfect-scheduled-main
+    requirements: [VIV-1, VIV-2, VIV-3, VIV-4, VIV-7]
+    userAction: Ask through Text, Telegram and an open call for a timed or repeating synthetic task; select chat, Telegram or both and same, new or a specified owned conversation. Use a new turn and worker to list, edit, pause and cancel the saved schedule.
+    surfaces: [Web, Telegram, Voice, native worker MCP, xPerfect clock]
+    expectedResult: The fast Queen hands off normally. A real saved version and next time precede confirmation. The actual due occurrence invokes ordinary Main with current cognition and delivers one useful result to the selected destinations. An existing eligible call may speak; no call is started. Later workers can manage prior owned schedules.
+    degradedAndRecovery: Missing setup or model access, revoked channel/account authority and unsupported targets fail truthfully. Unknown or unselected destinations and another owner's conversation cannot be chosen. Silence and file-only output preserve their normal disposition.
+    persistenceAndCleanup: Reload retains the saved definition and selected destinations. New-conversation targets create no setup-time empty chat; their actual due conversation and generation IDs persist before acknowledgement. Retire only synthetic schedules and preserve prior owner data.
+    evidence: [saved definition/version/next time, labeled authorized targets, actual native worker scheduling MCP and protected grant, trusted original source segments without a duplicate text field, original receipt retained in native context, relative delay anchored to that receipt with clock lateness and delivery delay measured separately, missing/conflicting receipt and absolute-time controls, immutable due instruction, Viventium admission and generation identity, canonical Main message, actual selected-channel receipt, visible or audible result]
+  - id: xperfect-due-recovery
+    requirements: [VIV-4, VIV-6]
+    userAction: Exercise duplicate and lost acknowledgements, receiver restart, offline/late delivery, cancel/version changes, current binding revocation and channel failure on one completed candidate.
+    surfaces: [xPerfect clock, HTTP receiver, Scheduler, Web, Telegram, eligible open Voice]
+    expectedResult: One durable occurrence admits one normal Main generation. Same identity with changed bytes conflicts. A prior admission can be recovered after expiry; a new expired wake is refused. Delivery retry reuses the canonical result and does not repeat accepted tool work.
+    degradedAndRecovery: Sender acceptance, Main generation, channel enqueue and actual delivery remain distinct. A missing accepted result stays unknown. Revocation or changed call ownership prevents new delivery, without falling back to an unselected channel.
+    persistenceAndCleanup: Restart preserves the existing dispatch receipt and immutable occurrence instruction. Existing Cortex definitions and unresolved effects keep their original owner; migration is gated by old dispatch and delivery fencing.
+    evidence: [signed raw-byte identity/digest, one dispatch intent, accepted stream receipt, canonical message identity, lease/permit state, expiry/revocation result, per-channel outcome, source and running candidate identity]
+  - id: xperfect-task-context-isolation
+    requirements: [VIV-1, VIV-3, VIV-5]
+    userAction: In one source request schedule action A at one time and action B at another, then let both become due. Inspect protected setup and attempt a foreign-owner reference.
+    surfaces: [native worker MCP, xPerfect clock, Viventium Main, selected channel]
+    expectedResult: Each occurrence carries its own saved instruction and runs only that task while retaining the original authorized conversation and current cognitive context. Generic xPerfect payloads contain no Viventium memory, Feeling state, cognitive schema, channel credentials or copied private conversation.
+    degradedAndRecovery: An invented reference, changed-body identity, wrong tenant or foreign owner is rejected before Main admission. Clock setup itself requires no provider/model account.
+    persistenceAndCleanup: Both definitions retain their original immutable occurrence identities. Remove only synthetic schedules and retain owner-scoped audit receipts.
+    evidence: [original source binding, distinct saved instructions, signed due bodies, ordinary Main request, canonical result per occurrence, generic boundary scan, foreign-owner rejection]
+  - id: native-scheduled-deliverables
+    requirements: [CC-001, CC-003, CC-007, CC-053]
+    userAction: Ask Main naturally to schedule a generated image, a real text attachment and a live lookup; let the creating native worker end before due.
+    surfaces: [Web, Telegram, Scheduler, native worker]
+    expectedResult: Native tools save real clocks; due invokes ordinary Main with cognition; actual requested artifacts and results reach the selected surface once.
+    degradedAndRecovery: An acknowledged webhook, saved link or completed worker is not substituted for visible media delivery; topics and source authority remain bound.
+    persistenceAndCleanup: Definitions survive their creating worker; one-time schedules finish without future sends; retain original evidence without database patching.
+    evidence: [native tool calls, saved definitions, ended creating worker, occurrence timing, Main admission, callback destination, actual photo and document]
+  - id: interrupted-reply-and-provider-recovery
+    requirements: [CC-003, CC-007, CC-053]
+    userAction: Replace an unfinished input, fail the primary before a reply, and later run a schedule after stopping a reply with completed search results.
+    surfaces: [Web, Telegram, native provider, Scheduler]
+    expectedResult: Only the current invocation releases its own failed binding; configured fallback replies once; completed retrieval DATA and separate Main follow-up identities survive Stop.
+    degradedAndRecovery: Foreign or superseded producer cannot revoke the winner; accepted effects are not replayed; typed access, content refusal, stream error and double failure remain distinct.
+    persistenceAndCleanup: Retain receipts and historical sources across recovery; disposable fault injection is scoped to its own fixture.
+    evidence: [exact current and foreign producer checks, real lease contract, official SDK stream errors, visible fallback and recovery, stopped-reply source carrier, subsequent scheduled result]
+
+  - id: native-run-now-single-executor
+    requirements: [CC-003, CC-033, CC-053]
+    userAction: Ask to run an existing saved reminder once, inspect its next time without running, and start it alongside a separate requested task.
+    surfaces: [Web, Telegram, native worker MCP, Scheduler]
+    expectedResult: One saved occurrence owns its instruction and result; the caller does not duplicate the work or poll without a request to monitor. A separate requested task still runs. Routine acknowledgment is brief and natural.
+    degradedAndRecovery: A failed start is not confirmed as saved or complete; a pending accepted occurrence is not claimed completed. Explicit status and wait requests remain available.
+    persistenceAndCleanup: Retain original schedules and receipts; retire only disposable fixtures. Shared context files remain accessible but are not scanned or attributed to every completed run.
+    evidence: [old and proposed exact-model native tool traces, one actual occurrence, actual channel result, selected native-file integrity, shared no-scan and isolated-input checks, running candidate identity]

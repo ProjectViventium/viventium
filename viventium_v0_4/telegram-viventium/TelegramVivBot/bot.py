@@ -18,7 +18,7 @@ import logging
 import traceback
 import utils.decorators as decorators
 from contextlib import asynccontextmanager
-from typing import Any, Awaitable, Callable, Optional
+from typing import Any, Awaitable, Callable, Literal, Optional
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -1444,6 +1444,7 @@ class _TelegramSourceOrderGuard:
         self.source_order_scope = ""
         self.source_event_id = ""
         self.stale = False
+        self.source_order_unavailable = False
         self._non_delivery_acked = False
         self._store = None
         self._recovery_claim = None
@@ -1471,6 +1472,7 @@ class _TelegramSourceOrderGuard:
         self.effect_ref = str(effect_ref or "").strip()[:160]
 
     async def is_current(self) -> bool:
+        self.source_order_unavailable = False
         if not _is_newest_telegram_source_message(
             self.chat_id, self.thread_id, self.presentation_source_sequence, self.telegram_user_id
         ):
@@ -1491,6 +1493,7 @@ class _TelegramSourceOrderGuard:
             # Keep the local monotonic fence so the linking prompt itself can be shown safely.
             return True
         except Exception as exc:
+            self.source_order_unavailable = True
             logger.error(
                 "Core source-order check failed closed before Telegram presentation: %s",
                 type(exc).__name__,
@@ -1687,9 +1690,7 @@ class _TelegramSourceOrderGuard:
             success = await self.retract_ref(chat_id, message_id) and success
         return success
 
-    async def mark_stale(self) -> bool:
-        self.stale = True
-        removed = await self.retract_all()
+    async def acknowledge_non_delivery(self, state: Literal["partial_removed", "failed"]) -> None:
         if (
             not self._non_delivery_acked
             and self.logical_turn_id
@@ -1697,15 +1698,17 @@ class _TelegramSourceOrderGuard:
             and hasattr(self.robot, "ack_delivery")
         ):
             self._non_delivery_acked = True
-            try:
-                await self.robot.ack_delivery(
-                    self.logical_turn_id,
-                    self.revision,
-                    "partial_removed" if removed else "failed",
-                    f"telegram:{self.chat_id}",
-                )
-            except Exception:
-                pass
+            await self.robot.ack_delivery(
+                self.logical_turn_id, self.revision, state, f"telegram:{self.chat_id}"
+            )
+
+    async def mark_stale(self) -> bool:
+        self.stale = True
+        removed = await self.retract_all()
+        try:
+            await self.acknowledge_non_delivery("partial_removed" if removed else "failed")
+        except Exception:
+            pass
         return removed
 
     def presentation_refs(self) -> list[str]:
@@ -1722,7 +1725,10 @@ class _TelegramSourceOrderGuard:
                 if not callable(method):
                     continue
                 if not await self.is_current():
-                    await self.mark_stale()
+                    if self.source_order_unavailable:
+                        await self.retract_all()
+                    else:
+                        await self.mark_stale()
                     return False
                 try:
                     _result, operation_completed = await self._run_recovery_presentation_call(
@@ -1741,7 +1747,10 @@ class _TelegramSourceOrderGuard:
                     if "message is not modified" not in str(exc).lower():
                         continue
                 if not await self.is_current():
-                    await self.mark_stale()
+                    if self.source_order_unavailable:
+                        await self.retract_all()
+                    else:
+                        await self.mark_stale()
                     return False
                 for other_chat_id, other_message_id in self.live_refs:
                     if (str(other_chat_id), str(other_message_id)) == (
@@ -1769,8 +1778,11 @@ class _TelegramSourceOrderGuard:
         if pending_claim is not None:
             self._recovery_claim = pending_claim
         if not await self.is_current():
-            if pending_claim is not None:
-                await self.retract_all()
+            if self.source_order_unavailable:
+                if pending_claim is not None:
+                    await self.retract_all()
+            else:
+                await self.mark_stale()
             return None
         error_class = pending_claim.get("error_class") if pending_claim else None
         terminal_text = _stream_error_message(None, error_class=error_class) if error_class else (
@@ -1814,7 +1826,10 @@ class _TelegramSourceOrderGuard:
             await self._compensate_new_message(message_chat_id, message_id)
             return None
         if not await self.is_current():
-            await self.mark_stale()
+            if self.source_order_unavailable:
+                await self.retract_all()
+            else:
+                await self.mark_stale()
             return None
         if pending_claim is not None:
             try:
@@ -3897,6 +3912,7 @@ async def _getViventiumResponse(
     # === VIVENTIUM START ===
     # Feature: Use Telegram typing indicator instead of "thinking" message.
     typing_stop = asyncio.Event()
+    typing_start_ts = None
 
     async def _typing_loop():
         interval = getattr(config, "VIVENTIUM_TELEGRAM_TYPING_INTERVAL_S", 4.0) or 4.0
@@ -3905,6 +3921,14 @@ async def _getViventiumResponse(
             typing_kwargs["message_thread_id"] = message_thread_id
         while not typing_stop.is_set():
             try:
+                if not _is_newest_telegram_source_message(
+                    chatid, message_thread_id, source_guard.presentation_source_sequence,
+                    telegram_user_id,
+                ):
+                    typing_stop.set()
+                    _tg_timing_log(trace_id, "typing_stop", typing_start_ts,
+                                   extra="reason=superseded_source")
+                    return
                 await context.bot.send_chat_action(
                     chat_id=chatid,
                     action=ChatAction.TYPING,
@@ -3918,7 +3942,6 @@ async def _getViventiumResponse(
                 continue
 
     typing_task = None
-    typing_task = asyncio.create_task(_typing_loop())
     # === VIVENTIUM END ===
 
     # === VIVENTIUM START ===
@@ -4125,7 +4148,12 @@ async def _getViventiumResponse(
                 raise
         answer_messageid = msg.message_id
         lastresult = delivered_text
+        if not typing_stop.is_set():
+            _tg_timing_log(trace_id, "typing_stop", typing_start_ts,
+                           extra="reason=reply_visible")
         typing_stop.set()
+        if typing_task:
+            typing_task.cancel()
         return answer_messageid
     # === VIVENTIUM END ===
 
@@ -4336,17 +4364,15 @@ async def _getViventiumResponse(
                 source_guard._store.complete_pending_terminal(pending_claim)
             elif retry_terminal_id is None:
                 source_guard._store.reschedule_pending_terminal(pending_claim)
-        if (
-            logical_turn_id
-            and logical_turn_revision is not None
-            and hasattr(robot, "ack_delivery")
-        ):
-            await robot.ack_delivery(
-                logical_turn_id,
-                logical_turn_revision,
-                "failed",
-                f"telegram:{chatid}",
-            )
+        # A newer input can arrive while the retry terminal is being sent or removed.
+        # Preserve its actual removal receipt instead of replacing it with a failure.
+        if source_guard.stale:
+            return
+        if not await source_guard.is_current():
+            if not source_guard.source_order_unavailable:
+                await source_guard.mark_stale()
+            return
+        await source_guard.acknowledge_non_delivery("failed")
     # === VIVENTIUM END ===
 
     async def _deliver_final_message_segments(segments) -> bool:
@@ -4474,6 +4500,10 @@ async def _getViventiumResponse(
     # === VIVENTIUM END ===
 
     try:
+        # The stream owns this indicator. Preflight failure/cancellation must never orphan it.
+        typing_start_ts = time.monotonic()
+        typing_task = asyncio.create_task(_typing_loop(), name="telegram-response-typing")
+        _tg_timing_log(trace_id, "typing_start", typing_start_ts, extra="reason=stream_owned")
         # Simplified: Only send text and convo_id to bridge
         # All other parameters (model, language, system_prompt, plugins, api_key, api_url, pass_history) are ignored by LiveKitBridge
         # === VIVENTIUM START ===
@@ -4621,17 +4651,10 @@ async def _getViventiumResponse(
                         ).strip()
                         logical_turn_revision = data.get("revision", logical_turn_revision)
                         preview_removed = await _supersede_stream_preview()
-                        if (
-                            logical_turn_id
-                            and logical_turn_revision is not None
-                            and hasattr(robot, "ack_delivery")
-                        ):
-                            await robot.ack_delivery(
-                                logical_turn_id,
-                                logical_turn_revision,
-                                "partial_removed" if preview_removed else "failed",
-                                f"telegram:{chatid}",
-                            )
+                        source_guard.bind_delivery(logical_turn_id, logical_turn_revision)
+                        await source_guard.acknowledge_non_delivery(
+                            "partial_removed" if preview_removed else "failed"
+                        )
                         return
                     if data.get("type") == "attachment":
                         attachment = data.get("attachment")
@@ -4876,18 +4899,17 @@ async def _getViventiumResponse(
             for chunk in split_telegram_html(_render_telegram_response(segment)[0])
         ]
     finally:
+        # Cancel a blocked Bot API action before any other cleanup await.
+        if not typing_stop.is_set():
+            _tg_timing_log(trace_id, "typing_stop", typing_start_ts,
+                           extra="reason=stream_exit")
+        typing_stop.set()
+        if typing_task:
+            typing_task.cancel()
+            await asyncio.gather(typing_task, return_exceptions=True)
         await _cancel_stream_previews()
         if authored_preview_received and not result:
             await _supersede_stream_preview()
-        # === VIVENTIUM START ===
-        # Feature: Stop typing indicator once we have a result or exit.
-        typing_stop.set()
-        if typing_task:
-            try:
-                await asyncio.gather(typing_task, return_exceptions=True)
-            except Exception:
-                pass
-        # === VIVENTIUM END ===
     logger.debug(f"Command result: {tmpresult[:100]}")
 
     # Telegram source order wins even when the newer update reaches Core a few milliseconds late.
@@ -5214,17 +5236,7 @@ async def _getViventiumResponse(
     # === VIVENTIUM START ===
     # Fix: a presented failure notice closes the turn as failed; it never commits source coverage.
     if main_stream_failed:
-        if (
-            logical_turn_id
-            and logical_turn_revision is not None
-            and hasattr(robot, "ack_delivery")
-        ):
-            await robot.ack_delivery(
-                logical_turn_id,
-                logical_turn_revision,
-                "failed",
-                f"telegram:{chatid}",
-            )
+        await source_guard.acknowledge_non_delivery("failed")
         return
     # === VIVENTIUM END ===
 
