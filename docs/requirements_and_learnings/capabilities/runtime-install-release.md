@@ -200,3 +200,16 @@ or media failure. Finish compilation, confirm source-to-artifact identity, load 
 runtime owner, and only then exercise affected channels. Persistent local availability uses the
 existing supported background lifecycle; verify the owning supervisors before relying on an
 individual service reload. Keep unrelated work and saved user configuration intact.
+
+
+### Native bootstrap and provider scope
+
+Reuse the already validated environment when constructing native transport settings. Before optional
+setup is installed, a genuinely absent runtime environment means scheduled wakes are not opted in.
+An existing malformed file or a symlink remains an error. Keep strict normal startup validation.
+
+Dedicated Direct OpenAI deployment credentials stay in the protected provider-service environment.
+They are separate from native-worker provider credentials and runtime-issued, attempt-scoped schedule
+grants. The compiler and native projection must preserve this separation. See the
+[native setup checks](../../../tests/release/test_native_payload_assembler.py) and
+[compiler checks](../../../tests/release/test_config_compiler.py).

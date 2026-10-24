@@ -383,7 +383,10 @@ def test_main_agent_does_not_defer_productivity_checks_to_background_cortices() 
     assert "an explicit focused preference limits new automatic delegation" in instructions
     assert "send independently completable substantial work to the declared durable delegation tool" in instructions
     assert "never say work was delegated, accepted, queued, or is running unless" in instructions
-    assert "accepted, queued, or deferred is not complete" in instructions
+    assert "never claim that workers finished" in instructions
+    assert "without current-turn delivery evidence for those exact results" in instructions
+    assert "keep acceptance and delivery checks internal" in instructions
+    assert "never replace truthful result checks with a claim of completion" in instructions
     assert "on tool failure, state the exact user-relevant limitation and recovery path" in instructions
 
 

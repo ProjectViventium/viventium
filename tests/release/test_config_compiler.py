@@ -552,6 +552,7 @@ def test_direct_openai_deployment_secret_is_runtime_only(tmp_path: Path, securit
     provider = (service_dir / "glasshive-runtime-provider.env").read_text()
     for key in ("WPR_OPENAI_API_KEY", "WPR_OPENAI_BASE_URL"):
         assert key in config_compiler.GLASSHIVE_OPENAI_PROVIDER_ENV_KEYS
+        assert key not in config_compiler.GLASSHIVE_ENTERPRISE_WORKER_PROVIDER_ENV_KEYS
         assert key not in config_compiler.GLASSHIVE_ANTHROPIC_PROVIDER_ENV_KEYS
         assert f"{key}={env[key]}" in provider
         assert key not in (service_dir / "glasshive-runtime.env").read_text()
@@ -830,7 +831,11 @@ def test_glasshive_enterprise_provider_env_allowlist_matches_worker_projection_c
         for element in assignment.value.elts
     }
     worker_keys.discard("GLASSHIVE_CAPABILITY_BROKER_TOKEN")
-    worker_keys.difference_update({"GLASSHIVE_CONTEXT_TOKEN", "GLASSHIVE_PEER_TOKEN"})
+    # These grants are issued to one live attempt; they are not deployment
+    # provider credentials to compile into a service environment.
+    worker_keys.difference_update({
+        "GLASSHIVE_CONTEXT_TOKEN", "GLASSHIVE_PEER_TOKEN", "GLASSHIVE_SCHEDULE_TOKEN",
+    })
 
     assert config_compiler.GLASSHIVE_ENTERPRISE_WORKER_PROVIDER_ENV_KEYS == worker_keys
 

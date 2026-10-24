@@ -440,9 +440,24 @@ def release_services(root: Path) -> tuple[str, ...]:
 
 def native_glasshive_transport_environment(
     root: Path, support: Path, *, database_path: Path | None = None,
+    runtime_env: dict[str, str] | None = None,
 ) -> dict[str, str]:
     if not native_body_paths(root):
         return {}
+    if runtime_env is None:
+        path = support / "runtime/runtime.env"
+        try:
+            runtime_env = load_native_runtime_env(path)
+        except RuntimeError_ as error:
+            if not isinstance(error.__cause__, FileNotFoundError):
+                raise
+            # Setup may not have installed the optional behavior contract yet.
+            try:
+                path.lstat()
+            except FileNotFoundError:
+                runtime_env = {}
+            else:
+                raise
     database_path = database_path or support / "state/runtime/native/glasshive/runtime.sqlite"
     key = bytes.fromhex(runtime_secrets(support)["CREDS_KEY"])
     token_domains = {
@@ -482,7 +497,7 @@ def native_glasshive_transport_environment(
             str(support / "data/uploads"), str(database_path.parent / "managed-files"),
         )),
     })
-    if load_native_runtime_env(support / "runtime/runtime.env").get("VIVENTIUM_XPERFECT_SCHEDULED_WAKES_ENABLED") == "true":
+    if runtime_env.get("VIVENTIUM_XPERFECT_SCHEDULED_WAKES_ENABLED") == "true":
         environment.update({
             "WPR_RECURRING_SCHEDULE_OWNER": "native",
             "WPR_WEBHOOK_ALLOWED_PORTS": "443,3190",
@@ -539,10 +554,11 @@ def native_glasshive_environment(root: Path, support: Path) -> dict[str, str]:
     }
     bodies = native_body_paths(root)
     if bodies:
-        environment.update({name: value for name, value in load_native_runtime_env(support / "runtime/runtime.env").items()
+        runtime_env = load_native_runtime_env(support / "runtime/runtime.env")
+        environment.update({name: value for name, value in runtime_env.items()
                             if name in NATIVE_ALLOWED_PLAIN_ENV or name.startswith("VIVENTIUM_")})
         environment.update(native_glasshive_transport_environment(
-            root, support, database_path=Path(environment["WPR_DB_PATH"]),
+            root, support, database_path=Path(environment["WPR_DB_PATH"]), runtime_env=runtime_env,
         ))
         environment.update(native_scheduling_environment(root, support))
         environment.update({
@@ -2618,7 +2634,7 @@ def start(
         mongo_uri = mongodb_uri(support)
         env = native_child_environment(support)
         env.update(runtime_secrets(support, create=False))
-        env.update(native_glasshive_transport_environment(root, support))
+        env.update(native_glasshive_transport_environment(root, support, runtime_env=env))
         env.update(native_scheduling_environment(root, support))
         env.update(native_redis_environment(root, support))
         env.update(

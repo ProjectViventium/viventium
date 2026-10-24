@@ -1630,7 +1630,7 @@ def test_native_start_failure_preserves_a_preexisting_owned_service(
     monkeypatch.setattr(runtime, "preflight_api_socket", lambda *_args: None)
     monkeypatch.setattr(runtime, "preflight_private_socket", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(runtime, "native_body_paths", lambda _root: {"codex-cli": root / "body"} if failed_service == "glasshive-mcp" else {})
-    monkeypatch.setattr(runtime, "native_glasshive_transport_environment", lambda *_args: {})
+    monkeypatch.setattr(runtime, "native_glasshive_transport_environment", lambda *_args, **_kwargs: {})
     monkeypatch.setattr(runtime, "native_glasshive_environment", lambda *_args: {})
     monkeypatch.setattr(runtime, "wait_owned_glasshive_socket", lambda *_args, **kwargs: not kwargs.get("mcp"))
     monkeypatch.setattr(
@@ -2536,11 +2536,19 @@ def test_native_harness_uses_packaged_bodies_and_compiled_route_without_host_cre
     monkeypatch.setattr(runtime, "ensure_support_directories", lambda *_args: None)
     monkeypatch.setattr(runtime, "build_metadata", lambda _root: {"source_commit": "a" * 40, "components": {"glasshive": {"commit": "b" * 40}}})
     monkeypatch.setattr(runtime, "runtime_secrets", lambda *_args, **_kwargs: {"CREDS_KEY": "c" * 64})
-    monkeypatch.setattr(runtime, "load_native_runtime_env", lambda _path: {
-        "WPR_MODEL_CODEX_CLI": "selected-primary", "WPR_CODEX_CLI_REASONING_EFFORT": "medium",
-        "WPR_MODEL_CLAUDE_CODE": "selected-fallback", "WPR_CLAUDE_CODE_EFFORT": "high",
-        "GLASSHIVE_PROVIDER_ALLOW_FULL_ACCESS": "false", "OPENAI_API_KEY": "user_provided",
-        "VIVENTIUM_PROMPT_BUNDLE_PATH": "/retired-build/prompt-bundle.json"})
+    loaded_runtime_env = []
+
+    def load_runtime_env(path):
+        loaded_runtime_env.append(path)
+        return {
+            "WPR_MODEL_CODEX_CLI": "selected-primary", "WPR_CODEX_CLI_REASONING_EFFORT": "medium",
+            "WPR_MODEL_CLAUDE_CODE": "selected-fallback", "WPR_CLAUDE_CODE_EFFORT": "high",
+            "GLASSHIVE_PROVIDER_ALLOW_FULL_ACCESS": "false", "OPENAI_API_KEY": "user_provided",
+            "VIVENTIUM_PROMPT_BUNDLE_PATH": "/retired-build/prompt-bundle.json",
+            "VIVENTIUM_XPERFECT_SCHEDULED_WAKES_ENABLED": "true",
+        }
+
+    monkeypatch.setattr(runtime, "load_native_runtime_env", load_runtime_env)
     monkeypatch.setenv("ANTHROPIC_API_KEY", "host-secret-must-not-leak")
     env = runtime.native_glasshive_environment(root, support)
     assert env["VIVENTIUM_PROMPT_BUNDLE_PATH"] == str(root / "runtime/defaults/prompt-bundle.json")
@@ -2553,6 +2561,10 @@ def test_native_harness_uses_packaged_bodies_and_compiled_route_without_host_cre
     assert env["GLASSHIVE_PROVIDER_ALLOW_FULL_ACCESS"] == "false"
     assert "OPENAI_API_KEY" not in env and "ANTHROPIC_API_KEY" not in env
     assert len({env[name] for name in ("WPR_API_TOKEN", "GLASSHIVE_PROVIDER_API_KEY", "GLASSHIVE_MCP_API_KEY", "VIVENTIUM_GLASSHIVE_SERVICE_ASSERTION_SECRET")}) == 4
+    assert loaded_runtime_env == [support / "runtime/runtime.env"]
+    assert env["WPR_RECURRING_SCHEDULE_OWNER"] == "native"
+    assert env["WPR_WEBHOOK_ALLOWED_PORTS"] == "443,3190"
+    assert env["WPR_WEBHOOK_ALLOW_LOCAL_HTTP"] == "true"
 
 
 def test_native_glasshive_path_resolves_the_host_admission_probes(tmp_path, monkeypatch):
@@ -4726,6 +4738,60 @@ def test_native_file_source_roots_follow_the_owned_runtime_database(tmp_path, mo
     merged = runtime.native_glasshive_environment(tmp_path / "release", support)
     assert merged["WPR_BOOTSTRAP_SOURCE_ROOTS"].split(os.pathsep)[1] == str(Path(merged["WPR_DB_PATH"]).parent / "managed-files")
     assert merged["WPR_DB_PATH"] != str(selected_db)
+
+
+@pytest.mark.parametrize("enabled", [None, "false", "true"])
+def test_native_transport_schedule_grants_require_optional_runtime_opt_in(tmp_path, monkeypatch, enabled):
+    runtime = load_native_runtime()
+    monkeypatch.setattr(runtime, "native_body_paths", lambda *_: {"codex-cli": tmp_path / "codex"})
+    monkeypatch.setattr(runtime, "runtime_secrets", lambda *_: {"CREDS_KEY": "11" * 32})
+    support = tmp_path / "support"
+    if enabled is not None:
+        values = {**runtime.NATIVE_FIXED_ENV, "VIVENTIUM_XPERFECT_SCHEDULED_WAKES_ENABLED": enabled}
+        file(support / "runtime/runtime.env", "\n".join(f"{key}={shlex.quote(value)}" for key, value in values.items()))
+    environment = runtime.native_glasshive_transport_environment(tmp_path / "release", support)
+    for name, value in {
+        "WPR_RECURRING_SCHEDULE_OWNER": "native",
+        "WPR_WEBHOOK_ALLOWED_PORTS": "443,3190",
+        "WPR_WEBHOOK_ALLOW_LOCAL_HTTP": "true",
+    }.items():
+        if enabled == "true":
+            assert environment[name] == value
+        else:
+            assert name not in environment
+
+
+@pytest.mark.parametrize("invalid", ["malformed", "symlink", "dangling-symlink"])
+def test_native_transport_rejects_existing_invalid_runtime_env(tmp_path, monkeypatch, invalid):
+    runtime = load_native_runtime()
+    monkeypatch.setattr(runtime, "native_body_paths", lambda *_: {"codex-cli": tmp_path / "codex"})
+    monkeypatch.setattr(runtime, "runtime_secrets", lambda *_: {"CREDS_KEY": "11" * 32})
+    support = tmp_path / "support"
+    path = support / "runtime/runtime.env"
+    values = {**runtime.NATIVE_FIXED_ENV, "VIVENTIUM_XPERFECT_SCHEDULED_WAKES_ENABLED": "true"}
+    content = "\n".join(f"{key}={shlex.quote(value)}" for key, value in values.items())
+    if invalid == "malformed":
+        file(path, content + "\nVIVENTIUM_BROKEN='unterminated\n")
+    else:
+        path.parent.mkdir(parents=True)
+        target = tmp_path / "linked-runtime.env"
+        if invalid == "symlink":
+            file(target, content)
+        path.symlink_to(target)
+    with pytest.raises(runtime.RuntimeError_, match="Native runtime environment"):
+        runtime.native_glasshive_transport_environment(tmp_path / "release", support)
+
+
+def test_native_transport_reuses_supplied_runtime_env_without_reading(tmp_path, monkeypatch):
+    runtime = load_native_runtime()
+    monkeypatch.setattr(runtime, "native_body_paths", lambda *_: {"codex-cli": tmp_path / "codex"})
+    monkeypatch.setattr(runtime, "runtime_secrets", lambda *_: {"CREDS_KEY": "11" * 32})
+    monkeypatch.setattr(runtime, "load_native_runtime_env", lambda *_: pytest.fail("must reuse the loaded runtime environment"))
+    environment = runtime.native_glasshive_transport_environment(
+        tmp_path / "release", tmp_path / "support",
+        runtime_env={"VIVENTIUM_XPERFECT_SCHEDULED_WAKES_ENABLED": "true"},
+    )
+    assert environment["WPR_RECURRING_SCHEDULE_OWNER"] == "native"
 
 
 def test_native_runtime_accepts_reviewed_host_grok_hash_without_container_opt_in(tmp_path, monkeypatch):
