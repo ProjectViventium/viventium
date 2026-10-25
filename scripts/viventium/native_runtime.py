@@ -1325,14 +1325,17 @@ def native_helper_config(support: Path, root: Path) -> dict[str, object] | None:
 
 
 def set_helper_desired_state(support: Path, config: dict[str, object], desired: str) -> None:
-    supervision = config.get("runtimeSupervision")
-    supervision = dict(supervision) if isinstance(supervision, dict) else {}
-    supervision.update({
-        "schemaVersion": 1, "desiredState": desired, "consecutiveLaunchAttempts": 0,
-        "nextLaunchAttemptAt": None, "healthySince": None,
-    })
-    config["runtimeSupervision"] = supervision
-    write_atomic(support / "helper-config.json", json.dumps(config, sort_keys=True, separators=(",", ":")) + "\n")
+    # Reuse the same fresh-read/lock/revision owner as the source CLI and helper.
+    from helper_runtime_intent import HelperIntentError, update_runtime_intent
+    try:
+        updated = update_runtime_intent(
+            support / "helper-config.json", desired,
+            expected_binding={"repoRoot": config.get("repoRoot"), "appSupportDir": str(support), "nativeRuntime": True},
+        )
+    except (HelperIntentError, OSError) as error:
+        raise RuntimeError_("Helper runtime intent changed or is unavailable; saved state was preserved") from error
+    if not updated:
+        raise RuntimeError_("Helper runtime intent is unavailable; saved state was preserved")
 
 
 def ensure_first_admin_state(support: Path) -> dict[str, object]:
@@ -1431,6 +1434,7 @@ def prepare_install(args: argparse.Namespace, support: Path) -> Callable[[], Non
     helper_config_path = support / "helper-config.json"
     previous_helper_config = None
     helper_config: dict[str, object] = {}
+    candidate_helper_config: dict[str, object] | None = None
     if uses_helper and (helper_config_path.exists() or helper_config_path.is_symlink()):
         try:
             previous_helper_config = read_private_secret_file(helper_config_path)
@@ -1440,50 +1444,107 @@ def prepare_install(args: argparse.Namespace, support: Path) -> Callable[[], Non
         if not isinstance(helper_config, dict):
             raise RuntimeError_("Existing helper configuration is invalid")
 
-    def rollback_attempt() -> None:
+    def rollback_attempt() -> bool:
         if state_written and runtime_state(support).get("installation_id") != installation_id:
             raise RuntimeError_("Native installation changed during setup; a newer installation was preserved")
-        # Retire the candidate supervisor before restoring state or stopping its
-        # services, otherwise it can start the failed candidate again.
+        from helper_runtime_intent import helper_config_lock
+
+        def current_owned_helper_config() -> dict[str, object]:
+            try:
+                current = json.loads(read_private_secret_file(helper_config_path))
+            except (RuntimeError_, json.JSONDecodeError) as error:
+                raise RuntimeError_("Helper configuration changed during setup; saved state was preserved") from error
+            if not isinstance(current, dict) or any(
+                current.get(key) != candidate_helper_config.get(key)
+                for key in ("repoRoot", "appSupportDir", "nativeRuntime")
+            ):
+                raise RuntimeError_("Helper binding changed during setup; a newer binding was preserved")
+            return current
+
+        # A newer binding is not this attempt's stop/rollback authority.
+        if helper_installed and candidate_helper_config is not None:
+            with helper_config_lock(helper_config_path):
+                current_owned_helper_config()
         if helper_installed:
             quiesce_helper(helper_target)
         if not args.no_start:
             stop_attempt_services(support, root, preexisting_services)
+        resume_previous = True
         if helper_installed:
-            rollback_helper(helper_target, helper_backup)
-            if previous_helper_config is None:
-                helper_config_path.unlink(missing_ok=True)
-            else:
-                write_atomic(helper_config_path, previous_helper_config)
+            with helper_config_lock(helper_config_path):
+                restored_text = previous_helper_config
+                if candidate_helper_config is not None:
+                    current = current_owned_helper_config()
+                    restored = json.loads(previous_helper_config) if previous_helper_config is not None else {}
+                    changed = False
+                    # Preserve user settings changed while health was awaited. Runtime
+                    # binding belongs to rollback; only a newer explicit intent survives.
+                    for key in (current.keys() | candidate_helper_config.keys()) - {
+                        "repoRoot", "appSupportDir", "nativeRuntime", "allowProtectedRepoRoot", "runtimeSupervision"
+                    }:
+                        if current.get(key) != candidate_helper_config.get(key):
+                            changed = True
+                            if key in current: restored[key] = current[key]
+                            else: restored.pop(key, None)
+                    observed = current.get("runtimeSupervision") or {}
+                    authored = candidate_helper_config.get("runtimeSupervision") or {}
+                    if (observed.get("intentRevision"), observed.get("desiredState")) != (
+                        authored.get("intentRevision"), authored.get("desiredState")
+                    ):
+                        changed = True
+                        restored["runtimeSupervision"] = observed
+                    if changed:
+                        if previous_helper_config is None:
+                            restored = {**current, **restored}
+                        restored_text = json.dumps(restored, sort_keys=True, separators=(",", ":")) + "\n"
+                    resume_previous = (restored.get("runtimeSupervision") or {}).get("desiredState") != "stopped"
+                # Candidate is already quiesced. Restore its owned bundle and config
+                # together, excluding concurrent config writers for this short step.
+                rollback_helper(helper_target, helper_backup)
+                if candidate_helper_config is not None:
+                    if restored_text is None:
+                        helper_config_path.unlink(missing_ok=True)
+                    else:
+                        write_atomic(helper_config_path, restored_text)
         if previous_state is None:
             previous_state_path.unlink(missing_ok=True)
         else:
             write_atomic(previous_state_path, previous_state.decode("utf-8"))
+        return resume_previous
 
     try:
         if uses_helper:
             helper_backup = install_helper(helper_source, support)
             helper_installed = True
-            # Keep setup acknowledgement and future preferences in their owning
-            # config, while binding launch identity and the requested run intent.
-            helper_config.update({
-                "repoRoot": str(root),
-                "appSupportDir": str(support),
-                "allowProtectedRepoRoot": True,
-                "nativeRuntime": True,
-            })
-            helper_config.setdefault("showInStatusBar", True)
-            supervision = helper_config.get("runtimeSupervision")
-            supervision = dict(supervision) if isinstance(supervision, dict) else {}
-            supervision.update({
-                "schemaVersion": 1,
-                "desiredState": "stopped" if args.no_start else "running",
-                "consecutiveLaunchAttempts": 0,
-                "nextLaunchAttemptAt": None,
-                "healthySince": None,
-            })
-            helper_config["runtimeSupervision"] = supervision
-            write_atomic(helper_config_path, json.dumps(helper_config, sort_keys=True, separators=(",", ":")) + "\n")
+            # The prior helper is quiesced. Preserve its final saved preferences
+            # under the same config lock before binding the new explicit run intent.
+            from helper_runtime_intent import helper_config_lock
+            with helper_config_lock(helper_config_path):
+                if helper_config_path.exists():
+                    previous_helper_config = read_private_secret_file(helper_config_path)
+                    helper_config = json.loads(previous_helper_config)
+                    if not isinstance(helper_config, dict):
+                        raise RuntimeError_("Existing helper configuration is invalid")
+                helper_config.update({
+                    "repoRoot": str(root),
+                    "appSupportDir": str(support),
+                    "allowProtectedRepoRoot": True,
+                    "nativeRuntime": True,
+                })
+                helper_config.setdefault("showInStatusBar", True)
+                supervision = helper_config.get("runtimeSupervision")
+                supervision = dict(supervision) if isinstance(supervision, dict) else {}
+                supervision.update({
+                    "schemaVersion": 1,
+                    "desiredState": "stopped" if args.no_start else "running",
+                    "intentRevision": uuid.uuid4().hex,
+                    "consecutiveLaunchAttempts": 0,
+                    "nextLaunchAttemptAt": None,
+                    "healthySince": None,
+                })
+                helper_config["runtimeSupervision"] = supervision
+                write_atomic(helper_config_path, json.dumps(helper_config, sort_keys=True, separators=(",", ":")) + "\n")
+                candidate_helper_config = json.loads(json.dumps(helper_config))
         state = {
             "schema_version": 1,
             "installation_id": installation_id,
@@ -1494,8 +1555,8 @@ def prepare_install(args: argparse.Namespace, support: Path) -> Callable[[], Non
         write_atomic(previous_state_path, json.dumps(state, sort_keys=True, separators=(",", ":")) + "\n")
         state_written = True
     except BaseException:
-        rollback_attempt()
-        if helper_was_running:
+        resume_previous = rollback_attempt()
+        if helper_was_running and resume_previous:
             subprocess.run(["/usr/bin/open", "-gj", str(helper_target)], check=False, timeout=10)
         raise
 
@@ -1537,8 +1598,8 @@ def prepare_install(args: argparse.Namespace, support: Path) -> Callable[[], Non
                 print(f"Viventium Native installed at {root}")
         except BaseException:
             with lifecycle_lock(support):
-                rollback_attempt()
-            if helper_was_running and helper_backup is not None:
+                resume_previous = rollback_attempt()
+            if helper_was_running and helper_backup is not None and resume_previous:
                 subprocess.run(["/usr/bin/open", "-gj", str(helper_target)], check=False, timeout=10)
             raise
 
@@ -2187,7 +2248,7 @@ def spawn(service: str, command: list[str], support: Path, *, cwd: Path, env: di
         *command,
     ]
     log_path = support / "logs" / f"{service}.log"
-    rotate_log(log_path)
+    log_path = prepare_runtime_log(log_path)
     process: subprocess.Popen[bytes] | None = None
     try:
         with log_path.open("ab", buffering=0) as log:
@@ -2243,19 +2304,57 @@ def spawn(service: str, command: list[str], support: Path, *, cwd: Path, env: di
 
 
 def rotate_log(path: Path, *, maximum_bytes: int = 10 * 1024 * 1024, generations: int = 3) -> None:
-    if path.exists() or path.is_symlink():
-        metadata = path.lstat()
-        if path.is_symlink() or not path.is_file() or metadata.st_uid != os.getuid():
-            raise RuntimeError_(f"Native log path is unsafe: {path.name}")
-        if metadata.st_size < maximum_bytes:
-            return
+    def validate(candidate: Path) -> bool:
+        if not os.path.lexists(candidate):
+            return False
+        metadata = candidate.lstat()
+        if (not stat.S_ISREG(metadata.st_mode) or metadata.st_uid != os.getuid()
+                or metadata.st_nlink != 1):
+            raise RuntimeError_(f"Native log path is unsafe: {candidate.name}")
+        return True
+
+    if not validate(path):
+        return
+    if path.stat().st_size == 0 or path.stat().st_size < maximum_bytes:
+        path.chmod(0o600)
+        return
+    for generation in range(1, generations + 1):
+        validate(path.with_name(f"{path.name}.{generation}"))
     for generation in range(generations, 0, -1):
         source = path if generation == 1 else path.with_name(f"{path.name}.{generation - 1}")
         destination = path.with_name(f"{path.name}.{generation}")
-        if destination.exists():
+        if validate(destination):
             destination.unlink()
-        if source.exists():
+        if validate(source):
             os.replace(source, destination)
+            destination.chmod(0o600)
+
+
+def prepare_runtime_log(path: Path, *, maximum_bytes: int = 10 * 1024 * 1024) -> Path:
+    """Preserve diagnostics; use a trusted private alternate for a refused file."""
+    path = Path(os.path.abspath(path))
+    for directory in reversed((path.parent, *path.parent.parents)):
+        if not os.path.lexists(directory):
+            ensure_private_directory(directory)
+        metadata = directory.lstat()
+        if (not stat.S_ISDIR(metadata.st_mode) or stat.S_ISLNK(metadata.st_mode)
+                or metadata.st_uid not in {0, os.getuid()}
+                or (metadata.st_mode & 0o022 and not (metadata.st_uid == 0 and metadata.st_mode & stat.S_ISVTX))):
+            raise RuntimeError_("Managed log parent is unsafe")
+    if path.parent.lstat().st_uid != os.getuid():
+        raise RuntimeError_("Managed log parent is not owned by this runtime")
+    ensure_private_directory(path.parent)
+    try:
+        rotate_log(path, maximum_bytes=maximum_bytes)
+        selected = path
+    except (RuntimeError_, OSError) as error:
+        selected = path.with_name(f"{path.stem}.recovery{path.suffix}")
+        rotate_log(selected, maximum_bytes=1)
+        print(f"[viventium] Log preservation refused {path.name} ({type(error).__name__}); using {selected.name}", file=sys.stderr)
+    if not os.path.lexists(selected):
+        descriptor = os.open(selected, os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0), 0o600)
+        os.close(descriptor)
+    return selected
 
 
 def semantic_http_ready(
@@ -2504,7 +2603,7 @@ def run_native_maintenance(
             raise RuntimeError_("Native maintenance ownership policy is incomplete")
         owned_pid = require_owned_service(required_service, support, root)
     log_path = support / "logs" / f"native-{label}.log"
-    rotate_log(log_path)
+    log_path = prepare_runtime_log(log_path)
     with log_path.open("ab", buffering=0) as log:
         completed = subprocess.run(
             command,

@@ -3,6 +3,9 @@ from __future__ import annotations
 
 import argparse
 import json
+import fcntl
+import uuid
+from contextlib import contextmanager
 import os
 import stat
 import tempfile
@@ -14,10 +17,42 @@ class HelperIntentError(RuntimeError):
     pass
 
 
-def update_runtime_intent(config_path: Path, desired_state: str) -> bool:
+@contextmanager
+def helper_config_lock(config_path: Path):
+    lock_path = config_path.with_name(f".{config_path.name}.lock")
+    flags = os.O_RDWR | os.O_CREAT | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_CLOEXEC", 0)
+    try:
+        descriptor = os.open(lock_path, flags, 0o600)
+    except OSError as exc:
+        raise HelperIntentError("helper config lock is unsafe or unavailable") from exc
+    try:
+        metadata = os.fstat(descriptor)
+        if not stat.S_ISREG(metadata.st_mode) or metadata.st_uid != os.getuid() or metadata.st_nlink != 1:
+            raise HelperIntentError("helper config lock is unsafe")
+        os.fchmod(descriptor, 0o600)
+        fcntl.flock(descriptor, fcntl.LOCK_EX)
+        yield
+    finally:
+        os.close(descriptor)
+
+
+def update_runtime_intent(
+    config_path: Path, desired_state: str, *, expected_binding: dict[str, Any] | None = None,
+) -> bool:
     if desired_state not in {"running", "stopped"}:
         raise HelperIntentError("invalid helper runtime intent")
-    if not config_path.exists():
+    if not config_path.exists() and not config_path.is_symlink():
+        return False
+    with helper_config_lock(config_path):
+        return _update_runtime_intent_locked(config_path, desired_state, expected_binding=expected_binding)
+
+
+def _update_runtime_intent_locked(
+    config_path: Path, desired_state: str, *, expected_binding: dict[str, Any] | None = None,
+) -> bool:
+    if desired_state not in {"running", "stopped"}:
+        raise HelperIntentError("invalid helper runtime intent")
+    if not os.path.lexists(config_path):
         return False
 
     metadata = config_path.lstat()
@@ -25,6 +60,7 @@ def update_runtime_intent(config_path: Path, desired_state: str) -> bool:
         stat.S_ISLNK(metadata.st_mode)
         or not stat.S_ISREG(metadata.st_mode)
         or metadata.st_uid != os.getuid()
+        or metadata.st_nlink != 1
     ):
         raise HelperIntentError("helper config is not an owner-controlled regular file")
 
@@ -35,6 +71,9 @@ def update_runtime_intent(config_path: Path, desired_state: str) -> bool:
     if not isinstance(payload, dict):
         raise HelperIntentError("helper config must contain a JSON object")
 
+    if expected_binding is not None and any(payload.get(key) != value for key, value in expected_binding.items()):
+        raise HelperIntentError("helper config belongs to another runtime")
+
     supervision = payload.get("runtimeSupervision")
     if not isinstance(supervision, dict):
         supervision = {}
@@ -42,6 +81,7 @@ def update_runtime_intent(config_path: Path, desired_state: str) -> bool:
         {
             "schemaVersion": 1,
             "desiredState": desired_state,
+            "intentRevision": uuid.uuid4().hex,
             "consecutiveLaunchAttempts": 0,
             "nextLaunchAttemptAt": None,
             "healthySince": None,

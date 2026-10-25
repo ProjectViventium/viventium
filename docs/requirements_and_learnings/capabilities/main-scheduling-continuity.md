@@ -517,3 +517,22 @@ A typed tool or handoff between prose blocks is not a literal word in that text.
 supplemental saved text to that exact projection, while preserving the full ordered typed tool
 carrier, owner, source, file and content-integrity checks. Reusing the persistence owner avoids
 rejecting a valid next turn after a completed handoff; it does not normalize arbitrary text drift.
+
+### Accepted scheduled result after cache loss
+
+An accepted scheduled run retains its original invocation and admission identity. If its temporary
+job disappears before the result message ID was saved, existing admission recovery rechecks the
+exact canonical completed result and pins that ID before the normal channel outbox is used. The
+result must match its owner, conversation, scheduled source, schedule and occurrence. Missing,
+changed or ambiguous proof remains unknown; it never repeats model execution or tool effects.
+The same rule applies to scheduler stream and structured-event reads after reconnect.
+
+Unknown accepted-result inspection uses the existing next-attempt field with increasing delay
+(up to 15 minutes). After 16 inspections or 24 hours, the fast recovery budget is exhausted;
+inspection continues every 15 minutes through the same leased admission row. The typed unknown
+state and first exhaustion diagnostic remain truthful. Exhaustion never declares failure,
+cancellation or a completed effect, and never permanently excludes a late result. The normal
+final-result wake captures scheduled context before temporary job cleanup. If the process stops
+after saving the result but before that wake, the next cold inspection recovers the exact saved
+result through the existing channel outbox. A known useful result is never discarded merely for age;
+no inspection repeats accepted model execution or tool effects.

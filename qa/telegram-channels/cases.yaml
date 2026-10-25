@@ -29,3 +29,12 @@ journeys:
     degradedAndRecovery: Download, transcription, provider, formatting, rate, and retraction failures stay distinct with one useful action.
     persistenceAndCleanup: Restart and native follow-up preserve owner and objective; synthetic messages, files, and work are removed exactly.
     evidence: [visible Telegram exchange, message parts, delivery ledger, file hashes, logs, cleanup proof]
+
+  - id: ingress-outage-and-idle-typing
+    requirements: [CORE-002, CORE-007, CC-048]
+    userAction: In an isolated runtime, send a current message while Core cannot accept it; restore Core and send a new message. Separately recover a cancelled retained input, then remain idle.
+    surfaces: [Telegram Desktop, Core ingress, retained input recovery]
+    expectedResult: A definite pre-admission failure sends one plain reply to the exact current input without TTS, model work or typing. After recovery, the new input receives its normal answer. A terminal old presentation settles without restarting work or refreshing idle typing.
+    degradedAndRecovery: An unknown POST outcome is never retried as fresh execution. A newer source suppresses the old notice. Transport failure and provider failure keep distinct wording. Background acknowledgement retries back off and recover without log floods.
+    persistenceAndCleanup: Restart retains exact source and terminal facts; a newer independent message does not mark old work completed. Remove only synthetic fixtures through their owning cleanup path.
+    evidence: [visible outage and recovery, exact source and delivery receipts, canonical failure and presentation state, absence of tool replay, bounded typing start/stop logs, installed artifact identity]

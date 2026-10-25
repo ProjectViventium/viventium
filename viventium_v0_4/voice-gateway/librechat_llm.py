@@ -23,7 +23,7 @@ import uuid
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Callable, Optional
+from typing import Any, Awaitable, Callable, Optional
 from urllib.parse import quote, urlparse
 
 import aiohttp
@@ -32,11 +32,21 @@ logger = logging.getLogger("voice-gateway.librechat_llm")
 
 
 class _NonRetryableVoiceIngressError(RuntimeError):
-    pass
+    def __init__(self, message: str, *, status: int = 400) -> None:
+        super().__init__(message)
+        self.status = status
 
 
 class _RetryableVoiceIngressError(RuntimeError):
     pass
+
+
+class _VoiceAdmissionError(RuntimeError):
+    """A rejected host request is not a model/provider error."""
+    def __init__(self, status: int, *, definite_non_admission: bool = False) -> None:
+        super().__init__(f"LibreChat voice chat failed: status {status}")
+        self.status = status
+        self.definite_non_admission = definite_non_admission
 GLASSHIVE_MCP_SERVER = "glasshive-workers-projects"
 from livekit.agents import llm
 from livekit.agents.llm import ChatChunk, ChatContext, ChoiceDelta
@@ -857,6 +867,8 @@ def _extract_last_user_speaker_context(chat_ctx: ChatContext) -> dict[str, Any]:
             "utteranceEndOffsetMs": context.get("utteranceEndOffsetMs"),
             "utteranceEndTimingSource": context.get("utteranceEndTimingSource"),
         }
+        if isinstance(context.get("speakerSessionState"), dict):
+            result["speakerSessionState"] = context["speakerSessionState"]
         engagement = context.get("voiceEngagement")
         if isinstance(engagement, dict):
             result["voiceEngagement"] = engagement
@@ -1187,6 +1199,8 @@ def _select_stream_error_message(
 ) -> str:
     if code == "host_capacity":
         return _host_capacity_error_message(metadata)
+    if code == "voice_core_unavailable":
+        return "I'm having trouble reaching the service right now. Please try again."
     native_stop_messages = {
         "native_output_file_unavailable": "The file could not be attached.",
         "native_input_declined": "You declined that action. It was stopped.",
@@ -1806,22 +1820,43 @@ async def _post_voice_admission_receipt(
     headers: dict[str, str],
     body: dict[str, Any],
     is_call_current: Callable[[], bool],
+    retry_deadline: Optional[float] = None,
 ) -> dict[str, Any]:
-    """Retry only a typed pending ingress receipt inside its existing caller budget."""
+    """Retry proven non-admission only, inside the existing ordered caller budget."""
+    refused_attempts = 0
     while is_call_current():
-        async with session.post(url, headers=headers, json=body) as response:
-            if response.status < 400:
-                return await response.json()
-            try:
-                payload = await response.json()
-            except Exception:
-                payload = None
-            if (response.status == 409 and isinstance(payload, dict)
-                    and payload.get("code") == "call_context_busy"
-                    and payload.get("retryable") is True):
-                await asyncio.sleep(0.25)
-                continue
-            raise RuntimeError(f"LibreChat voice chat failed: status {response.status}")
+        try:
+            async with session.post(url, headers=headers, json=body) as response:
+                if response.status < 400:
+                    return await response.json()
+                try:
+                    payload = await response.json()
+                except Exception:
+                    payload = None
+                if (isinstance(payload, dict) and payload.get("retryable") is True
+                        and ((response.status == 409 and payload.get("code") == "call_context_busy")
+                             or (response.status == 503 and payload.get("code") == "voice_turn_authority_unavailable"))):
+                    remaining = (retry_deadline - asyncio.get_running_loop().time()
+                                 if retry_deadline is not None else 0.25)
+                    if remaining <= 0:
+                        raise _VoiceAdmissionError(response.status, definite_non_admission=True)
+                    await asyncio.sleep(min(0.25, remaining))
+                    continue
+                raise _VoiceAdmissionError(response.status)
+        except aiohttp.ClientConnectorError as error:
+            # This error proves no HTTP connection was established. Read timeout
+            # and disconnect after a possible write never enter this retry path.
+            if isinstance(error, (aiohttp.ClientConnectorSSLError, aiohttp.ClientConnectorCertificateError)):
+                raise
+            if retry_deadline is not None and asyncio.get_running_loop().time() >= retry_deadline:
+                raise
+            refused_attempts += 1
+            logger.warning("[VoiceTask] admission_connect_retry sourceEventId=%s attempt=%s accepted=false",
+                           body.get("sourceEventId", ""), refused_attempts)
+            retry_sleep = min(0.25 * (2 ** min(refused_attempts - 1, 5)), 5.0)
+            if retry_deadline is not None:
+                retry_sleep = min(retry_sleep, max(0.0, retry_deadline - asyncio.get_running_loop().time()))
+            await asyncio.sleep(retry_sleep)
     return {}
 
 
@@ -1872,6 +1907,9 @@ class LibreChatLLM(llm.LLM):
         self._speaker_revision_lock = asyncio.Lock()
         self._speaker_delivery_tasks: set[asyncio.Task[dict[str, Any]]] = set()
         self._speaker_delivery_closing = False
+        self._turn_admission_handler: Optional[Callable[[dict[str, Any]], Awaitable[bool]]] = None
+        self._admission_notice_allowed: Callable[[], bool] = lambda: True
+        self._admission_tail: Optional[_VoicePresentation] = None
         self._sent_ambient_segments: dict[tuple[str, int], None] = {}
         self._ambient_ingress_lock = asyncio.Lock()
         self._current_trace_id = ""
@@ -2092,7 +2130,7 @@ class LibreChatLLM(llm.LLM):
         if (previous is not None and previous.admission_task is not None
                 and not self._speaker_delivery_closing
                 and (self._presentation_coordinator.is_current(successor) or owns_admission)
-                and previous.sequence + 1 == successor.sequence
+                and previous.sequence < successor.sequence
                 and previous.source_event_id
                 and previous.source_event_id != successor.source_event_id):
             try:
@@ -3311,7 +3349,7 @@ class LibreChatLLM(llm.LLM):
         if call_state_session is not None and not getattr(call_state_session, "closed", False):
             await call_state_session.close()
 
-    async def get_call_state(self) -> Optional[dict[str, Any]]:
+    async def get_call_state(self, *, retry_unavailable: bool = False) -> Optional[dict[str, Any]]:
         """Read one strict authoritative state over a reused bounded HTTP connection."""
         headers = {
             "X-VIVENTIUM-CALL-SESSION": self._auth.call_session_id,
@@ -3338,6 +3376,8 @@ class LibreChatLLM(llm.LLM):
                 # === VIVENTIUM END ===
                 self._call_state_session = session
             async with session.get(url, headers=headers) as resp:
+                if retry_unavailable and resp.status >= 500:
+                    raise _RetryableVoiceIngressError("Voice authority temporarily unavailable")
                 if resp.status >= 400:
                     logger.warning(
                         "[VoiceMode] state_unavailable callSessionId=%s status=%s durationMs=%.3f",
@@ -3348,6 +3388,8 @@ class LibreChatLLM(llm.LLM):
                     return None
                 payload = await resp.json()
         except (aiohttp.ClientError, asyncio.TimeoutError, ValueError, TypeError) as exc:
+            if retry_unavailable and isinstance(exc, (aiohttp.ClientError, asyncio.TimeoutError)):
+                raise
             logger.warning(
                 "[VoiceMode] state_lookup_failed callSessionId=%s error=%s durationMs=%.3f",
                 self._auth.call_session_id,
@@ -3405,7 +3447,7 @@ class LibreChatLLM(llm.LLM):
             }
         return None
 
-    async def get_turn_authority(self, turn_id: str) -> Optional[dict[str, Any]]:
+    async def get_turn_authority(self, turn_id: str, *, retry_unavailable: bool = False) -> Optional[dict[str, Any]]:
         """Read the latest exact owner-scoped call mode and persisted turn revisions."""
         normalized_turn_id = turn_id.strip() if isinstance(turn_id, str) else ""
         if not normalized_turn_id or len(normalized_turn_id) > 160:
@@ -3430,6 +3472,8 @@ class LibreChatLLM(llm.LLM):
                 )
                 self._call_state_session = session
             async with session.get(url, headers=headers) as response:
+                if retry_unavailable and response.status >= 500:
+                    raise _RetryableVoiceIngressError("Voice authority temporarily unavailable")
                 if response.status >= 400:
                     logger.warning(
                         "[VoiceMode] turn_authority_unavailable callSessionId=%s status=%s",
@@ -3439,6 +3483,8 @@ class LibreChatLLM(llm.LLM):
                     return None
                 payload = await response.json()
         except (aiohttp.ClientError, asyncio.TimeoutError, ValueError, TypeError) as error:
+            if retry_unavailable and isinstance(error, (aiohttp.ClientError, asyncio.TimeoutError)):
+                raise
             logger.warning(
                 "[VoiceMode] turn_authority_lookup_failed callSessionId=%s error=%s",
                 self._auth.call_session_id,
@@ -3522,7 +3568,7 @@ class LibreChatLLM(llm.LLM):
             return None
         return str(state["mode"])
 
-    async def verify_voice_engagement(self, receipt: dict[str, Any]) -> bool:
+    async def verify_voice_engagement(self, receipt: dict[str, Any], *, retry_unavailable: bool = False) -> bool:
         """Ask Core to verify owner speech without exposing its private signing key."""
         if not isinstance(receipt, dict):
             return False
@@ -3555,6 +3601,8 @@ class LibreChatLLM(llm.LLM):
                 headers=headers,
                 json={"version": 1, "engagement": receipt},
             ) as response:
+                if retry_unavailable and response.status >= 500:
+                    raise _RetryableVoiceIngressError("Wing verification temporarily unavailable")
                 if response.status >= 400:
                     logger.warning(
                         "[VoiceWing] engagement_verification_rejected callSessionId=%s status=%s",
@@ -3564,6 +3612,8 @@ class LibreChatLLM(llm.LLM):
                     return False
                 verdict = await response.json()
         except (aiohttp.ClientError, asyncio.TimeoutError, ValueError, TypeError) as error:
+            if retry_unavailable and isinstance(error, (aiohttp.ClientError, asyncio.TimeoutError)):
+                raise
             logger.warning(
                 "[VoiceWing] engagement_verification_unavailable callSessionId=%s error=%s",
                 self._auth.call_session_id,
@@ -3651,6 +3701,43 @@ class LibreChatLLM(llm.LLM):
                 (time.monotonic() - started_at) * 1000.0,
             )
             return result
+
+    def set_admission_notice_gate(self, allowed: Callable[[], bool]) -> None:
+        self._admission_notice_allowed = allowed
+
+    def retain_speaker_safety_delivery(
+        self, task: asyncio.Task[dict[str, Any]], *, on_unconfirmed: Callable[[], None]
+    ) -> None:
+        # The existing supervised revision task survives source interruption.
+        # If End or permanent rejection prevents its ACK, restore the tracker's
+        # existing tombstone so it cannot be mistaken for a delivered state.
+        def settled(completed: asyncio.Task[dict[str, Any]]) -> None:
+            if completed.cancelled() or completed.exception() is not None:
+                on_unconfirmed()
+        task.add_done_callback(settled)
+
+    def set_turn_admission_handler(
+        self, handler: Callable[[dict[str, Any]], Awaitable[bool]]
+    ) -> None:
+        self._turn_admission_handler = handler
+
+    async def _prepare_source_admission(self, context: dict[str, Any], *, is_call_current: Callable[[], bool]) -> bool:
+        retry_round = 0
+        while not self._speaker_delivery_closing and is_call_current():
+            try:
+                pending_safety = tuple(self._speaker_delivery_tasks)
+                if pending_safety:
+                    await asyncio.gather(*(asyncio.shield(task) for task in pending_safety))
+                handler = self._turn_admission_handler
+                return await handler(context) if handler is not None else True
+            except _NonRetryableVoiceIngressError as error:
+                raise _VoiceAdmissionError(error.status) from error
+            except (_RetryableVoiceIngressError, aiohttp.ClientError, asyncio.TimeoutError):
+                retry_round += 1
+                logger.warning("[VoiceTask] admission_preflight_retry callSessionId=%s round=%s accepted=false",
+                               self._auth.call_session_id, retry_round)
+                await asyncio.sleep(min(0.25 * (2 ** min(retry_round, 5)), 5.0))
+        return False
 
     async def post_speaker_segment_revisions(
         self,
@@ -3775,44 +3862,60 @@ class LibreChatLLM(llm.LLM):
         session_state: Optional[dict[str, Any]] = None,
     ) -> asyncio.Task[dict[str, Any]]:
         """Supervise retrying delivery so late safety revisions survive caller interruption."""
+        return self._queue_call_ingress_delivery(
+            lambda: self.post_speaker_segment_revisions(revisions, session_state=session_state),
+            operation="revision", required_before_admission=True,
+        )
+
+    def queue_ambient_transcript(self, payload: dict[str, Any]) -> asyncio.Task[dict[str, Any]]:
+        """Retain idempotent guest evidence without holding owner action admission."""
+        return self._queue_call_ingress_delivery(
+            lambda: self.post_ambient_transcript(payload), operation="ambient",
+            required_before_admission=False,
+            deadline_s=max(self._timeout_s + self._preparation_timeout_s, 0.01),
+        )
+
+    def _queue_call_ingress_delivery(
+        self, deliver: Callable[[], Awaitable[dict[str, Any]]], *, operation: str,
+        required_before_admission: bool, deadline_s: Optional[float] = None,
+    ) -> asyncio.Task[dict[str, Any]]:
         async def _deliver_for_call_lifetime() -> dict[str, Any]:
             retry_round = 0
-            while True:
-                try:
-                    return await self.post_speaker_segment_revisions(
-                        revisions,
-                        session_state=session_state,
-                    )
-                except _NonRetryableVoiceIngressError:
-                    raise
-                except asyncio.CancelledError:
-                    raise
-                except Exception as exc:
-                    if self._speaker_delivery_closing:
+            async with asyncio.timeout(deadline_s):
+                while not self._speaker_delivery_closing:
+                    try:
+                        return await deliver()
+                    except _NonRetryableVoiceIngressError:
                         raise
-                    retry_round += 1
-                    logger.warning(
-                        "[VoiceSpeaker] revision_delivery_retry callSessionId=%s round=%s error=%s memoryFailClosed=true",
-                        self._auth.call_session_id,
-                        retry_round,
-                        type(exc).__name__,
-                    )
-                    await asyncio.sleep(min(0.25 * (2 ** min(retry_round, 5)), 5.0))
+                    except asyncio.CancelledError:
+                        raise
+                    except Exception as exc:
+                        if self._speaker_delivery_closing:
+                            raise
+                        retry_round += 1
+                        logger.warning(
+                            "[VoiceSpeaker] %s_delivery_retry callSessionId=%s round=%s error=%s memoryFailClosed=true",
+                            operation, self._auth.call_session_id, retry_round, type(exc).__name__,
+                        )
+                        await asyncio.sleep(min(0.25 * (2 ** min(retry_round, 5)), 5.0))
+            raise asyncio.CancelledError
 
         task = asyncio.create_task(_deliver_for_call_lifetime())
-        self._speaker_delivery_tasks.add(task)
+        # Reuse the existing call owners: safety blocks admission; soft transcript
+        # evidence uses the same retained continuation lifetime but grants no action.
+        tasks = self._speaker_delivery_tasks if required_before_admission else self._background_continuations
+        tasks.add(task)
 
         def _delivery_finished(completed: asyncio.Task[dict[str, Any]]) -> None:
-            self._speaker_delivery_tasks.discard(completed)
+            tasks.discard(completed)
             if completed.cancelled():
                 return
             try:
                 completed.result()
             except Exception as exc:
                 logger.warning(
-                    "[VoiceSpeaker] revision_delivery_failed callSessionId=%s error=%s memoryFailClosed=true",
-                    self._auth.call_session_id,
-                    type(exc).__name__,
+                    "[VoiceSpeaker] %s_delivery_failed callSessionId=%s error=%s memoryFailClosed=true",
+                    operation, self._auth.call_session_id, type(exc).__name__,
                 )
 
         task.add_done_callback(_delivery_finished)
@@ -3932,7 +4035,7 @@ class LibreChatLLM(llm.LLM):
                         error_body = await resp.text()
                         raise _NonRetryableVoiceIngressError(
                             f"LibreChat {operation} post failed: {resp.status} "
-                            f"{_summarize_error_for_log(error_body)}"
+                            f"{_summarize_error_for_log(error_body)}", status=resp.status,
                         )
                     parsed = await resp.json()
                     return parsed if isinstance(parsed, dict) else {}
@@ -4018,9 +4121,13 @@ class LibreChatLLM(llm.LLM):
                                 continue
                             if resp.status >= 400:
                                 error_body = await resp.text()
-                                raise RuntimeError(
+                                error_type = (_RetryableVoiceIngressError if resp.status >= 500
+                                              else _NonRetryableVoiceIngressError)
+                                if resp.status >= 500:
+                                    raise error_type(f"LibreChat ambient ingress temporarily unavailable: {resp.status}")
+                                raise error_type(
                                     f"LibreChat ambient ingress failed: {resp.status} "
-                                    f"{_summarize_error_for_log(error_body)}"
+                                    f"{_summarize_error_for_log(error_body)}", status=resp.status,
                                 )
                             parsed = await resp.json()
                             result = parsed if isinstance(parsed, dict) else {}
@@ -4125,10 +4232,13 @@ class _LibreChatLLMStream(llm.LLMStream):
         self._timeout_s = timeout_s
         self._request_id = f"lc_{uuid.uuid4().hex[:12]}"
         self._previous_presentation = self._llm_impl._presentation_coordinator._current
+        self._previous_admission = self._llm_impl._admission_tail
         self._presentation = self._llm_impl._presentation_coordinator.begin_stable(
             source_event_id=_voice_source_event_id(chat_ctx, auth.call_session_id),
             presentation_ref=self._request_id,
         )
+        if _extract_last_user_text(chat_ctx):
+            self._llm_impl._admission_tail = self._presentation
 
     async def _run(self) -> None:
         user_text = _extract_last_user_text(self._chat_ctx)
@@ -4183,6 +4293,29 @@ class _LibreChatLLMStream(llm.LLMStream):
         admission_deferred = False
         listen_only = False
 
+        def offer_admission_notice(error: Exception) -> None:
+            # Use this stream's existing display/TTS path. A pending receipt is
+            # unconfirmed, and must never cause an action replay or a success claim.
+            if (not self._llm_impl._admission_notice_allowed()
+                    or self._llm_impl._speaker_delivery_closing or listen_only
+                    or self._llm_impl._auth.call_session_id != self._auth.call_session_id
+                    or not self._llm_impl._presentation_coordinator.is_current(self._presentation)):
+                return
+            definite_non_admission = (isinstance(error, aiohttp.ClientConnectorError)
+                                      or getattr(error, "definite_non_admission", False) is True)
+            if definite_non_admission:
+                notice = "The request was not sent. Please say it again."
+            elif isinstance(error, _VoiceAdmissionError) and error.status in {401, 403}:
+                notice = "This call's connection is no longer authorized. Please reconnect the call."
+            else:
+                notice = "The connection was interrupted. I couldn't confirm this request."
+            # Courier notices are not delivered canonical Main output.
+            self._event_ch.send_nowait(ChatChunk(id=self._request_id,
+                delta=ChoiceDelta(role="assistant", content=notice)))
+            logger.warning("[VoiceTask] admission_unavailable requestId=%s error=%s status=%s acceptance=%s callContinues=true",
+                self._request_id, type(error).__name__, getattr(error, "status", ""),
+                "not_accepted" if definite_non_admission else "unconfirmed")
+
         log_latency = _should_log_latency()
         started_at = time.time()
         post_sent_at: Optional[float] = None
@@ -4235,7 +4368,7 @@ class _LibreChatLLMStream(llm.LLMStream):
                     # Waiting for an older receipt must not consume this input's
                     # transport budget or erase its call-owned admission task.
                     await self._llm_impl._await_previous_presentation_admission(
-                        self._previous_presentation, self._presentation,
+                        self._previous_admission, self._presentation,
                     )
                     if (self._llm_impl._speaker_delivery_closing
                             or self._llm_impl._auth.call_session_id != self._auth.call_session_id):
@@ -4246,6 +4379,16 @@ class _LibreChatLLMStream(llm.LLMStream):
                         asyncio.timeout(admission_budget_s if admission_budget_s > 0 else None),
                         aiohttp.ClientSession(timeout=admission_timeout) as admission_session,
                     ):
+                        retry_deadline = asyncio.get_running_loop().time() + max(
+                            0.001, admission_budget_s - min(0.1, admission_budget_s * 0.1))
+                        if not await self._llm_impl._prepare_source_admission(speaker_post_context,
+                                is_call_current=lambda: (not self._llm_impl._speaker_delivery_closing
+                                    and self._llm_impl._auth.call_session_id == self._auth.call_session_id)):
+                            listen_only = True
+                            return
+                        if (self._llm_impl._speaker_delivery_closing
+                                or self._llm_impl._auth.call_session_id != self._auth.call_session_id):
+                            return
                         async def post_receipt() -> dict[str, Any]:
                             nonlocal stream_id, task_id, post_sent_at, listen_only
                             hop_trace.record("gateway_dispatch", time.time() * 1000.0)
@@ -4269,6 +4412,7 @@ class _LibreChatLLMStream(llm.LLMStream):
                                     **speaker_post_context,
                                     "sourceEventId": self._presentation.source_event_id,
                                 },
+                                retry_deadline=retry_deadline,
                                 is_call_current=lambda: (
                                     not self._llm_impl._speaker_delivery_closing
                                     and self._llm_impl._auth.call_session_id == self._auth.call_session_id
@@ -4370,7 +4514,8 @@ class _LibreChatLLMStream(llm.LLMStream):
                                 and self._llm_impl._auth.call_session_id == self._auth.call_session_id):
                             # Pending input was recoverable; an actual courier
                             # failure still follows the SDK's existing error path.
-                            self._emit_error(error, recoverable=False)
+                            self._emit_error(error, recoverable=isinstance(
+                                error, (_VoiceAdmissionError, aiohttp.ClientError, TimeoutError)))
                         if not continuation_started:
                             self._llm_impl.schedule_trace_terminal(hop_trace, stream_terminal=True)
 
@@ -4394,8 +4539,10 @@ class _LibreChatLLMStream(llm.LLMStream):
                             admission_deferred = True
                             # End only the foreground stream. SDK unrecoverable
                             # counters must not close a call whose input is pending.
-                            self._emit_error(TimeoutError("Voice input admission remains pending."),
-                                             recoverable=True)
+                            pending_error = TimeoutError("Voice input admission remains pending.")
+                            # The original source still retries. Do not tell the
+                            # user to repeat it or buffer stale speech for later.
+                            self._emit_error(pending_error, recoverable=True)
                             return
                         raise
                 if listen_only or self._llm_impl._speaker_delivery_closing:
@@ -4564,6 +4711,7 @@ class _LibreChatLLMStream(llm.LLMStream):
                                 stream_error = (
                                     f"LibreChat voice stream failed: status {sse_resp.status}"
                                 )
+                                stream_error_code = "voice_core_unavailable"
                                 logger.warning(
                                     "[LibreChatLLM] Voice stream HTTP error status=%s request_id=%s stream_id=%s attempt=%s",
                                     sse_resp.status,
@@ -4851,6 +4999,12 @@ class _LibreChatLLMStream(llm.LLMStream):
                             type(e).__name__,
                         )
                 # === VIVENTIUM END ===
+            except (_VoiceAdmissionError, aiohttp.ClientError, TimeoutError) as error:
+                # Keep the call alive after host transport failure. Never replay an unknown
+                # POST here: Core retains accepted inputs under the original source identity.
+                if stream_id:
+                    raise
+                offer_admission_notice(error)
             except asyncio.CancelledError:
                 admission_interrupted = True
                 preserve_interrupted_task()

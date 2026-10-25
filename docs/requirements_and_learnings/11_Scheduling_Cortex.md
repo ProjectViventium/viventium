@@ -16,6 +16,20 @@ channel presentation. Its source configuration is `integrations.glasshive.schedu
 reuse the normal runtime compiler. Enabling that adapter does not migrate or delete Cortex rows.
 Cortex-only restrictions and defaults below do not restrict the independent xPerfect path.
 
+## Terminal occurrence recovery
+
+A finished occurrence is never executed again to repair a stale schedule cursor. If restart
+recovery already closed its run but left that occurrence due, advance the unchanged task once
+from that occurrence's due time using the existing next-run calculation. One-time tasks become
+inactive. The next tick uses the normal latest-eligible-occurrence and misfire policy, so today's
+eligible recurring run is not silently skipped and a stale run is not replayed. Its ledger names
+the occurrence actually dispatched or skipped. Keep the finished run's actual failure, delivery
+result and history; do not relabel it as missed or completed. A still-pending task status bound
+to that exact occurrence takes its terminal status and actual error. An atomic check of owner,
+exact occurrence, terminal receipt, computed current definition, task update and cursor prevents
+this repair from overwriting a concurrent edit, Stop, new occurrence or another recovery. A legacy
+stored fingerprint alone must not prevent repair of an otherwise unchanged definition.
+
 ## Executive Summary
 
 The dedicated Scheduling MCP server:

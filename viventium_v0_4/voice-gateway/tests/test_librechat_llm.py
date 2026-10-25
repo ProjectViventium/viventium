@@ -8890,7 +8890,7 @@ class TestOrderedAdmissionDeadlineRecovery(unittest.IsolatedAsyncioTestCase):
                     streams.append(current)
                     async with current:
                         chunks = [item async for item in current]
-                    self.assertEqual(chunks, [])
+                    self.assertEqual([item.delta.content for item in chunks], [])
                 self._test_deadline_trace = {"order": list(order), "requests": list(requests),
                     "foreground_pending_errors": len(sdk_errors),
                     "admission_done": [item._presentation.admission_task.done() for item in streams]}
@@ -8934,9 +8934,9 @@ class TestOrderedAdmissionDeadlineRecovery(unittest.IsolatedAsyncioTestCase):
                     self.assertEqual(llm.ack_delivery.await_count, len(streams)-1-missing)
                     if middle_failure:
                         actual_errors=[event for event in sdk_errors if not event.recoverable]
-                        self.assertEqual(len(actual_errors),1)
-                        self.assertIsInstance(actual_errors[0].error,RuntimeError)
-                        self.assertEqual(sdk_session._llm_error_counts,1)
+                        self.assertEqual(actual_errors, [])
+                        self.assertTrue(all(event.recoverable for event in sdk_errors))
+                        self.assertEqual(sdk_session._llm_error_counts, 0)
                         self.assertIsNone(sdk_session._closing_task)
                 else:
                     self.assertEqual(len(requests), 1)
@@ -8964,7 +8964,7 @@ class TestOrderedAdmissionDeadlineRecovery(unittest.IsolatedAsyncioTestCase):
     async def test_four_pending_deadlines_do_not_close_installed_sdk_or_cancel_sources(self):
         await self._held_prior(four_pending=True)
 
-    async def test_deferred_source_actual_transport_failure_stays_nonrecoverable(self):
+    async def test_deferred_source_host_failure_keeps_call_and_original_source(self):
         await self._held_prior(middle_failure=True)
 
 
@@ -9266,3 +9266,85 @@ class TestCallPreparationAdmission(unittest.IsolatedAsyncioTestCase):
                 await stream.aclose()
             await llm.close_background_continuations()
             await runner.cleanup()
+
+
+class TestHostAdmissionFailureKeepsCall(unittest.IsolatedAsyncioTestCase):
+    async def test_repeated_host_rejections_are_spoken_once_without_llm_errors_or_reposts(self):
+        from aiohttp import web
+        requests = []
+        async def handler(request):
+            requests.append(await request.json())
+            return web.json_response({"code": "service_unavailable"}, status=503)
+        fixture = TestCallPreparationAdmission()
+        runner, origin = await fixture._server(handler)
+        agent = LibreChatLLM(origin=origin, auth=LibreChatAuth(call_session_id="synthetic-call", call_secret="synthetic"))
+        errors = []
+        agent.on("error", errors.append)
+        try:
+            for i in range(5):
+                stream = agent.chat(chat_ctx=ChatContext(items=[ChatMessage(id=f"input-{i}", role="user", content=["Hello."])]))
+                try:
+                    chunks = [chunk.delta.content async for chunk in stream if chunk.delta.content]
+                    self.assertEqual(chunks, ["The connection was interrupted. I couldn't confirm this request."])
+                finally:
+                    await stream.aclose()
+            self.assertEqual(len(requests), 5)
+            self.assertEqual(errors, [])
+        finally:
+            await agent.aclose()
+            await runner.cleanup()
+
+    async def test_connection_refused_retains_input_until_budget_without_provider_claim(self):
+        import socket
+        with socket.socket() as sock:
+            sock.bind(("127.0.0.1", 0))
+            origin = "http://127.0.0.1:" + str(sock.getsockname()[1])
+        agent = LibreChatLLM(origin=origin, auth=LibreChatAuth(call_session_id="synthetic-call", call_secret="synthetic"), timeout_s=0.03)
+        stream = agent.chat(chat_ctx=ChatContext(items=[ChatMessage(id="input", role="user", content=["Hello."])]))
+        try:
+            chunks = [chunk.delta.content async for chunk in stream if chunk.delta.content]
+            self.assertEqual(chunks, ["The request was not sent. Please say it again."])
+        finally:
+            await stream.aclose()
+            await agent.aclose()
+
+    def test_host_stream_503_is_not_called_provider_rate_limit(self):
+        self.assertEqual(_select_stream_error_message("LibreChat voice stream failed: status 503", code="voice_core_unavailable"),
+            "I'm having trouble reaching the service right now. Please try again.")
+
+
+class TestDeferredHostAdmissionNotice(unittest.IsolatedAsyncioTestCase):
+    async def test_foreground_deadline_is_silent_while_original_admission_still_retries(self):
+        from librechat_llm import _VoiceAdmissionError
+        release = asyncio.Event()
+        requests = []
+        async def late_receipt(*args, **kwargs):
+            requests.append(kwargs["body"])
+            raise _VoiceAdmissionError(503)
+        agent = LibreChatLLM(origin="http://example.test", auth=LibreChatAuth(
+            call_session_id="synthetic-call", call_secret="synthetic"), timeout_s=0.02)
+        async def wait_for_prior(*args, **kwargs):
+            await release.wait()
+        agent._await_previous_presentation_admission = AsyncMock(side_effect=wait_for_prior)
+        errors = []
+        agent.on("error", errors.append)
+        stream = None
+        try:
+            with patch("librechat_llm._post_voice_admission_receipt", side_effect=late_receipt):
+                stream = agent.chat(chat_ctx=ChatContext(items=[ChatMessage(
+                    id="pending-source", role="user", content=["Hello."])]))
+                chunks = [chunk.delta.content async for chunk in stream if chunk.delta.content]
+                self.assertEqual(chunks, [])
+                self.assertFalse(stream._presentation.admission_task.done())
+                self.assertEqual(requests, [])
+                release.set()
+                await asyncio.gather(stream._presentation.admission_task, return_exceptions=True)
+                await asyncio.sleep(0)
+                self.assertEqual(len(requests), 1)
+                self.assertTrue(all(error.recoverable for error in errors))
+                self.assertEqual(len(chunks), 0)
+        finally:
+            release.set()
+            if stream is not None:
+                await stream.aclose()
+            await agent.aclose()

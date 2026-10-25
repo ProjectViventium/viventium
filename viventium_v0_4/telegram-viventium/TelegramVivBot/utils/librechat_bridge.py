@@ -1570,6 +1570,18 @@ def _parallel_work_not_ready_start_error(error: Exception) -> bool:
     )
 
 
+def _ingress_definitely_not_retained(error: Exception) -> bool:
+    """Only the pre-write source-order rejection proves no input was retained."""
+    if not isinstance(error, httpx.HTTPStatusError) or error.response.status_code != 503:
+        return False
+    try:
+        payload = error.response.json()
+    except Exception:
+        return False
+    return (isinstance(payload, dict) and payload.get("observed") is False
+            and payload.get("error") == "durable_source_order_required")
+
+
 def _start_chat_error_safe_to_retry(error: Exception) -> bool:
     return isinstance(
         error,
@@ -1581,7 +1593,7 @@ def _start_chat_error_message(error: Exception) -> str:
     if _parallel_work_not_ready_start_error(error):
         return "Parallel work is still starting. This Telegram request was not accepted; please retry in a moment."
 
-    if _start_chat_error_safe_to_retry(error):
+    if _start_chat_error_safe_to_retry(error) or _ingress_definitely_not_retained(error):
         return "Viventium's local API is starting or unavailable. Please retry in a moment."
 
     if isinstance(error, httpx.ReadTimeout):
@@ -2184,15 +2196,21 @@ class LibreChatBridge:
         self._cortex_ack_dispatcher_task = None
 
     async def _run_cortex_ack_dispatcher(self) -> None:
+        failures = 0
         while True:
             try:
                 await self._dispatch_cortex_delivery_cycle()
+                if failures:
+                    logger.info("Cortex Telegram dispatcher dependency recovered after %s failures", failures)
+                    failures = 0
                 await asyncio.sleep(2.0)
             except asyncio.CancelledError:
                 raise
             except Exception as exc:
-                logger.warning("Cortex Telegram acknowledgement dispatcher failed: %s", type(exc).__name__)
-                await asyncio.sleep(2.0)
+                failures += 1
+                if failures == 1:
+                    logger.warning("Cortex Telegram acknowledgement dispatcher unavailable: %s", type(exc).__name__)
+                await asyncio.sleep(min(60.0, 2.0 * (2 ** min(failures - 1, 5))))
 
     @staticmethod
     def _validate_cortex_authority(

@@ -1171,6 +1171,8 @@ def test_helper_install_rolls_back_owned_bundle_after_post_activation_failure(
         "VIVENTIUM_HELPER_LAUNCH_AGENT_DIR": str(locked_launch_agents),
     }
     app_support = fake_home / "Library" / "Application Support" / "Viventium"
+    app_support.mkdir(parents=True)
+    (app_support / "helper-config.json").write_text(json.dumps({"launchAtLogin": True}))
     try:
         completed = subprocess.run(
             [
@@ -1287,8 +1289,10 @@ def test_install_preserves_shell_escaped_helper_history_entries(tmp_path: Path) 
     helper_config = json.loads((app_support / "helper-config.json").read_text(encoding="utf-8"))
     assert helper_config["appSupportDir"] == str(app_support)
     launch_agent = plistlib.loads(
-        (fake_home / "Library" / "LaunchAgents" / "ai.viventium.helper.plist").read_bytes()
+        (app_support / "runtime" / "helper-supervisor.plist").read_bytes()
     )
+    assert helper_config["launchAtLogin"] is False
+    assert not (fake_home / "Library" / "LaunchAgents" / "ai.viventium.helper.plist").exists()
     assert launch_agent["WorkingDirectory"] == str(fake_home)
     assert launch_agent["StandardOutPath"] == str(app_support / "logs" / "viventium-helper.log")
 
@@ -2084,12 +2088,15 @@ def test_helper_source_autostarts_stack_on_launch() -> None:
     assert 'self.showInStatusBarEnabled = self.config?.showInStatusBar ?? true' in source
     assert "private func activateHelperLifecycle() {" in source
     assert "private func presentStatusBarRestorePrompt() {" in source
-    assert "private static func saveConfig(_ config: HelperConfig) -> Bool" in source
+    assert "private static func saveConfig(" in source
+    assert "supervisionWrite: HelperSupervisionWrite = .preserve" in source
     assert 'guard let self, !self.showInStatusBarEnabled else { return }' in source
     assert 'self.presentStatusBarRestorePrompt()' in source
     assert 'self.log("Status-bar helper enabled")' in source
-    assert 'self.log("Status-bar helper hidden")' in source
-    assert 'Run `bin/viventium status-bar on` whenever you want to bring the menu-bar icon back.' in source
+    assert 'self.log("Status-bar icon hidden; runtime supervision remains active")' in source
+    visibility = source.split("func setShowInStatusBar(", 1)[1].split("func setLaunchAtLogin(", 1)[0]
+    assert "NSApplication.shared.terminate" not in visibility
+    assert "self.setLaunchAtLogin(false)" not in visibility
     assert "self.stopStack(terminateWhenDone: true)" in quit_section
     assert "NSApplication.shared.terminate(nil)" not in quit_section
     assert 'self.log("Quitting helper")' not in quit_section
@@ -2407,7 +2414,8 @@ def test_helper_package_stays_compatible_with_clean_intel_command_line_tools() -
     assert 'if [[ ${#helper_args[@]} -gt 0 ]]; then' in cli_source
     assert 'launch_macos_helper_app() {' in cli_source
     assert 'local helper_app_bundle="${VIVENTIUM_HELPER_APP_BUNDLE:-$HOME/Applications/Viventium.app}"' in cli_source
-    assert '/usr/bin/open -g "$helper_app_bundle" >/dev/null 2>&1 || true' in cli_source
+    assert 'run_macos_helper_installer ensure-running' in cli_source
+    assert '"KeepAlive": {"SuccessfulExit": False}' in install_script
     assert 'if [[ "${1:-}" == "--help" || "${1:-}" == "-h" ]]; then' in cli_source
     assert 'subcommand_usage install' in cli_source
     assert 'export VIVENTIUM_CLI_LOCK_HELD=0' in cli_source
@@ -2507,7 +2515,8 @@ def test_helper_uses_easy_install_required_surface_health_contract() -> None:
     assert 'values["VIVENTIUM_INSTALL_EXPERIENCE"] != "express"' in source
     assert 'let sandpackPort = Int(values["SANDPACK_BUNDLER_LISTEN_PORT"] ?? "") ?? 3191' in source
     assert 'values["SANDPACK_BUNDLER_URL"] != nil' in source
-    assert "let apiReady = nativeReady && apiSurfaceReady && artifactRuntimeReady" in source
+    assert "let apiReady = nativeReady && apiSurfaceReady" in source
+    assert "optionalSurfacesReady: optionalSurfacesReady && artifactRuntimeReady" in source
     assert "if runtime.requiresPlayground" in source
 def test_prebuilt_helper_source_digest_marker_matches_current_sources() -> None:
     helper_dir = HELPER_PACKAGE.parent
@@ -2931,7 +2940,7 @@ final class Probe {
     var stackLaunchTask: Task<Void,Never>?
     var stackLaunchInProgress = false
     var busyStateGraceDeadline: Date?
-    func persistRuntimeSupervision() {}
+    @discardableResult func persistRuntimeSupervision(explicitIntent: Bool = false) -> Bool { true }
 ''' + state + "\n" + status + "\n" + intent + "\n" + cancel + r'''
 }
 let probe = Probe()
@@ -2990,7 +2999,8 @@ actor Gate {
     var runtimeSupervision = RuntimeSupervisionState.defaultRunning
     let runtimeSupervisionStableHealthSeconds: TimeInterval = 300
     var writes = 0
-    func persistRuntimeSupervision() { writes += 1 }
+    @discardableResult func persistRuntimeSupervision() -> Bool { writes += 1; return true }
+    func refreshRuntimeDesiredState() { writes += 1 }
     func recordSupervisedLaunchFailure() { writes += 1 }
     func refreshState(force: Bool) { writes += 1 }
     func log(_ message: String) { writes += 1 }

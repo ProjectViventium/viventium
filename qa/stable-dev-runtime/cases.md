@@ -314,3 +314,41 @@ Supporting release regressions: `tests/release/test_helper_hash_consumers.py`, `
   and prove deliberate Stop stays stopped. Synthetic checks do not prove login/reboot recovery.
 - Last run: NOT RUN — cataloged 2026-10-16; real helper recovery and Stop acceptance
   remain separate until exercised on the candidate. Existing implementation checks are supporting evidence.
+
+## Case SDR-018: Complete runtime ownership and recovery
+
+- **Happy path:** Repeated supported Start/Launch keeps one current owner and does no work while
+  healthy. A fresh owned startup claim blocks competing startup. The installed helper and source
+  binding match the candidate; a hidden menu icon retains the same supervision timer.
+- **Failure and recovery:** In an isolated named runtime, lose one owned process and its watchdog
+  while other owned processes survive. One scoped recovery restores all required surfaces. Repeat
+  with a live watchdog: it retains recovery without a wider restart. Lose Redis, then recover it;
+  Core repairs the dependency or uses explicit existing degraded conversation mode. Optional
+  artifact failure does not restart chat. HTTP503 is unready but remains live for Stop checks.
+- **Intent and persistence:** A later Stop defeats an earlier health/launch completion. Repeated
+  Start clears backoff even when saved state already says running. Reopen after hidden UI; test
+  both Start at Login choices. Unexpected helper death restarts through the owned native OS job;
+  intentional Quit exits cleanly and stays down. Restore with explicit Start.
+  While Native setup awaits health, issue Stop, repeat Start, or change a preference before a
+  forced startup failure: rollback retains that later request. The unchanged and health-only
+  controls restore prior bytes; foreign/deleted binding blocks rollback before any owner action.
+- **Negative boundaries:** Foreign PID/source/bundle/job, stopped intent, external endpoint,
+  provider/auth/network errors and linked config/log files do not authorize broader stop or
+  replacement. Unrelated runtimes and standalone workers keep their identities.
+- **Diagnostics:** Nonempty prior logs survive restart within the bounded private generation
+  limit; empty startup logs do not evict useful failures. Source, built, installed and active
+  helper identity agree before acceptance. Refused linked log/history uses the private bounded
+  alternate log without modifying evidence; an unsafe parent remains blocked. For helper config
+  storage I/O failure, only a fresh trusted same-running-revision permits bounded memory retry;
+  unsafe authority or newer Stop blocks it. Deliberate uninstall remains absent on normal launch.
+  Reject malformed, unavailable, linked, wrong-owner or writable config with a typed private
+  reason and the visible Configuration needs repair status; never weaken checks to start.
+  Confirm actual browser/Telegram/Voice response after
+  recovery and deliberate Stop through the affected user surface.
+- **Automated support:** `tests/release/test_runtime_reliability_recovery.py`, `test_helper_runtime_intent.py`,
+  `test_macos_helper_supervision.py`, `test_macos_helper_install.py`, `test_cli_upgrade.py`,
+  `test_detached_librechat_api_watchdog.py`, `test_native_stack_helpers.py`.
+- **Acceptance:** NOT RUN for this source batch. Deterministic tests do not substitute for the
+  installed OS-job, hidden UI, recovery and real-channel checks.
+
+Recovery checkpoint and regression lessons: [owned runtime and channel recovery](reports/2026-10-24-channel-recovery.md).

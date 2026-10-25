@@ -301,6 +301,28 @@ Router lease note:
   cannot take down localhost startup
 - if the router does not support UPnP/NAT-PMP at all, or refuses renewal, manual forwarding is still
   the fallback
+- lease refresh checks the router's current public address before any mapping write, even when
+  the LAN address has not changed. A changed or unavailable public address records a typed
+  `public_edge_wan_changed` or `public_edge_wan_unavailable` error in the existing state; status
+  reports unhealthy while preserving process and mapping ownership for an explicit stop.
+- startup rechecks that address before it reuses or retires a saved edge with managed mappings;
+  local listener health alone must not hide a changed WAN address.
+- startup may use the existing public-IP discovery fallback when UPnP observation is unavailable.
+  A confirmed unchanged WAN address and healthy existing local edge permit reuse and clear only
+  a transient `public_edge_wan_unavailable` error. An observed mismatch still blocks reuse.
+  This observation fallback never authorizes mapping writes or LAN remapping; those require live
+  router evidence and ownership checks. Manual forwarding with no managed mappings is unchanged.
+- an unresolved public-address error must not trigger automatic teardown or replacement. Restore
+  the recorded public address, or update public DNS and the canonical LiveKit media address and
+  then stop and start Viventium. Refresh clears only its own public-address error after the
+  recorded WAN address is verified, all mapping renewals succeed, and local edge health passes.
+  This proves recovery of the guarded prerequisites; off-LAN browser and media acceptance remains
+  separate. This helper does not update DNS records.
+- for confirmed local media behind this edge, an explicit public LiveKit node address must match
+  the verified router WAN address. Fresh startup rejects a mismatch before mapping or process
+  writes; reuse and refresh retain the full owned state with a typed error. Private or assigned
+  interface addresses and an explicitly separate managed LiveKit API endpoint retain their
+  existing behavior. This guard does not infer the address of a hosted media service.
 
 Hostname guidance:
 

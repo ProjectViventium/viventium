@@ -6389,6 +6389,60 @@ def _durable_cortex_telegram_delivery():
 
 
 @pytest.mark.asyncio
+async def test_cached_no_response_main_keeps_late_cortex_own_receipt(monkeypatch, tmp_path):
+    from TelegramVivBot.utils import librechat_bridge as module
+    monkeypatch.setenv("VIVENTIUM_DELIVERY_ACK_ENDPOINT", "/api/viventium/interactions/delivery-ack")
+    monkeypatch.setenv("VIVENTIUM_TELEGRAM_INTERACTION_ADAPTER_SECRET", "synthetic-secret")
+    bridge = _make_bridge()
+    bridge._cortex_ack_store = _CortexTelegramAckStore(tmp_path / "acks.sqlite3")
+    delivery = _durable_cortex_telegram_delivery()
+    stream_id = delivery["streamId"]
+    sent, acknowledgements = [], []
+    class Client:
+        def __init__(self, **kwargs): pass
+        async def __aenter__(self): return self
+        async def __aexit__(self, *args): return False
+        async def post(self, url, *, json, headers):
+            acknowledgements.append(json)
+            return httpx.Response(200, json={"acknowledged": True})
+    monkeypatch.setattr(module.httpx, "AsyncClient", Client)
+    async def current(**kwargs): return True
+    async def authorize(item):
+        return {**item["cortexClaim"], "presentationLeaseToken": "lease-7"}
+    async def on_message(chat_id, text, **kwargs):
+        await kwargs["before_side_effect"]()
+        sent.append((chat_id, text))
+        return ["9001"]
+    monkeypatch.setattr(bridge, "source_order_is_current", current)
+    monkeypatch.setattr(bridge, "_authorize_cortex_delivery", authorize)
+    bridge.set_on_message_callback(on_message)
+    bridge._set_stream_identity(stream_id=stream_id,
+        telegram_chat_id=delivery["telegramChatId"], telegram_user_id=delivery["telegramUserId"],
+        telegram_username="",
+        telegram_message_id=delivery["telegramMessageId"], telegram_message_thread_id="77",
+        logical_turn_id="turn-7", logical_turn_revision=2)
+    bridge._response_message_ids[stream_id] = "parent-7"
+    bridge._conversation_by_stream[stream_id] = "conversation-7"
+    bridge._remember_stream_text(stream_id, "{NTA}", brief_main_reply=True)
+    assert await bridge.ack_delivery_status("turn-7", 2, "committed", "", []) == "recorded"
+    async def state(**kwargs):
+        return {"canonicalText": "{NTA}", "cortexParts": [],
+            "followUp": {"messageId": "follow-up-7", "text": delivery["text"]},
+            "insightDeliveries": [{"deliveryId": "delivery-7", "status": "pending"}]}
+    monkeypatch.setattr(bridge, "_fetch_followup_state", state)
+    await bridge._poll_for_followup(stream_id=stream_id, chat_id=delivery["telegramChatId"])
+    assert not sent and not bridge._has_followup_sent(stream_id)
+    assert await bridge._deliver_cortex_delivery(delivery) is True
+    await bridge._poll_for_followup(stream_id=stream_id, chat_id=delivery["telegramChatId"])
+    assert sent == [(-100123, delivery["text"])]
+    assert len(acknowledgements) == 2
+    assert acknowledgements[0] == {"logical_turn_id": "turn-7", "revision": 2, "state": "committed"}
+    assert acknowledgements[1]["cortex_presentation"]["messageId"] == "follow-up-7"
+    assert acknowledgements[1]["presentation_refs"] == ["telegram:-100123:9001"]
+    assert bridge._cortex_ack_store.pending_count() == 0
+
+
+@pytest.mark.asyncio
 async def test_durable_cortex_dispatch_sends_once_with_topic_and_canonical_ack(monkeypatch):
     bridge = _make_bridge()
     delivery = _durable_cortex_telegram_delivery()
@@ -9000,3 +9054,43 @@ async def test_host_capacity_foreground_error_is_actionable_and_never_spoken():
     assert event["text"] == "The computer running Viventium is low on disk space and could not start this reply. Free some space, then retry."
     assert event["speak"] is False
     assert event["error_class"] == "host_capacity"
+
+
+@pytest.mark.asyncio
+async def test_cortex_cycle_keeps_valid_delivery_after_item_transport_failure(monkeypatch):
+    import copy
+    bridge = _make_bridge()
+    first = _durable_cortex_telegram_delivery()
+    second = copy.deepcopy(first)
+    second["streamId"] = "second-cortex-stream"
+    second["text"] = "Another useful result."
+    sent, statuses = [], []
+    async def noop(*args, **kwargs):
+        return None
+    async def claim(**kwargs):
+        return [first, second]
+    async def current(**kwargs):
+        return True
+    async def authorize(item):
+        return {**item["cortexClaim"], "presentationLeaseToken": "synthetic-lease"}
+    async def on_message(chat_id, text, **kwargs):
+        await kwargs["before_side_effect"]()
+        sent.append(text)
+        if text == first["text"]:
+            raise RuntimeError("Synthetic item transport failure")
+        return ["9002"]
+    async def mark(item, status):
+        statuses.append((item["streamId"], status))
+        return True
+    async def acknowledge(*args, **kwargs):
+        return "recorded"
+    bridge.set_on_message_callback(on_message)
+    monkeypatch.setattr(bridge, "_drain_cortex_acknowledgements", noop)
+    monkeypatch.setattr(bridge, "_claim_cortex_deliveries", claim)
+    monkeypatch.setattr(bridge, "source_order_is_current", current)
+    monkeypatch.setattr(bridge, "_authorize_cortex_delivery", authorize)
+    monkeypatch.setattr(bridge, "_mark_cortex_delivery_status", mark)
+    monkeypatch.setattr(bridge, "ack_delivery_status", acknowledge)
+    assert await bridge._dispatch_cortex_delivery_cycle() == 2
+    assert sent == [first["text"], second["text"]]
+    assert statuses == [(first["streamId"], "delivery_unknown")]

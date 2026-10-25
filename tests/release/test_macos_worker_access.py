@@ -4,6 +4,8 @@ import json
 import os
 import plistlib
 import subprocess
+
+import pytest
 from pathlib import Path
 
 
@@ -101,6 +103,7 @@ def _owned_app(path: Path):
 
 
 def _install_fixture(tmp_path, monkeypatch, *, no_start=False, no_helper=False):
+    monkeypatch.syspath_prepend(str(ROOT / "scripts/viventium"))
     import argparse
     from contextlib import contextmanager
     runtime = _native_runtime()
@@ -285,6 +288,7 @@ def test_native_successful_health_cannot_complete_a_superseded_install(tmp_path,
 
 
 def _installed_lifecycle_fixture(tmp_path, monkeypatch):
+    monkeypatch.syspath_prepend(str(ROOT / "scripts/viventium"))
     import argparse
     from contextlib import contextmanager
     runtime = _native_runtime()
@@ -384,3 +388,73 @@ def test_native_lifecycle_preserves_a_foreign_helper_binding(tmp_path, monkeypat
             operation(args)
         assert config_path.read_bytes() == before
     assert events == []
+
+
+@pytest.mark.parametrize("change", ["stopped", "running", "settings", "health", "unchanged"])
+def test_native_install_failure_preserves_later_intent_and_settings(tmp_path, monkeypatch, change):
+    runtime, args, _, support, home, events, _ = _install_fixture(tmp_path, monkeypatch)
+    target = home / "Applications/Viventium.app"
+    _owned_app(target)
+    (target / "prior.txt").write_text("prior")
+    monkeypatch.setattr(runtime, "helper_processes", lambda _app: {123: "synthetic"})
+    path = support / "helper-config.json"
+    prior = {"repoRoot": "/public/prior", "appSupportDir": str(support), "nativeRuntime": True,
+             "futurePreference": "prior", "runtimeSupervision": {"desiredState": "running", "intentRevision": "prior-start"}}
+    previous = json.dumps(prior, indent=3) + "\n"
+    runtime.write_atomic(path, previous)
+    observed = {}
+
+    def unavailable(_args):
+        current = json.loads(path.read_text())
+        if change in {"stopped", "running"}:
+            runtime.set_helper_desired_state(support, current, change)
+            current = json.loads(path.read_text())
+            observed["revision"] = current["runtimeSupervision"]["intentRevision"]
+        if change == "settings":
+            current["futurePreference"] = "newer"
+            runtime.write_atomic(path, json.dumps(current))
+        if change == "health":
+            current["runtimeSupervision"]["consecutiveLaunchAttempts"] = 3
+            runtime.write_atomic(path, json.dumps(current))
+        raise runtime.RuntimeError_("synthetic health failure")
+
+    monkeypatch.setattr(runtime, "health", unavailable)
+    with pytest.raises(runtime.RuntimeError_, match="synthetic health failure"):
+        runtime.install(args)
+    restored = json.loads(path.read_text())
+    assert (target / "prior.txt").read_text() == "prior"
+    assert restored["repoRoot"] == prior["repoRoot"]
+    assert restored["futurePreference"] == ("newer" if change == "settings" else "prior")
+    if change in {"stopped", "running"}:
+        assert restored["runtimeSupervision"]["desiredState"] == change
+        assert restored["runtimeSupervision"]["intentRevision"] == observed["revision"]
+    elif change in {"health", "unchanged"}:
+        assert path.read_text() == previous
+    assert events.count("open-helper") == (1 if change == "stopped" else 2), "New Stop must suppress predecessor reopening"
+
+
+@pytest.mark.parametrize("change", ["foreign", "deleted"])
+def test_native_install_failure_refuses_newer_helper_binding_before_owner_actions(tmp_path, monkeypatch, change):
+    runtime, args, _, support, home, events, _ = _install_fixture(tmp_path, monkeypatch)
+    path = support / "helper-config.json"
+    current_bytes = []
+
+    def changed(_args):
+        if change == "foreign":
+            current = json.loads(path.read_text())
+            current["repoRoot"] = "/public/newer"
+            runtime.write_atomic(path, json.dumps(current))
+            current_bytes.append(path.read_bytes())
+        else:
+            path.unlink()
+        raise runtime.RuntimeError_("synthetic health failure")
+
+    monkeypatch.setattr(runtime, "health", changed)
+    with pytest.raises(runtime.RuntimeError_, match="changed during setup"):
+        runtime.install(args)
+    assert events == ["open-helper"]
+    assert (home / "Applications/Viventium.app").is_dir()
+    if change == "foreign":
+        assert path.read_bytes() == current_bytes[0]
+    else:
+        assert not path.exists()

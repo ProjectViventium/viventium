@@ -740,6 +740,7 @@ start_mongo() {
   mongod_binary="$(select_mongod_binary)" || return 1
   ensure_soft_open_file_limit 65536
   echo "[native] Starting MongoDB on ${MONGO_HOST}:${MONGO_PORT}"
+  MONGO_LOG_FILE="$(viventium_preserve_runtime_log "$MONGO_LOG_FILE")" || return 1
   nohup "$mongod_binary" \
     --bind_ip "$MONGO_HOST" \
     --port "$MONGO_PORT" \
@@ -857,7 +858,7 @@ archive_incompatible_meili_data() {
 start_meili() {
   start_meili_process() {
     rm -f "$MEILI_PID_FILE"
-    : >"$MEILI_LOG_FILE"
+    MEILI_LOG_FILE="$(viventium_preserve_runtime_log "$MEILI_LOG_FILE")" || return 1
     nohup "$(command -v meilisearch)" \
       --http-addr "${MEILI_HOST}:${MEILI_PORT}" \
       --master-key "$MEILI_MASTER_KEY" \

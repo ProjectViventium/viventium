@@ -106,7 +106,9 @@ def test_source_launcher_owns_a_dedicated_sandpack_origin() -> None:
     assert "librechat_sandpack_healthy() {" in source
     assert 'api_pids="$(find_port_listener_pids "$LC_API_PORT")"' in source
     assert 'sandpack_pids="$(find_port_listener_pids "$VIVENTIUM_SANDPACK_BUNDLER_PORT")"' in source
-    assert 'librechat_api_http_healthy && librechat_sandpack_healthy' in source
+    api_health = source.split("librechat_api_healthy() {", 1)[1].split("\n}", 1)[0]
+    assert "librechat_api_http_healthy" in api_health
+    assert "librechat_sandpack_healthy" not in api_health, "Optional artifacts cannot restart conversation"
     assert 'kill_port_listeners "$VIVENTIUM_SANDPACK_BUNDLER_PORT" "$LIBRECHAT_DIR"' in source
     assert (
         'wait_for_http "${SANDPACK_BUNDLER_URL}index.html" "Isolated browser artifact runtime"'

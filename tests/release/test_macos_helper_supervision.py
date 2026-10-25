@@ -177,7 +177,7 @@ struct HelperConfigPersistenceHarness {
         supervision.requestStopped()
         config.runtimeSupervision = supervision
 
-        try HelperConfigPreservingStore.save(config: config, to: configURL)
+        try HelperConfigPreservingStore.save(config: config, to: configURL, supervisionWrite: .explicitIntent)
         let encoded = try Data(contentsOf: configURL)
         let object = try JSONSerialization.jsonObject(with: encoded) as! [String: Any]
         precondition((object["showInStatusBar"] as? Bool) == false)

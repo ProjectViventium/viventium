@@ -213,3 +213,11 @@ They are separate from native-worker provider credentials and runtime-issued, at
 grants. The compiler and native projection must preserve this separation. See the
 [native setup checks](../../../tests/release/test_native_payload_assembler.py) and
 [compiler checks](../../../tests/release/test_config_compiler.py).
+
+### Always-on recovery boundary
+
+The [stable runtime owner](../50_Stable_Dev_Runtime.md) defines helper crash supervision,
+Start/Stop ordering, local process-loss recovery and preserved failure logs. Runtime readiness
+and Stop reachability are separate contracts. Remote or provider failures do not grant local
+stop authority. The existing native OS owner and scoped launcher remain the only lifecycle
+managers; hidden menu UI does not disable recovery.

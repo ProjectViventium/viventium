@@ -377,3 +377,5 @@ release_tests:
     qa_owner: qa/modern-playground-voice/cases.md
   tests/release/test_xperfect_cutover.py:
     qa_owner: qa/release-readiness/cases.md
+  tests/release/test_runtime_reliability_recovery.py:
+    qa_owner: qa/stable-dev-runtime/cases.md

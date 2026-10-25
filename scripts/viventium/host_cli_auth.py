@@ -86,6 +86,12 @@ def host_cli_command(command: str) -> str:
         for candidate in codex_app_cli_candidates():
             if executable_path_exists(candidate):
                 return str(candidate)
+    if command == "grok":
+        selected = os.environ.get("WPR_GROK_BIN", "").strip()
+        if selected:
+            candidate = Path(selected).expanduser()
+            resolved = str(candidate) if candidate.is_absolute() else shutil.which(selected)
+            return resolved if resolved and executable_path_exists(Path(resolved)) else ""
     discovered = shutil.which(command)
     if not discovered and command == "grok":
         vendor = Path.home() / ".grok/bin/grok"

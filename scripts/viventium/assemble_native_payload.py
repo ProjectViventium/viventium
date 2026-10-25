@@ -953,6 +953,7 @@ def assemble(args: argparse.Namespace) -> dict[str, object]:
             repo / "scripts" / "viventium" / "config_settings.py": payload / "runtime" / "scripts" / "config_settings.py",
             repo / "scripts" / "viventium" / "native_payload.py": payload / "runtime" / "scripts" / "native_payload.py",
             repo / "scripts" / "viventium" / "native_runtime.py": payload / "runtime" / "scripts" / "native_runtime.py",
+            repo / "scripts" / "viventium" / "helper_runtime_intent.py": payload / "runtime" / "scripts" / "helper_runtime_intent.py",
             repo / "scripts" / "viventium" / "native_process_guard.py": payload / "runtime" / "scripts" / "native_process_guard.py",
             repo / "scripts" / "viventium" / "continuity_bundle.py": payload / "runtime" / "scripts" / "continuity_bundle.py",
             repo / "scripts" / "viventium" / "continuity_mongo.cjs": payload / "runtime" / "scripts" / "continuity_mongo.cjs",

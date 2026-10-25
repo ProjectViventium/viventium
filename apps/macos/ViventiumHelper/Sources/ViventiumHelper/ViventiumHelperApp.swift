@@ -174,6 +174,7 @@ struct RuntimeSupervisionState: Codable, Equatable {
     var consecutiveLaunchAttempts: Int
     var nextLaunchAttemptAt: Date?
     var healthySince: Date?
+    var intentRevision: String? = nil
 
     static let defaultRunning = RuntimeSupervisionState(
         schemaVersion: 1,
@@ -192,11 +193,13 @@ struct RuntimeSupervisionState: Codable, Equatable {
 
     mutating func requestRunning() {
         self.desiredState = .running
+        self.intentRevision = UUID().uuidString
         self.resetBackoff()
     }
 
     mutating func requestStopped() {
         self.desiredState = .stopped
+        self.intentRevision = UUID().uuidString
         self.resetBackoff()
     }
 
@@ -277,6 +280,7 @@ private struct HelperConfig: Codable, Equatable {
     let appSupportDir: String
     var allowProtectedRepoRoot: Bool?
     var showInStatusBar: Bool?
+    var launchAtLogin: Bool? = nil
     var nativeRuntime: Bool? = nil
     var computerAccessSetupShown: Bool? = nil
     var runtimeSupervision: RuntimeSupervisionState? = nil
@@ -375,23 +379,123 @@ private enum HelperConfigPreservingEncoder {
     }
 }
 
+private enum HelperSupervisionWrite {
+    case preserve
+    case explicitIntent
+    case observed
+}
+
+private enum HelperConfigWriteResult { case saved, staleIntent, unsafePath, unavailable }
+
 private enum HelperConfigPreservingStore {
-    static func save(config: HelperConfig, to configURL: URL) throws {
-        let existingData = try? Data(contentsOf: configURL)
-        let data = try HelperConfigPreservingEncoder.encode(
-            config: config,
-            existingData: existingData
-        )
-        try FileManager.default.createDirectory(
-            at: configURL.deletingLastPathComponent(),
-            withIntermediateDirectories: true,
-            attributes: nil
-        )
+    private enum WriteFailure: Error { case unsafePath, staleIntent }
+
+    static func result(config: HelperConfig, to url: URL, supervisionWrite: HelperSupervisionWrite) -> HelperConfigWriteResult {
+        do { try self.save(config: config, to: url, supervisionWrite: supervisionWrite); return .saved }
+        catch WriteFailure.staleIntent { return .staleIntent }
+        catch WriteFailure.unsafePath { return .unsafePath }
+        catch { return .unavailable }
+    }
+
+    static func ownerControlledDirectory(_ url: URL) -> Bool {
+        var metadata = stat()
+        return lstat(url.path, &metadata) == 0 && metadata.st_mode & S_IFMT == S_IFDIR &&
+            metadata.st_uid == getuid() && metadata.st_mode & 0o022 == 0
+    }
+
+    private enum ConfigReadFailure: String, Error {
+        case unsafeDirectory, unavailable, unsafeFile, unreadable, invalid
+    }
+
+    static func readOwnerControlledConfig(at url: URL) throws -> HelperConfig {
+        guard self.ownerControlledDirectory(url.deletingLastPathComponent()) else { throw ConfigReadFailure.unsafeDirectory }
+        let descriptor = open(url.path, O_RDONLY | O_NOFOLLOW | O_CLOEXEC)
+        guard descriptor >= 0 else {
+            if errno == ELOOP { throw ConfigReadFailure.unsafeFile }
+            throw ConfigReadFailure.unavailable
+        }
+        let handle = FileHandle(fileDescriptor: descriptor, closeOnDealloc: true)
+        var metadata = stat()
+        guard fstat(descriptor, &metadata) == 0,
+              metadata.st_mode & S_IFMT == S_IFREG, metadata.st_uid == getuid(),
+              metadata.st_nlink == 1, metadata.st_mode & 0o022 == 0
+        else { throw ConfigReadFailure.unsafeFile }
+        let data: Data
+        do {
+            guard let contents = try handle.readToEnd() else { throw ConfigReadFailure.unreadable }
+            data = contents
+        } catch { throw ConfigReadFailure.unreadable }
+        do { return try JSONDecoder().decode(HelperConfig.self, from: data) }
+        catch { throw ConfigReadFailure.invalid }
+    }
+
+    static func loadOwnerControlledConfig(at url: URL) -> HelperConfig? {
+        try? self.readOwnerControlledConfig(at: url)
+    }
+
+    static func confirmsCurrentRunningIntent(_ config: HelperConfig, at url: URL) -> Bool {
+        guard let current = self.loadOwnerControlledConfig(at: url) else { return false }
+        return current.repoRoot == config.repoRoot && current.appSupportDir == config.appSupportDir &&
+            current.nativeRuntime == config.nativeRuntime && current.runtimeSupervision?.desiredState == .running &&
+            current.runtimeSupervision?.intentRevision == config.runtimeSupervision?.intentRevision
+    }
+
+    @discardableResult
+    static func save(
+        config: HelperConfig, to configURL: URL,
+        supervisionWrite: HelperSupervisionWrite = .preserve
+    ) throws -> HelperConfig {
+        let directory = configURL.deletingLastPathComponent()
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        guard self.ownerControlledDirectory(directory) else { throw WriteFailure.unsafePath }
+        let lockURL = directory.appendingPathComponent(".\(configURL.lastPathComponent).lock")
+        let descriptor = open(lockURL.path, O_RDWR | O_CREAT | O_NOFOLLOW | O_CLOEXEC, 0o600)
+        guard descriptor >= 0 else {
+            if [ENOSPC, EIO, EROFS, EDQUOT, EMFILE, ENFILE].contains(errno) { throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO) }
+            throw WriteFailure.unsafePath
+        }
+        defer { close(descriptor) }
+        var metadata = stat()
+        guard fstat(descriptor, &metadata) == 0,
+              metadata.st_mode & S_IFMT == S_IFREG, metadata.st_uid == getuid(),
+              metadata.st_nlink == 1, fchmod(descriptor, 0o600) == 0,
+              flock(descriptor, LOCK_EX) == 0 else { throw WriteFailure.unsafePath }
+        let existingFile = lstat(configURL.path, &metadata) == 0
+        if existingFile {
+            guard metadata.st_mode & S_IFMT == S_IFREG, metadata.st_uid == getuid(),
+                  metadata.st_nlink == 1 else { throw WriteFailure.unsafePath }
+        }
+        let existingData = existingFile ? try Data(contentsOf: configURL) : nil
+        let current = try existingData.map { try JSONDecoder().decode(HelperConfig.self, from: $0) }
+        var authored = config
+        switch supervisionWrite {
+        case .preserve:
+            if let current { authored.runtimeSupervision = current.runtimeSupervision }
+        case .explicitIntent:
+            if let current {
+                guard current.repoRoot == config.repoRoot, current.appSupportDir == config.appSupportDir,
+                      current.nativeRuntime == config.nativeRuntime else { throw WriteFailure.staleIntent }
+                authored = current
+                authored.runtimeSupervision = config.runtimeSupervision
+            }
+        case .observed:
+            guard let current,
+                  current.repoRoot == config.repoRoot, current.appSupportDir == config.appSupportDir,
+                  current.nativeRuntime == config.nativeRuntime,
+                  current.runtimeSupervision?.intentRevision == config.runtimeSupervision?.intentRevision,
+                  current.runtimeSupervision?.desiredState == config.runtimeSupervision?.desiredState
+            else { throw WriteFailure.staleIntent }
+            authored = current
+            authored.runtimeSupervision = config.runtimeSupervision
+        }
+        let data = try HelperConfigPreservingEncoder.encode(config: authored, existingData: existingData)
         try data.write(to: configURL, options: .atomic)
-        try FileManager.default.setAttributes(
-            [.posixPermissions: 0o600],
-            ofItemAtPath: configURL.path
-        )
+        try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: configURL.path)
+        let saved = open(configURL.path, O_RDONLY | O_NOFOLLOW | O_CLOEXEC)
+        if saved >= 0 { _ = fsync(saved); close(saved) }
+        let parent = open(directory.path, O_RDONLY | O_CLOEXEC)
+        if parent >= 0 { _ = fsync(parent); close(parent) }
+        return authored
     }
 }
 
@@ -610,16 +714,7 @@ final class HelperController: ObservableObject {
                 self?.handleWhoopOAuthCallback(url)
             }
         }
-        if self.showInStatusBarEnabled || self.config?.nativeRuntime == true {
-            self.activateHelperLifecycle()
-        } else {
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { [weak self] in
-                Task { @MainActor in
-                    guard let self, !self.showInStatusBarEnabled else { return }
-                    self.presentStatusBarRestorePrompt()
-                }
-            }
-        }
+        self.activateHelperLifecycle()
         if var config = self.config, config.computerAccessSetupShown != true {
             config.computerAccessSetupShown = true
             if Self.saveConfig(config) { self.config = config }
@@ -877,34 +972,23 @@ final class HelperController: ObservableObject {
             return
         }
 
-        self.log("Status-bar helper hidden")
-        self.timer?.invalidate()
-        self.timer = nil
-        self.cancelDelayedQuitWatch()
-        Task.detached(priority: .utility) {
-            let updated = Self.setLaunchAtLoginEnabled(false)
-            await MainActor.run {
-                self.launchAtLoginEnabled = updated
-                let alert = NSAlert()
-                alert.messageText = "Viventium is hidden from the status bar"
-                alert.informativeText = "Run `bin/viventium status-bar on` whenever you want to bring the menu-bar icon back."
-                alert.alertStyle = .informational
-                alert.addButton(withTitle: "OK")
-                alert.runModal()
-                NSApplication.shared.terminate(nil)
-            }
-        }
+        self.log("Status-bar icon hidden; runtime supervision remains active")
+        self.activateHelperLifecycle()
     }
 
     func setLaunchAtLogin(_ enabled: Bool) {
+        guard var config = self.config else { return }
+        config.launchAtLogin = enabled
+        guard Self.saveConfig(config) else { return }
+        self.config = config
         Task.detached(priority: .utility) {
-            let updated = Self.setLaunchAtLoginEnabled(enabled)
+            let updated = Self.setLaunchAtLoginEnabled(enabled, config: config)
             await MainActor.run {
                 self.launchAtLoginEnabled = updated
                 if updated != enabled {
                     let alert = NSAlert()
                     alert.messageText = "Could not update Start at Login"
-                    alert.informativeText = "macOS did not accept the helper login-item change. You can retry from the menu."
+                    alert.informativeText = "macOS did not accept the helper startup change. You can retry from the menu."
                     alert.alertStyle = .warning
                     alert.addButton(withTitle: "OK")
                     alert.runModal()
@@ -1680,11 +1764,9 @@ final class HelperController: ObservableObject {
         alert.informativeText = "The Viventium helper is currently hidden. Show it again now?"
         alert.alertStyle = .informational
         alert.addButton(withTitle: "Show")
-        alert.addButton(withTitle: "Quit")
+        alert.addButton(withTitle: "Keep hidden")
         if alert.runModal() == .alertFirstButtonReturn {
             self.setShowInStatusBar(true)
-        } else {
-            NSApplication.shared.terminate(nil)
         }
     }
 
@@ -1812,13 +1894,15 @@ final class HelperController: ObservableObject {
                 guard !Task.isCancelled else { return }
                 self.stackLaunchTask = nil
                 self.stackLaunchInProgress = false
+                self.refreshRuntimeDesiredState()
+                guard self.runtimeSupervision.desiredState == .running else { return }
                 if supervisedLaunch {
                     if started {
                         self.runtimeSupervision.recordHealthy(
                             at: Date(),
                             stabilityWindow: self.runtimeSupervisionStableHealthSeconds
                         )
-                        self.persistRuntimeSupervision()
+                        guard self.persistRuntimeSupervision() else { return }
                     } else {
                         self.recordSupervisedLaunchFailure()
                     }
@@ -1974,7 +2058,7 @@ final class HelperController: ObservableObject {
 
     private func refreshState(force: Bool = false) {
         guard let config else {
-            self.stackState = .unavailable("Missing helper config")
+            self.stackState = .unavailable("Configuration needs repair")
             return
         }
         if Self.configUsesProtectedRepoRoot(config) {
@@ -2249,7 +2333,8 @@ final class HelperController: ObservableObject {
               persisted.repoRoot == config.repoRoot, persisted.appSupportDir == config.appSupportDir,
               persisted.nativeRuntime == config.nativeRuntime,
               let supervision = persisted.runtimeSupervision,
-              supervision.desiredState != self.runtimeSupervision.desiredState else { return }
+              supervision.intentRevision != config.runtimeSupervision?.intentRevision ||
+                supervision.desiredState != config.runtimeSupervision?.desiredState else { return }
         self.runtimeSupervision = supervision
         self.config = persisted
         if supervision.desiredState == .stopped { self.cancelStackLaunch() }
@@ -2303,7 +2388,7 @@ final class HelperController: ObservableObject {
                     stabilityWindow: self.runtimeSupervisionStableHealthSeconds
                 )
                 if self.runtimeSupervision != previous {
-                    self.persistRuntimeSupervision()
+                    guard self.persistRuntimeSupervision() else { return }
                 }
                 self.stackState = .running
                 return
@@ -2317,7 +2402,7 @@ final class HelperController: ObservableObject {
                 maximumDelay: self.runtimeSupervisionMaximumDelaySeconds
             )
             if self.runtimeSupervision != previous {
-                self.persistRuntimeSupervision()
+                guard self.persistRuntimeSupervision() else { return }
             }
             if snapshot.needsAttention {
                 self.stackState = .needsAttention
@@ -2353,7 +2438,7 @@ final class HelperController: ObservableObject {
                 baseDelay: self.runtimeSupervisionBaseDelaySeconds,
                 maximumDelay: self.runtimeSupervisionMaximumDelaySeconds
             )
-            self.persistRuntimeSupervision()
+            guard self.persistRuntimeSupervision(), self.runtimeSupervision.desiredState == .running else { return }
             self.log(
                 "Runtime supervision launching stack attempt \(self.runtimeSupervision.consecutiveLaunchAttempts) (\(trigger))"
             )
@@ -2374,7 +2459,7 @@ final class HelperController: ObservableObject {
             self.runtimeSupervision.requestStopped()
             self.cancelStackLaunch()
         }
-        self.persistRuntimeSupervision()
+        self.persistRuntimeSupervision(explicitIntent: true)
     }
 
     private func cancelStackLaunch() {
@@ -2397,16 +2482,28 @@ final class HelperController: ObservableObject {
         }
     }
 
-    private func persistRuntimeSupervision() {
-        guard var config, config.runtimeSupervision != self.runtimeSupervision else {
-            return
-        }
+    @discardableResult
+    private func persistRuntimeSupervision(explicitIntent: Bool = false) -> Bool {
+        guard var config else { return false }
+        guard config.runtimeSupervision != self.runtimeSupervision else { return true }
         config.runtimeSupervision = self.runtimeSupervision
-        guard Self.saveConfig(config) else {
-            self.log("Runtime supervision state could not be saved")
-            return
+        let result = Self.saveConfigResult(config, supervisionWrite: explicitIntent ? .explicitIntent : .observed)
+        if result == .saved {
+            self.config = config
+            return true
         }
-        self.config = config
+        if result == .unavailable && !explicitIntent {
+            let url = FileManager.default.homeDirectoryForCurrentUser
+                .appendingPathComponent("Library/Application Support/Viventium/helper-config.json")
+            if HelperConfigPreservingStore.confirmsCurrentRunningIntent(config, at: url) {
+                self.config = config
+                self.log("Runtime supervision storage unavailable; retaining bounded in-memory recovery for the current trusted running intent")
+                return true
+            }
+        }
+        self.refreshRuntimeDesiredState()
+        self.log("Runtime supervision update refused: \(result); preserving saved intent and configuration authority")
+        return false
     }
 
     private func log(_ message: String) {
@@ -2416,12 +2513,21 @@ final class HelperController: ObservableObject {
     private static func loadPersistedConfig() -> HelperConfig? {
         let configURL = FileManager.default.homeDirectoryForCurrentUser
             .appendingPathComponent("Library/Application Support/Viventium/helper-config.json")
-        guard let data = try? Data(contentsOf: configURL) else { return nil }
-        return try? JSONDecoder().decode(HelperConfig.self, from: data)
+        return HelperConfigPreservingStore.loadOwnerControlledConfig(at: configURL)
     }
 
     private static func loadConfig() -> HelperConfig? {
-        guard let decoded = self.loadPersistedConfig() else { return nil }
+        let url = FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent("Library/Application Support/Viventium/helper-config.json")
+        let decoded: HelperConfig
+        do { decoded = try HelperConfigPreservingStore.readOwnerControlledConfig(at: url) }
+        catch {
+            // Log only the typed class, never configuration content or paths.
+            let message = "Helper configuration needs repair: \(error)"
+            self.appendHelperLog(self.makeHelperLogURL(appSupportDir: nil), message)
+            NSLog("%@", message)
+            return nil
+        }
         let configured = self.applyActiveRuntimeCheckout(decoded)
         let healed = self.healProtectedFolderBinding(configured)
         if healed != decoded {
@@ -2446,15 +2552,20 @@ final class HelperController: ObservableObject {
         return healed
     }
 
-    private static func saveConfig(_ config: HelperConfig) -> Bool {
+    private static func saveConfigResult(
+        _ config: HelperConfig, supervisionWrite: HelperSupervisionWrite
+    ) -> HelperConfigWriteResult {
+        let url = FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent("Library/Application Support/Viventium/helper-config.json")
+        return HelperConfigPreservingStore.result(config: config, to: url, supervisionWrite: supervisionWrite)
+    }
+
+    private static func saveConfig(
+        _ config: HelperConfig, supervisionWrite: HelperSupervisionWrite = .preserve
+    ) -> Bool {
         let configURL = FileManager.default.homeDirectoryForCurrentUser
             .appendingPathComponent("Library/Application Support/Viventium/helper-config.json")
-        do {
-            try HelperConfigPreservingStore.save(config: config, to: configURL)
-            return true
-        } catch {
-            return false
-        }
+        return HelperConfigPreservingStore.result(config: config, to: configURL, supervisionWrite: supervisionWrite) == .saved
     }
 
     private static func healProtectedFolderBinding(_ config: HelperConfig) -> HelperConfig {
@@ -2464,6 +2575,7 @@ final class HelperController: ObservableObject {
                 appSupportDir: config.appSupportDir,
                 allowProtectedRepoRoot: config.allowProtectedRepoRoot,
                 showInStatusBar: config.showInStatusBar,
+                launchAtLogin: config.launchAtLogin,
                 nativeRuntime: config.nativeRuntime,
                 computerAccessSetupShown: config.computerAccessSetupShown,
                 runtimeSupervision: config.runtimeSupervision
@@ -2478,6 +2590,7 @@ final class HelperController: ObservableObject {
             appSupportDir: config.appSupportDir,
             allowProtectedRepoRoot: false,
             showInStatusBar: config.showInStatusBar,
+            launchAtLogin: config.launchAtLogin,
             nativeRuntime: config.nativeRuntime,
             computerAccessSetupShown: config.computerAccessSetupShown,
             runtimeSupervision: config.runtimeSupervision
@@ -2506,6 +2619,7 @@ final class HelperController: ObservableObject {
             appSupportDir: config.appSupportDir,
             allowProtectedRepoRoot: activeCheckout.allowProtectedFolderAccess == true,
             showInStatusBar: config.showInStatusBar,
+            launchAtLogin: config.launchAtLogin,
             nativeRuntime: config.nativeRuntime,
             computerAccessSetupShown: config.computerAccessSetupShown,
             runtimeSupervision: config.runtimeSupervision
@@ -2823,7 +2937,7 @@ final class HelperController: ObservableObject {
         } else {
             artifactRuntimeReady = true
         }
-        let apiReady = nativeReady && apiSurfaceReady && artifactRuntimeReady
+        let apiReady = nativeReady && apiSurfaceReady
         let frontendSurfaceReady = runtime.nativeRuntime
             ? nativeReady
             : await self.frontendHealthy(port: runtime.frontendPort)
@@ -2845,7 +2959,7 @@ final class HelperController: ObservableObject {
             frontendReady: frontendReady,
             playgroundReady: playgroundReady,
             requiresPlayground: runtime.requiresPlayground,
-            optionalSurfacesReady: optionalSurfacesReady
+            optionalSurfacesReady: optionalSurfacesReady && artifactRuntimeReady
         )
     }
 
@@ -3458,14 +3572,61 @@ final class HelperController: ObservableObject {
         return result.status == 0
     }
 
-    private nonisolated static func setLaunchAtLoginEnabled(_ enabled: Bool) -> Bool {
-        if enabled {
-            return self.registerLoginItem()
-        }
-
-        self.unregisterLoginItem()
-        self.removeLaunchAgent()
-        return self.launchAtLoginIsEnabled() == false
+    private nonisolated static func setLaunchAtLoginEnabled(_ enabled: Bool, config: HelperConfig) -> Bool {
+        // Keep the current session's crash supervisor even when future login is disabled.
+        let persistent = self.launchAgentPlistURL()
+        let session = URL(fileURLWithPath: config.appSupportDir)
+            .appendingPathComponent("runtime/helper-supervisor.plist")
+        let target = enabled ? persistent : session
+        guard let executable = Bundle.main.executableURL else { return !enabled }
+        let environment = self.makeCLIEnvironment()
+        let job: [String: Any] = [
+            "Label": "ai.viventium.helper",
+            "AssociatedBundleIdentifiers": ["ai.viventium.helper"],
+            "ProgramArguments": [executable.path],
+            "WorkingDirectory": FileManager.default.homeDirectoryForCurrentUser.path,
+            "RunAtLoad": true,
+            "KeepAlive": ["SuccessfulExit": false],
+            "ThrottleInterval": 10,
+            "LimitLoadToSessionType": ["Aqua"],
+            "EnvironmentVariables": [
+                "PATH": environment["PATH"] ?? "/usr/bin:/bin",
+                "VIVENTIUM_HELPER_RUNTIME_REPO_ROOT": config.repoRoot,
+            ],
+            "StandardOutPath": URL(fileURLWithPath: config.appSupportDir).appendingPathComponent("logs/viventium-helper.log").path,
+            "StandardErrorPath": URL(fileURLWithPath: config.appSupportDir).appendingPathComponent("logs/viventium-helper.log").path,
+        ]
+        do {
+            let domain = "gui/\(getuid())"
+            let loaded = self.runSystemProcess(executableURL: URL(fileURLWithPath: "/bin/launchctl"),
+                                               arguments: ["print", "\(domain)/ai.viventium.helper"], timeoutSeconds: 5)
+            if loaded.status == 0 {
+                let programs = loaded.stdout.split(separator: "\n").map { $0.trimmingCharacters(in: .whitespaces) }
+                    .filter { $0.hasPrefix("program = ") }.map { String($0.dropFirst("program = ".count)) }
+                guard programs == [executable.path] else { return !enabled }
+            }
+            for path in [persistent, session] where FileManager.default.fileExists(atPath: path.path) {
+                let attrs = try FileManager.default.attributesOfItem(atPath: path.path)
+                guard attrs[.type] as? FileAttributeType == .typeRegular,
+                      (attrs[.ownerAccountID] as? NSNumber)?.uint32Value == getuid(),
+                      let data = try? Data(contentsOf: path),
+                      let existing = try? PropertyListSerialization.propertyList(from: data, format: nil) as? [String: Any],
+                      existing["ProgramArguments"] as? [String] == [executable.path]
+                else { return !enabled }
+            }
+            let data = try PropertyListSerialization.data(fromPropertyList: job, format: .xml, options: 0)
+            try FileManager.default.createDirectory(at: target.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try data.write(to: target, options: .atomic)
+            try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: target.path)
+            self.unregisterLoginItem()
+            if !enabled { try? FileManager.default.removeItem(at: persistent) }
+            if loaded.status != 0 {
+                guard self.runSystemProcess(executableURL: URL(fileURLWithPath: "/bin/launchctl"),
+                                             arguments: ["bootstrap", domain, target.path], timeoutSeconds: 5).status == 0
+                else { return !enabled }
+            }
+            return enabled
+        } catch { return !enabled }
     }
 
     private nonisolated static func makeCLIProcess(
@@ -4576,6 +4737,7 @@ private struct RuntimePorts: Equatable {
     let startTelegramCodex: Bool
     let managedStopCheckURLs: [String]
     let nativeRuntime: Bool
+    var managedHealthCheckURLs: [String]? = nil
 }
 
 private struct RuntimeEnvParser {
@@ -4599,7 +4761,8 @@ private struct RuntimeEnvParser {
             startTelegram: self.boolValue(values["START_TELEGRAM"]),
             startTelegramCodex: self.boolValue(values["START_TELEGRAM_CODEX"]),
             managedStopCheckURLs: self.managedStopCheckURLs(values: values),
-            nativeRuntime: runtimeProfile == "native"
+            nativeRuntime: runtimeProfile == "native",
+            managedHealthCheckURLs: self.managedHealthCheckURLs(values: values)
         )
     }
 
@@ -4638,7 +4801,26 @@ private struct RuntimeEnvParser {
     }
 
     private func managedStopCheckURLs(values: [String: String]) -> [String] {
+        var ownedValues = values
+        if values["GLASSHIVE_SERVICE_TOPOLOGY"] == "external_split" { ownedValues["START_GLASSHIVE"] = "false" }
+        return self.managedHealthCheckURLs(values: ownedValues).filter {
+            guard let host = URL(string: $0)?.host?.lowercased() else { return false }
+            return ["localhost", "127.0.0.1", "::1", "[::1]"].contains(host)
+        }
+    }
+
+    private func managedHealthCheckURLs(values: [String: String]) -> [String] {
         var urls: [String] = []
+        let native = values["VIVENTIUM_RUNTIME_PROFILE"] == "native"
+        if self.boolValue(values["START_GLASSHIVE"]) {
+            let fallback = native ? nil : "http://127.0.0.1:\(Int(values["GLASSHIVE_RUNTIME_PORT"] ?? "") ?? 8766)"
+            self.appendURL(self.rebasedURL(values["GLASSHIVE_RUNTIME_PUBLIC_BASE_URL"] ?? values["GLASSHIVE_RUNTIME_BASE_URL"] ?? values["GLASSHIVE_PROVIDER_BASE_URL"] ?? fallback, path: "/health"), to: &urls)
+            self.appendURL(self.trimmedURL(values["GLASSHIVE_MCP_URL"] ?? (native ? nil : "http://127.0.0.1:\(Int(values["GLASSHIVE_MCP_PORT"] ?? "") ?? 8767)/mcp")), to: &urls)
+            // Packaged Native's UI belongs to its validated release listener, not a made-up TCP port.
+            if !native {
+                self.appendURL("http://127.0.0.1:\(Int(values["GLASSHIVE_UI_PORT"] ?? "") ?? 8780)/health", to: &urls)
+            }
+        }
         if self.boolValue(values["START_SCHEDULING_MCP"]) {
             self.appendURL(self.rebasedURL(values["SCHEDULING_MCP_URL"], path: "/health"), to: &urls)
         }
@@ -4653,12 +4835,15 @@ private struct RuntimeEnvParser {
             self.appendURL("http://127.0.0.1:\(ragPort)/health", to: &urls)
         }
         if self.boolValue(values["START_FIRECRAWL"]) {
-            self.appendURL(self.trimmedURL(values["FIRECRAWL_API_URL"] ?? values["FIRECRAWL_BASE_URL"]), to: &urls)
+            self.appendURL(self.rebasedURL(values["FIRECRAWL_API_URL"] ?? values["FIRECRAWL_BASE_URL"], path: "/health"), to: &urls)
         }
         if self.boolValue(values["START_SEARXNG"]) {
             self.appendURL(self.trimmedURL(values["SEARXNG_INSTANCE_URL"] ?? values["SEARXNG_BASE_URL"]), to: &urls)
         }
         if self.boolValue(values["VIVENTIUM_VOICE_ENABLED"] ?? "true") {
+            if let port = Int(values["VIVENTIUM_VOICE_GATEWAY_HEALTH_PORT"] ?? (native ? "" : "8301")) {
+                self.appendURL("http://127.0.0.1:\(port)/health", to: &urls)
+            }
             let livekitFallbackPort = Int(values["LIVEKIT_HTTP_PORT"] ?? "") ?? 7888
             self.appendURL(
                 self.trimmedURL(values["LIVEKIT_API_HOST"]) ?? "http://127.0.0.1:\(livekitFallbackPort)",
@@ -4695,7 +4880,11 @@ private struct RuntimeEnvParser {
         else {
             return nil
         }
-        components.path = path
+        var prefix = components.path.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+        if ["mcp", "v1"].contains(prefix.split(separator: "/").last.map(String.init) ?? "") {
+            prefix = prefix.split(separator: "/").dropLast().joined(separator: "/")
+        }
+        components.path = (prefix.isEmpty ? "" : "/" + prefix) + path
         components.query = nil
         components.fragment = nil
         return components.string
@@ -4723,10 +4912,14 @@ private extension HelperController {
     }
 
     nonisolated static func managedServicesHealthy(runtime: RuntimePorts) async -> Bool {
-        for urlString in runtime.managedStopCheckURLs {
-            if !(await self.endpointResponding(urlString: urlString)) {
-                return false
-            }
+        for urlString in runtime.managedHealthCheckURLs ?? runtime.managedStopCheckURLs {
+            guard let url = URL(string: urlString),
+                  let status = await self.firstHTTPStatus(urls: self.candidateURLs(for: url)) else { return false }
+            let protocolEndpoint = url.path.hasSuffix("/mcp")
+            let ready = protocolEndpoint
+                ? [200, 400, 401, 403, 405, 406, 415, 422].contains(status)
+                : (url.path.hasSuffix("/health") ? status == 200 : (200..<400).contains(status))
+            if !ready { return false }
         }
         return true
     }

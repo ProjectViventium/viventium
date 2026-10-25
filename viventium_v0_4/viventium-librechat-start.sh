@@ -8127,7 +8127,7 @@ librechat_sandpack_healthy() {
 
 
 librechat_api_healthy() {
-  librechat_api_http_healthy && librechat_sandpack_healthy
+  librechat_api_http_healthy
 }
 
 librechat_api_http_healthy() {
@@ -8212,7 +8212,7 @@ wait_for_librechat_runtime() {
     fi
     sleep 1
   done
-  log_warn "$label did not respond with both API and isolated artifact health in time"
+  log_warn "$label did not respond with conversational API health in time"
   return 1
 }
 
@@ -8441,6 +8441,17 @@ restart_detached_librechat_backend() {
   fi
 
   log_warn "Detached LibreChat API watchdog restarting backend"
+  if is_truthy "${PARALLEL_WORK_REQUESTED_AVAILABLE:-false}"; then
+    if start_deferred_parallel_work_redis; then
+      export VIVENTIUM_PARALLEL_WORK_AVAILABLE="$PARALLEL_WORK_REQUESTED_AVAILABLE"
+      export USE_REDIS="$PARALLEL_WORK_REQUESTED_USE_REDIS"
+      export USE_REDIS_STREAMS="$PARALLEL_WORK_REQUESTED_USE_REDIS_STREAMS"
+      export REDIS_URI="$PARALLEL_WORK_REQUESTED_REDIS_URI"
+    else
+      log_warn "Parallel Work Redis remains unavailable; preserving chat with the existing explicit degraded mode"
+      export VIVENTIUM_PARALLEL_WORK_AVAILABLE=false USE_REDIS=false USE_REDIS_STREAMS=false
+    fi
+  fi
   load_local_qa_runtime_control
   kill_port_listeners "$LC_API_PORT" "$LIBRECHAT_DIR"
   kill_port_listeners "$VIVENTIUM_SANDPACK_BUNDLER_PORT" "$LIBRECHAT_DIR"
@@ -10282,7 +10293,9 @@ PY
       log_warn "Scheduling Cortex MCP venv python not found after dependency sync; falling back to $PYTHON_BIN"
     fi
   fi
-  "$scheduling_python" -m scheduling_cortex.server --transport streamable-http --host 127.0.0.1 --port "$SCHEDULING_MCP_PORT" >"$LOG_DIR/scheduling_cortex_mcp.log" 2>&1 &
+  local scheduling_log
+  scheduling_log="$(viventium_preserve_runtime_log "$LOG_DIR/scheduling_cortex_mcp.log")" || return 1
+  "$scheduling_python" -m scheduling_cortex.server --transport streamable-http --host 127.0.0.1 --port "$SCHEDULING_MCP_PORT" >"$scheduling_log" 2>&1 &
 
   SCHEDULING_MCP_PID=$!
   SCHEDULING_MCP_STARTED_BY_SCRIPT=true
@@ -10499,6 +10512,10 @@ start_glasshive() {
   # Host workers read context beyond the inline budget through this owned runtime.
   export GLASSHIVE_PEER_RUNTIME_BASE_URL="${GLASSHIVE_PEER_RUNTIME_BASE_URL:-http://127.0.0.1:${GLASSHIVE_RUNTIME_PORT}}"
 
+  local runtime_log mcp_log ui_log
+  runtime_log="$(viventium_preserve_runtime_log "$LOG_DIR/glasshive_runtime.log")" || return 1
+  mcp_log="$(viventium_preserve_runtime_log "$LOG_DIR/glasshive_mcp.log")" || return 1
+  ui_log="$(viventium_preserve_runtime_log "$LOG_DIR/glasshive_ui.log")" || return 1
   log_info "Starting GlassHive runtime stack..."
   local glasshive_state_dir="${GLASSHIVE_STATE_DIR:-$VIVENTIUM_STATE_ROOT/glasshive}"
   mkdir -p "$glasshive_state_dir"
@@ -10521,13 +10538,13 @@ start_glasshive() {
   env -u GLASSHIVE_INTERNAL_ASSERTION_PRIVATE_KEY_FILE \
     -u VIVENTIUM_ENV_FILE \
     VIVENTIUM_DISABLE_DEFAULT_RUNTIME_ENV=1 \
-    uv run uvicorn workers_projects_runtime.api:create_app --factory --http h11 --host 127.0.0.1 --port "$GLASSHIVE_RUNTIME_PORT" --h11-max-incomplete-event-size "$GLASSHIVE_HTTP_REQUEST_HEAD_MAX_BYTES" >"$LOG_DIR/glasshive_runtime.log" 2>&1 &
+    uv run uvicorn workers_projects_runtime.api:create_app --factory --http h11 --host 127.0.0.1 --port "$GLASSHIVE_RUNTIME_PORT" --h11-max-incomplete-event-size "$GLASSHIVE_HTTP_REQUEST_HEAD_MAX_BYTES" >"$runtime_log" 2>&1 &
   GLASSHIVE_RUNTIME_PID=$!
   GLASSHIVE_STARTED_BY_SCRIPT=true
   echo "$GLASSHIVE_RUNTIME_PID" >"$GLASSHIVE_RUNTIME_PID_FILE"
 
   WPR_MCP_BASE_URL="http://127.0.0.1:${GLASSHIVE_RUNTIME_PORT}" \
-    uv run python -m workers_projects_runtime.mcp_server --transport streamable-http --host 127.0.0.1 --port "$GLASSHIVE_MCP_PORT" >"$LOG_DIR/glasshive_mcp.log" 2>&1 &
+    uv run python -m workers_projects_runtime.mcp_server --transport streamable-http --host 127.0.0.1 --port "$GLASSHIVE_MCP_PORT" >"$mcp_log" 2>&1 &
   GLASSHIVE_MCP_PID=$!
   GLASSHIVE_STARTED_BY_SCRIPT=true
   echo "$GLASSHIVE_MCP_PID" >"$GLASSHIVE_MCP_PID_FILE"
@@ -10541,7 +10558,7 @@ start_glasshive() {
       popd >/dev/null
       return 1
     fi
-    uv run uvicorn glass_drive_ui.server:app --host 127.0.0.1 --port "$GLASSHIVE_UI_PORT" >"$LOG_DIR/glasshive_ui.log" 2>&1 &
+    uv run uvicorn glass_drive_ui.server:app --host 127.0.0.1 --port "$GLASSHIVE_UI_PORT" >"$ui_log" 2>&1 &
     GLASSHIVE_UI_PID=$!
     GLASSHIVE_STARTED_BY_SCRIPT=true
     echo "$GLASSHIVE_UI_PID" >"$GLASSHIVE_UI_PID_FILE"
@@ -13834,6 +13851,7 @@ if [[ "$SKIP_VOICE_GATEWAY" != "true" ]]; then
       fi
       # === VIVENTIUM END ===
       echo -e "${CYAN}[viventium]${NC} Starting Voice Gateway worker ..."
+      VOICE_GATEWAY_LOG_FILE="$(viventium_preserve_runtime_log "$LOG_DIR/voice_gateway.log")" || exit 1
       (
         trap - INT TERM EXIT HUP
         cd "$VOICE_GATEWAY_DIR"
@@ -14104,7 +14122,7 @@ PY
         # LiveKit reads the exported connection settings without exposing credentials in argv.
         exec "$voice_python" worker.py start \
           --log-level="$VIVENTIUM_VOICE_GATEWAY_LOG_LEVEL"
-      ) >"$LOG_DIR/voice_gateway.log" 2>&1 &
+      ) >"$VOICE_GATEWAY_LOG_FILE" 2>&1 &
       VOICE_GATEWAY_PID=$!
       VOICE_GATEWAY_STARTED_BY_SCRIPT=true
       printf '%s\n' "$VOICE_GATEWAY_PID" >"$VOICE_GATEWAY_PID_FILE"
@@ -14141,7 +14159,7 @@ if detached_start_requested; then
   # Feature: Cross-process startup single-flight through readiness.
   # Purpose: Keep the parent bin/viventium claim owner alive until the user-facing surfaces have
   # finished warming so a concurrent manual --restart cannot tear down the helper launch.
-  log_info "detached watchdog will monitor LibreChat API/artifact health while helper/user surfaces monitor readiness"
+  log_info "detached watchdog will monitor LibreChat API health while helper/user surfaces monitor optional readiness"
   # === VIVENTIUM END ===
   log_info "Waiting for user-facing surfaces before releasing the detached startup claim"
   detached_health_failures=0

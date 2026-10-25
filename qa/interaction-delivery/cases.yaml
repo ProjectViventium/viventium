@@ -43,3 +43,46 @@ journeys:
     degradedAndRecovery: Empty input without selected files and pending or invalid uploads cannot send. Missing, stale or mismatched source identity and unauthorized files remain rejected. A native voice transcript uses the existing transcription path. Completed empty assistant status rows cannot block the next authored source; content-bearing or unfinished rows remain. Missing retained text is unavailable, while explicit empty extraction is valid.
     persistenceAndCleanup: Reload retains the visible input, reply and output file, including saved user rows with an empty structured content array. Saved input and result cards download the actual retained representation; original bytes remain exact, while declared extraction returns exact text with a .txt name. File-only edits and regeneration retain their exact selected files; no new blank turn can borrow files from history.
     evidence: [visible captionless send, source and upload ledger, worker receipt and result, downloaded file bytes, reload, admission and authorization tests]
+
+  - id: durable-background-result-after-cache-loss
+    requirements: [CC-043, CC-047, HARD-021, PW-076, PW-110, PW-111]
+    userAction: Finish a harmless Main reply, retain one useful Main-authored Cortex addition, then expire or lose its temporary job and reconnect.
+    surfaces: [Telegram, callback]
+    expectedResult: The exact saved addition claims, authorizes and acknowledges once from canonical source and delivery receipts, with no model rerun or raw internal speech.
+    degradedAndRecovery: Changed source or body, deleted or unfinished or failed child, wrong owner or channel, stale generation, live conflict and unknown transport fail closed. Invalid older candidates cannot starve a later valid owner.
+    persistenceAndCleanup: Both supported job-store cache-loss paths and restart preserve the exact body, finite cohort and receipt; duplicate exact ACK is idempotent.
+    evidence: [canonical parent and child, bound ingress, graph hashes, generation and lease, visible message, acknowledgment and provider request count]
+  - id: obsolete-terminal-recovery-settles
+    requirements: [CC-043, CC-047, CC-048, HARD-005, HARD-021]
+    userAction: Recover a known failed older accepted reply after a later original source was answered.
+    surfaces: [Telegram]
+    expectedResult: The obsolete presentation recovery settles failed once without a repeated failure bubble, endless typing or renewed old lease; current reply remains intact.
+    degradedAndRecovery: A later independent answer cannot declare unknown accepted action work complete; changed binding and missing failure proof preserve unknown work.
+    persistenceAndCleanup: Restart and repeated recovery ticks retain original input and native work facts without execution replay.
+    evidence: [visible idle status and current answer, original ingress and response binding, terminal failure, lease and native request count]
+  - id: authored-result-delivery-bounded-retry
+    requirements: [CC-043, HARD-021, PW-076, PW-110, PW-111]
+    userAction: Finish a harmless worker result while its destination is unavailable, then restore the destination within the existing retry budget.
+    surfaces: [Web, Telegram, Voice, callback]
+    expectedResult: Main authors once; retry reuses that exact saved message and delivers once.
+    degradedAndRecovery: Superseded callback settles once; permanent destination failure reaches typed delivery exhaustion at the existing limit and keeps authored text. Unlinked older owners cannot starve a linked owner.
+    persistenceAndCleanup: Restart preserves result, attempts, exact owner and target; no worker replay or re-authoring.
+    evidence: [authored message identity, accepted callback fence, delivery attempts and terminal state, visible result and native request count]
+
+  - id: durable-chat-source-currency-after-retention
+    requirements: [CC-043, CC-047, CC-048, HARD-005, HARD-021]
+    userAction: Retain a failed old reply, then send a newer source that fails, start a new conversation, or expire temporary input records and restart the adapter.
+    surfaces: [Telegram]
+    expectedResult: Durable owner/chat/topic source authority settles only the obsolete failed presentation once, without old typing or execution replay.
+    degradedAndRecovery: A failed merged A+B reply compares its actual presentation sequence and keeps one failure presentation; a complete cached reply before ACK remains presentable. Changed binding or unavailable proof never declares unknown accepted action work complete.
+    persistenceAndCleanup: Saved original or native/host source proof survives ingress expiry; all original input and accepted native work facts remain.
+    evidence: [durable source scope and presentation sequence, merged source IDs, exact response binding, terminal state, visible idle status and provider request count]
+
+  - id: silent-main-delivery-receipt
+    requirements: [CC-043, CC-047, CC-048, HARD-005, HARD-021]
+    userAction: Ask Main to complete a harmless private review without a reply, then restart the adapter after its authored no-response final.
+    surfaces: [Telegram]
+    expectedResult: No marker, placeholder, speech or idle typing appears; the exact input completes through the existing quiet-delivery acknowledgment. Accepted canonical files retain their normal authorization and receipts without narration.
+    degradedAndRecovery: Partial marker fragments stay hidden. A failed or stale stream cannot commit success. Use the actual attachment sender for confirmed file, confirmed unavailable notice, unknown send, missing receipt, failed notice and partial file acceptance. Uncertain files with no confirmed answer text record failed presentation with confirmed item references. A confirmed ordinary answer instead commits only confirmed text/file references and remains eligible for accepted memory; unknown file items are excluded and never resent. Acknowledgment outage retries only its durable receipt. A zero-item quiet acknowledgment failure stays silent, creates no pending retry/removal notice and retries the same saved final on input recovery. Check both cached and expired completed Main jobs through the actual Core input recovery consumer; failed presentation settles lease and retry to zero without model/action replay or changing Main's answer.
+    persistenceAndCleanup: Replaying the same saved final retains its turn and revision, produces an idempotent acknowledgment, and neither reruns the model nor delivers a duplicate item. A body/source/current-author-validated completed final outranks the legacy unfinished presentation flag; absent or foreign proof cannot claim completed production. A useful later Cortex or worker result retains its separate ledger receipt after a zero-item Main receipt, without a duplicate Main send or raw status.
+    evidence: [visible silence and idle status, exact source and turn, canonical final, acknowledgment and ingress state, provider request count, authorized attachment receipt]

@@ -48,6 +48,8 @@ def test_runtime_intent_update_is_atomic_private_and_preserves_helper_binding(
     payload = json.loads(config.read_text(encoding="utf-8"))
     assert payload["repoRoot"] == "/synthetic/repo"
     assert payload["showInStatusBar"] is False
+    revision = payload["runtimeSupervision"].pop("intentRevision")
+    assert len(revision) == 32
     assert payload["runtimeSupervision"] == {
         "schemaVersion": 1,
         "desiredState": "stopped",
@@ -60,6 +62,10 @@ def test_runtime_intent_update_is_atomic_private_and_preserves_helper_binding(
     assert module.update_runtime_intent(config, "running") is True
     payload = json.loads(config.read_text(encoding="utf-8"))
     assert payload["runtimeSupervision"]["desiredState"] == "running"
+    assert payload["runtimeSupervision"]["intentRevision"] != revision
+    previous = payload["runtimeSupervision"]["intentRevision"]
+    assert module.update_runtime_intent(config, "running") is True
+    assert json.loads(config.read_text())["runtimeSupervision"]["intentRevision"] != previous
 
 
 def test_runtime_intent_refuses_symlinked_helper_config(tmp_path: Path) -> None:

@@ -958,8 +958,17 @@ def test_public_https_edge_rebuilds_when_requested_glasshive_surface_is_missing(
     assert module.state_matches_requested_public_edge_surfaces(args, state) is False
 
 
-def test_cmd_start_public_https_edge_preserves_explicit_livekit_node_ip(monkeypatch, tmp_path: Path) -> None:
+@pytest.mark.parametrize(("node_ip", "wan_ip", "api_host"), [
+    ("198.51.100.24", "203.0.113.42", ""),
+    ("8.8.8.8", "8.8.8.8", ""),
+    ("192.168.50.10", "9.9.9.9", ""),
+    ("8.8.8.8", "9.9.9.9", "https://media.example.test"),
+    ("8.8.8.8", "9.9.9.9", "http://localhost:9999"),
+])
+def test_cmd_start_public_https_edge_preserves_explicit_livekit_node_ip(monkeypatch, tmp_path: Path, node_ip, wan_ip, api_host) -> None:
     module = load_module()
+    monkeypatch.setenv("LIVEKIT_API_HOST", api_host)
+    monkeypatch.setattr(module, "assigned_local_ipv4s", lambda: {"192.168.50.10"})
 
     class DummyLock:
         def fileno(self):
@@ -981,9 +990,9 @@ def test_cmd_start_public_https_edge_preserves_explicit_livekit_node_ip(monkeypa
     monkeypatch.setattr(
         module,
         "list_upnpc_state",
-        lambda _bin: {"external_ip": "203.0.113.42", "local_ip": "192.168.50.10", "mappings": {}},
+        lambda _bin: {"external_ip": wan_ip, "local_ip": "192.168.50.10", "mappings": {}},
     )
-    monkeypatch.setattr(module, "discover_public_ipv4", lambda _bin=None: "203.0.113.42")
+    monkeypatch.setattr(module, "discover_public_ipv4", lambda _bin=None: wan_ip)
     monkeypatch.setattr(module, "pick_caddy_admin_port", lambda: 2019)
     ports = iter([4080, 4443])
     monkeypatch.setattr(module, "pick_free_port", lambda: next(ports))
@@ -1022,7 +1031,7 @@ def test_cmd_start_public_https_edge_preserves_explicit_livekit_node_ip(monkeypa
         public_api_origin="",
         public_playground_origin="",
         public_livekit_url="",
-        livekit_node_ip="198.51.100.24",
+        livekit_node_ip=node_ip,
         caddy_data_dir="",
         provider="public_https_edge",
         auto_install=False,
@@ -1032,7 +1041,7 @@ def test_cmd_start_public_https_edge_preserves_explicit_livekit_node_ip(monkeypa
 
     assert module.cmd_start(args) == 0
 
-    assert saved["livekit_node_ip"] == "198.51.100.24"
+    assert saved["livekit_node_ip"] == node_ip
 
 
 def test_cmd_start_persists_error_state_when_remote_access_bootstrap_fails(monkeypatch, tmp_path: Path) -> None:
@@ -1336,3 +1345,289 @@ def test_refresh_failed_dhcp_add_retry_restores_exact_missing_owned_key(monkeypa
     assert len(commands) == 9 and "-a" in commands[0]
     assert live["mappings"] == {(proto, external): (new_ip, internal) for proto, external, internal in ports}
     assert all(mapping["internal_host"] == new_ip for mapping in result["router"]["mappings"])
+
+
+@pytest.mark.parametrize("moved", [False, True])
+@pytest.mark.parametrize("wan", ["198.51.100.21", "", None])
+def test_refresh_wan_drift_fails_before_router_writes_and_preserves_owned_state(monkeypatch, moved, wan):
+    import copy
+    module = load_module()
+    state, live, commands, _ports, _old_ip, _new_ip = edge_refresh_fixture(module, monkeypatch, moved=moved)
+    original = copy.deepcopy(state)
+    live["external_ip"] = wan
+    if wan is None:
+        monkeypatch.setattr(module, "list_upnpc_state", lambda _bin: (_ for _ in ()).throw(RuntimeError("Router unavailable")))
+    with pytest.raises(module.PublicEdgeWanError) as error:
+        module.refresh_public_https_edge_mappings(state, lease_seconds=14400)
+    assert error.value.code == ("public_edge_wan_changed" if wan else "public_edge_wan_unavailable")
+    assert commands == []
+    assert state == original
+
+
+def test_cmd_refresh_wan_error_persists_full_state_status_and_stop_ownership(monkeypatch, tmp_path, capsys):
+    import copy
+    module = load_module()
+    state, live, commands, _ports, _old_ip, _new_ip = edge_refresh_fixture(module, monkeypatch, moved=False)
+    state["client"] = {"target": "http://127.0.0.1:3190", "public_url": "https://app.example.test"}
+    state_path = tmp_path / "edge.json"
+    module.save_state(state_path, state)
+    original = copy.deepcopy(state)
+    live["external_ip"] = "198.51.100.21"
+    args = types.SimpleNamespace(state_file=str(state_path), upnp_lease_seconds=14400)
+    with pytest.raises(module.PublicEdgeWanError):
+        module.cmd_refresh_mappings(args)
+    failed = module.load_state(state_path)
+    assert failed["last_error_code"] == "public_edge_wan_changed"
+    assert "Update public DNS" in failed["last_error"]
+    assert {key: value for key, value in failed.items() if key not in {"last_error", "last_error_code"}} == original
+    assert commands == []
+    assert module.cmd_status(args) == 1
+    assert json.loads(capsys.readouterr().out)["healthy"] is False
+    stopped = []
+    monkeypatch.setattr(module, "stop_state", lambda saved: stopped.append(saved))
+    assert module.cmd_stop(args) == 0
+    assert stopped == [failed]
+    assert not state_path.exists()
+
+
+def test_cmd_start_does_not_retire_edge_with_unresolved_wan_error(monkeypatch, tmp_path):
+    module = load_module()
+    state, _live, commands, _ports, _old_ip, _new_ip = edge_refresh_fixture(module, monkeypatch, moved=False)
+    state.update(last_error_code="public_edge_wan_changed", last_error="Update public DNS and restart")
+    state_path = tmp_path / "edge.json"
+    module.save_state(state_path, state)
+    monkeypatch.setattr(module, "start_public_https_edge", lambda *_args, **_kwargs: pytest.fail("Must preserve unresolved edge"))
+    args = types.SimpleNamespace(state_file=str(state_path), log_dir=str(tmp_path / "logs"), provider="public_https_edge")
+    with pytest.raises(RuntimeError, match="Update public DNS"):
+        module.cmd_start(args)
+    assert module.load_state(state_path) == state
+    assert commands == []
+
+
+@pytest.mark.parametrize("local_healthy", [False, True])
+def test_cmd_start_checks_current_wan_before_reusing_or_retiring_owned_edge(monkeypatch, tmp_path, local_healthy):
+    module = load_module()
+    state, live, commands, _ports, _old_ip, _new_ip = edge_refresh_fixture(module, monkeypatch, moved=False)
+    live["external_ip"] = "198.51.100.21"
+    state_path = tmp_path / "edge.json"
+    module.save_state(state_path, state)
+    monkeypatch.setattr(module, "state_is_healthy", lambda _state: local_healthy)
+    args = types.SimpleNamespace(state_file=str(state_path), log_dir=str(tmp_path / "logs"), provider="public_https_edge")
+    with pytest.raises(module.PublicEdgeWanError): module.cmd_start(args)
+    retained = module.load_state(state_path)
+    assert retained["last_error_code"] == "public_edge_wan_changed"
+    assert retained["caddy"] == state["caddy"] and retained["router"] == state["router"]
+    assert commands == []
+
+
+@pytest.mark.parametrize("fault", ["none", "local_target_down", "dead_caddy", "unknown_wan", "missing_saved_wan", "mapping_rejected", "unrelated_error"])
+def test_wan_error_clears_only_after_verified_address_mapping_and_local_recovery(monkeypatch, tmp_path, fault):
+    module = load_module()
+    state, live, _commands, _ports, _old_ip, _new_ip = edge_refresh_fixture(module, monkeypatch, moved=False)
+    state["client"] = {"target": "http://127.0.0.1:3190", "public_url": "https://app.example.test"}
+    state.update(last_error_code="public_edge_wan_changed", last_error="Update public DNS and restart")
+    monkeypatch.setattr(module, "probe_local_endpoint", lambda *_args, **_kwargs: fault != "local_target_down")
+    if fault == "dead_caddy": monkeypatch.setattr(module, "pid_is_running", lambda _pid: False)
+    elif fault == "unknown_wan": live["external_ip"] = ""
+    elif fault == "missing_saved_wan": state["public_ip"] = ""
+    elif fault == "mapping_rejected":
+        monkeypatch.setattr(module, "ensure_upnp_mapping", lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("Router rejected renewal")))
+    elif fault == "unrelated_error": state.update(last_error_code="another_error", last_error="Another failure")
+    state_path = tmp_path / "edge.json"
+    module.save_state(state_path, state)
+    args = types.SimpleNamespace(state_file=str(state_path), upnp_lease_seconds=14400)
+    if fault == "none":
+        assert module.cmd_refresh_mappings(args) == 0
+        recovered = module.load_state(state_path)
+        assert "last_error" not in recovered and "last_error_code" not in recovered
+        assert module.state_is_healthy(recovered) is True
+        assert recovered["caddy"] == state["caddy"]
+        assert recovered["router"]["mappings"] == state["router"]["mappings"]
+    else:
+        with pytest.raises(RuntimeError): module.cmd_refresh_mappings(args)
+        retained = module.load_state(state_path)
+        assert retained["last_error"]
+        assert module.state_is_healthy(retained) is False
+
+
+def healthy_edge_start_fixture(module, monkeypatch, tmp_path):
+    state, live, commands, _ports, _old_ip, _new_ip = edge_refresh_fixture(module, monkeypatch, moved=False)
+    state["client"] = {"target": module.surface_target_url(3190), "public_url": "https://app.example.test"}
+    state_path = tmp_path / "edge.json"
+    module.save_state(state_path, state)
+    monkeypatch.setattr(module, "probe_local_endpoint", lambda *_args, **_kwargs: True)
+    monkeypatch.setattr(module, "start_public_https_edge", lambda *_args, **_kwargs: pytest.fail("Must reuse the existing edge"))
+    args = types.SimpleNamespace(
+        state_file=str(state_path), log_dir=str(tmp_path / "logs"), provider="public_https_edge",
+        client_port=3190, api_port=0, playground_port=0, livekit_port=0, glasshive_port=0,
+        livekit_node_ip=state["livekit_node_ip"], public_client_origin="https://app.example.test",
+    )
+    return state, live, commands, state_path, args
+
+
+@pytest.mark.parametrize("observer", ["missing_binary", "router_unavailable", "router_wan_missing"])
+@pytest.mark.parametrize("wan", ["198.51.100.20", "198.51.100.21", ""])
+def test_start_observation_fallback_preserves_existing_edge_without_upnp_dependency(monkeypatch, tmp_path, observer, wan):
+    module = load_module()
+    state, live, commands, state_path, args = healthy_edge_start_fixture(module, monkeypatch, tmp_path)
+    if observer == "missing_binary": monkeypatch.setattr(module, "resolve_binary", lambda _name: None)
+    elif observer == "router_unavailable":
+        monkeypatch.setattr(module, "list_upnpc_state", lambda _bin: (_ for _ in ()).throw(RuntimeError("Router unavailable")))
+    else: live["external_ip"] = ""
+    lookups = []
+    def observe(upnpc_bin):
+        lookups.append(upnpc_bin)
+        if not wan: raise RuntimeError("Public address unavailable")
+        return wan
+    monkeypatch.setattr(module, "discover_public_ipv4", observe)
+    if wan == state["public_ip"]:
+        assert module.cmd_start(args) == 0
+        assert module.load_state(state_path) == state
+    else:
+        with pytest.raises(module.PublicEdgeWanError): module.cmd_start(args)
+        retained = module.load_state(state_path)
+        assert retained["last_error_code"] == ("public_edge_wan_changed" if wan else "public_edge_wan_unavailable")
+        assert retained["caddy"] == state["caddy"] and retained["router"] == state["router"]
+    assert lookups == [None]
+    assert commands == []
+
+
+def test_start_manual_forwarding_has_no_upnp_or_public_probe_dependency(monkeypatch, tmp_path):
+    module = load_module()
+    state, _live, commands, state_path, args = healthy_edge_start_fixture(module, monkeypatch, tmp_path)
+    state["router"]["mappings"] = []
+    module.save_state(state_path, state)
+    monkeypatch.setattr(module, "resolve_binary", lambda _name: None)
+    monkeypatch.setattr(module, "discover_public_ipv4", lambda *_args: pytest.fail("Manual edge reuse has no router observation dependency"))
+    assert module.cmd_start(args) == 0
+    assert module.load_state(state_path) == state
+    assert commands == []
+
+
+@pytest.mark.parametrize("restored_by", ["router", "external_lookup", "local_target_down"])
+def test_start_retry_recovers_transient_wan_observation_outage_without_teardown(monkeypatch, tmp_path, restored_by):
+    module = load_module()
+    state, _live, commands, state_path, args = healthy_edge_start_fixture(module, monkeypatch, tmp_path)
+    router_observer = module.list_upnpc_state
+    monkeypatch.setattr(module, "list_upnpc_state", lambda _bin: (_ for _ in ()).throw(RuntimeError("Router unavailable")))
+    monkeypatch.setattr(module, "discover_public_ipv4", lambda _bin: (_ for _ in ()).throw(RuntimeError("Public address unavailable")))
+    with pytest.raises(module.PublicEdgeWanError): module.cmd_start(args)
+    failed = module.load_state(state_path)
+    assert failed["last_error_code"] == "public_edge_wan_unavailable"
+    assert module.state_is_healthy(failed) is False
+    if restored_by != "external_lookup": monkeypatch.setattr(module, "list_upnpc_state", router_observer)
+    else: monkeypatch.setattr(module, "discover_public_ipv4", lambda _bin: state["public_ip"])
+    if restored_by == "local_target_down":
+        monkeypatch.setattr(module, "probe_local_endpoint", lambda *_args, **_kwargs: False)
+        with pytest.raises(RuntimeError): module.cmd_start(args)
+        assert module.load_state(state_path) == failed
+    else:
+        assert module.cmd_start(args) == 0
+        assert module.load_state(state_path) == state
+        assert module.state_is_healthy(state) is True
+    assert commands == []
+
+
+def test_start_observation_fallback_does_not_clear_recorded_wan_change(monkeypatch, tmp_path):
+    module = load_module()
+    state, _live, commands, state_path, args = healthy_edge_start_fixture(module, monkeypatch, tmp_path)
+    state.update(last_error_code="public_edge_wan_changed", last_error="Update public DNS and restart")
+    module.save_state(state_path, state)
+    monkeypatch.setattr(module, "resolve_binary", lambda _name: None)
+    monkeypatch.setattr(module, "discover_public_ipv4", lambda _bin: state["public_ip"])
+    with pytest.raises(RuntimeError, match="Update public DNS"): module.cmd_start(args)
+    assert module.load_state(state_path) == state
+    assert commands == []
+
+
+@pytest.mark.parametrize("moved", [False, True])
+def test_mapping_refresh_never_substitutes_public_observation_for_router_ownership(monkeypatch, moved):
+    module = load_module()
+    state, _live, commands, _ports, _old_ip, _new_ip = edge_refresh_fixture(module, monkeypatch, moved=moved)
+    monkeypatch.setattr(module, "list_upnpc_state", lambda _bin: (_ for _ in ()).throw(RuntimeError("Router unavailable")))
+    monkeypatch.setattr(module, "discover_public_ipv4", lambda *_args: pytest.fail("Router writes need actual router evidence"))
+    with pytest.raises(module.PublicEdgeWanError): module.refresh_public_https_edge_mappings(state, lease_seconds=14400)
+    assert commands == []
+
+
+@pytest.mark.parametrize("caller", ["start", "refresh"])
+@pytest.mark.parametrize("unavailable", ["empty_wan", "router_error"])
+def test_recorded_wan_change_survives_unknown_observation_and_same_ip_start_fallback(monkeypatch, tmp_path, caller, unavailable):
+    module = load_module()
+    state, live, commands, state_path, args = healthy_edge_start_fixture(module, monkeypatch, tmp_path)
+    args.upnp_lease_seconds = 14400
+    call = module.cmd_start if caller == "start" else module.cmd_refresh_mappings
+    live["external_ip"] = "198.51.100.21"
+    with pytest.raises(module.PublicEdgeWanError): call(args)
+    changed = module.load_state(state_path)
+    assert changed["last_error_code"] == "public_edge_wan_changed"
+    live["external_ip"] = ""
+    if unavailable == "router_error":
+        monkeypatch.setattr(module, "list_upnpc_state", lambda _bin: (_ for _ in ()).throw(RuntimeError("Router unavailable")))
+    monkeypatch.setattr(module, "discover_public_ipv4", lambda _bin: "")
+    with pytest.raises(module.PublicEdgeWanError): call(args)
+    assert module.load_state(state_path) == changed
+    monkeypatch.setattr(module, "discover_public_ipv4", lambda _bin: state["public_ip"])
+    with pytest.raises(RuntimeError, match="Update public DNS"): module.cmd_start(args)
+    assert module.load_state(state_path) == changed
+    assert changed["caddy"] == state["caddy"] and changed["router"] == state["router"]
+    assert module.state_is_healthy(changed) is False
+    assert commands == []
+
+
+def test_fresh_local_public_media_mismatch_degrades_before_router_or_process_writes(monkeypatch, tmp_path):
+    module = load_module()
+    monkeypatch.delenv("LIVEKIT_API_HOST", raising=False)
+    monkeypatch.setattr(module, "ensure_caddy", lambda _auto: "/synthetic/caddy")
+    monkeypatch.setattr(module, "resolve_binary", lambda _name: "/synthetic/upnpc")
+    monkeypatch.setattr(module, "list_upnpc_state", lambda _bin: {"local_ip": "192.0.2.10", "external_ip": "9.9.9.9"})
+    monkeypatch.setattr(module, "discover_public_ipv4", lambda _bin: "9.9.9.9")
+    monkeypatch.setattr(module, "assigned_local_ipv4s", lambda: {"192.0.2.10"})
+    monkeypatch.setattr(module, "ensure_upnp_mapping", lambda *_args, **_kwargs: pytest.fail("Invalid media address must not create mappings"))
+    monkeypatch.setattr(module, "start_caddy_process", lambda *_args, **_kwargs: pytest.fail("Invalid media address must not start Caddy"))
+    state_path = tmp_path / "edge.json"
+    args = types.SimpleNamespace(
+        state_file=str(state_path), log_dir=str(tmp_path / "logs"), provider="public_https_edge", auto_install=False,
+        client_port=3190, api_port=0, playground_port=0, livekit_port=7888, livekit_tcp_port=7889,
+        livekit_udp_port=7890, livekit_node_ip="8.8.8.8",
+    )
+    with pytest.raises(module.PublicEdgeWanError, match="LiveKit media address"): module.cmd_start(args)
+    failed = module.load_state(state_path)
+    assert failed["last_error_code"] == "public_edge_wan_changed"
+    assert module.state_is_healthy(failed) is False
+
+
+@pytest.mark.parametrize("caller", ["start", "refresh"])
+def test_saved_local_public_media_mismatch_degrades_without_retiring_owned_edge(monkeypatch, tmp_path, caller):
+    module = load_module()
+    state, live, commands, state_path, args = healthy_edge_start_fixture(module, monkeypatch, tmp_path)
+    monkeypatch.delenv("LIVEKIT_API_HOST", raising=False)
+    state.update(public_ip="9.9.9.9", livekit_node_ip="8.8.8.8")
+    state["livekit"] = {"target": module.surface_target_url(7888), "public_ws_url": "wss://media.example.test"}
+    live["external_ip"] = state["public_ip"]
+    module.save_state(state_path, state)
+    args.upnp_lease_seconds = 14400
+    assert module.state_is_healthy(state) is False
+    call = module.cmd_start if caller == "start" else module.cmd_refresh_mappings
+    with pytest.raises(module.PublicEdgeWanError, match="LiveKit media address"): call(args)
+    failed = module.load_state(state_path)
+    assert failed["last_error_code"] == "public_edge_wan_changed"
+    assert failed["caddy"] == state["caddy"] and failed["router"] == state["router"]
+    assert module.state_is_healthy(failed) is False
+    assert commands == []
+
+
+@pytest.mark.parametrize("scope", ["private_interface", "assigned_public_interface", "hosted_endpoint", "separate_local_endpoint", "web_only", "router_not_assigned"])
+def test_public_media_address_guard_preserves_other_supported_topologies(monkeypatch, scope):
+    module = load_module()
+    monkeypatch.delenv("LIVEKIT_API_HOST", raising=False)
+    assigned = {"192.0.2.10"}
+    node_ip, local_ip, port = "8.8.8.8", "192.0.2.10", 7888
+    if scope == "private_interface": node_ip = "192.0.2.10"
+    elif scope == "assigned_public_interface": assigned.add(node_ip)
+    elif scope == "hosted_endpoint": monkeypatch.setenv("LIVEKIT_API_HOST", "https://media.example.test")
+    elif scope == "separate_local_endpoint": monkeypatch.setenv("LIVEKIT_API_HOST", "http://127.0.0.1:9999")
+    elif scope == "web_only": port = 0
+    elif scope == "router_not_assigned": assigned = {"192.0.2.99"}
+    monkeypatch.setattr(module, "assigned_local_ipv4s", lambda: assigned)
+    module.validate_local_public_media_address(node_ip, "9.9.9.9", local_ip, livekit_port=port)

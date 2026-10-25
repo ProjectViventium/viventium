@@ -1022,3 +1022,19 @@ PY
 
   return 1
 }
+
+# Return the private owned log path after preserving its prior run. Unsafe files
+# may use the existing runtime's alternate log; unsafe parents still fail closed.
+viventium_preserve_runtime_log() {
+  local log_path="$1"
+  local core_root="${VIVENTIUM_CORE_DIR:-${REPO_ROOT:-}}"
+  local python_bin="${PYTHON_BIN:-python3}"
+  "$python_bin" - "$core_root/scripts/viventium" "$log_path" <<'PYPRESERVE'
+import sys
+from pathlib import Path
+sys.dont_write_bytecode = True
+sys.path.insert(0, sys.argv[1])
+from native_runtime import prepare_runtime_log
+print(prepare_runtime_log(Path(sys.argv[2]), maximum_bytes=1))
+PYPRESERVE
+}

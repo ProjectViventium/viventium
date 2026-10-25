@@ -323,6 +323,7 @@ def test_group_reply_caption_never_becomes_owner_authored_prompt_body():
 class _FakeTelegramBot:
     def __init__(self) -> None:
         self.messages = []
+        self.actions = []
         self.edits = []
         self.audios = []
         self.photos = []
@@ -336,7 +337,8 @@ class _FakeTelegramBot:
         self._messages_by_id = {}
         self.next_id = 1000
 
-    async def send_chat_action(self, **_kwargs):
+    async def send_chat_action(self, **kwargs):
+        self.actions.append(kwargs)
         return None
 
     async def send_message(self, **kwargs):
@@ -977,22 +979,18 @@ def typing_response(monkeypatch):
     async def noop(*_args, **_kwargs):
         return None
 
-    async def unblocked(*_args, **_kwargs):
-        return False
-
-    monkeypatch.setattr(tg_bot, "is_bot_blocked", unblocked)
     monkeypatch.setattr(tg_bot, "_retry_source_order_retractions", noop)
     monkeypatch.setattr(tg_bot, "_retry_pending_source_order_terminals", noop)
     monkeypatch.setattr(tg_bot, "_cleanup_obsolete_retry_terminals", noop)
     monkeypatch.setattr(tg_bot, "Users", types.SimpleNamespace(get_config=lambda *_a: False))
     monkeypatch.setattr(tg_bot.config, "VIVENTIUM_TELEGRAM_TYPING_INTERVAL_S", 0.01)
 
-    async def invoke(context, robot, source_guard=None):
+    async def invoke(context, robot, source_guard=None, input_recovery=None):
         return await tg_bot.getViventiumResponse(
             update_message=_FakeUpdateMessage(), context=context, title="", robot=robot,
             message="Synthetic lifecycle request.", chatid=111, messageid=222,
             convo_id="typing-lifecycle", message_thread_id=None, trace_id="typing-lifecycle",
-            telegram_message_id=222, _source_guard=source_guard,
+            telegram_message_id=222, _source_guard=source_guard, _input_recovery=input_recovery,
         )
 
     return invoke
@@ -2985,11 +2983,6 @@ def test_command_ingress_observes_n_plus_one_280ms_before_stale_presentation(
             sleeper=_recording_sleep,
         )
 
-    async def _record_unrelated_await(_bot, _chat_id):
-        boundary_order.append("unrelated_await")
-        await asyncio.sleep(0)
-        return False
-
     class _FaithfulRaceBot(_FakeTelegramBot):
         def __init__(self):
             super().__init__()
@@ -3150,7 +3143,6 @@ def test_command_ingress_observes_n_plus_one_280ms_before_stale_presentation(
     monkeypatch.setattr(tg_bot, "remove_job_if_exists", lambda *_a, **_k: None)
     monkeypatch.setattr(tg_bot, "should_send_voice_reply", lambda **_k: False)
     monkeypatch.setattr(tg_bot, "send_librechat_attachments", _noop_send_librechat_attachments)
-    monkeypatch.setattr(tg_bot, "is_bot_blocked", _record_unrelated_await)
     monkeypatch.setattr(
         tg_bot,
         "maybe_delay_tr014_core_ingestion",
@@ -3163,7 +3155,7 @@ def test_command_ingress_observes_n_plus_one_280ms_before_stale_presentation(
     assert source_n_plus_one_observed_at is not None
     assert source_n_plus_one_core_started_at is not None
     assert source_n_presented_at is not None
-    assert boundary_order == ["unrelated_await", "delay", "core_admission"]
+    assert boundary_order == ["delay", "core_admission"]
     assert requested_delays == [0.280]
     assert [
         (
@@ -5138,8 +5130,9 @@ def test_retry_terminal_race_retains_actual_removal_or_restart_recovery(
     ]
 
 
+@pytest.mark.parametrize("state", ["partial_removed", "failed"])
 def test_non_delivery_latch_keeps_one_durable_bridge_receipt_through_core_outage(
-    monkeypatch, tmp_path
+    monkeypatch, tmp_path, state
 ):
     from utils import librechat_bridge as bridge_module
 
@@ -5194,9 +5187,16 @@ def test_non_delivery_latch_keeps_one_durable_bridge_receipt_through_core_outage
         )
         guard.bind_delivery("original-turn", 1)
         guard._retain(111, preview.message_id)
-        tg_bot._note_telegram_source_message(111, None, 223, "12345")
-        assert await guard.mark_stale() is True
-        assert telegram.current_messages == {}
+        if state == "partial_removed":
+            tg_bot._note_telegram_source_message(111, None, 223, "12345")
+            assert await guard.mark_stale() is True
+            assert telegram.current_messages == {}
+        else:
+            # A file-delivery uncertainty keeps confirmed items; only its ACK is retried.
+            await guard.acknowledge_non_delivery(
+                "failed", presentation_refs=guard.presentation_refs()
+            )
+            assert telegram.current_messages
         assert robot._cortex_ack_store.pending_count() == 1
         await guard.acknowledge_non_delivery("failed")
         assert len(requests) == 3
@@ -5206,10 +5206,13 @@ def test_non_delivery_latch_keeps_one_durable_bridge_receipt_through_core_outage
         core_available = True
         assert await restarted._drain_cortex_acknowledgements() == 1
         assert restarted._cortex_ack_store.pending_count() == 0
-        assert len(telegram.deletes) == 1
-        assert telegram.messages == telegram.audios == []
+        assert len(telegram.deletes) == (1 if state == "partial_removed" else 0)
+        assert len(telegram.messages) == (0 if state == "partial_removed" else 1)
+        assert telegram.audios == []
         expected = {"logical_turn_id": "original-turn", "revision": 1,
-                    "state": "partial_removed", "presentation_ref": "telegram:111"}
+                    "state": state, "presentation_ref": "telegram:111"}
+        if state == "failed":
+            expected["presentation_refs"] = [f"telegram:111:{preview.message_id}"]
         assert requests == [expected] * 4
 
     monkeypatch.setattr(bridge_module.httpx, "AsyncClient", _Client)
@@ -7327,3 +7330,404 @@ def test_late_stale_cleanup_does_not_replace_a_terminal_receipt(monkeypatch, tmp
     asyncio.run(run())
     assert robot.acks == [("turn-1", 1, state, "telegram:111")]
     assert len(bot.deletes) == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("failure", ["connect", "connect_timeout", "pool_timeout", "not_retained", "read_timeout", "protocol", "ambiguous_503"])
+async def test_ingress_failure_notice_only_for_definite_non_admission(failure):
+    import httpx
+    request = httpx.Request("POST", "http://example.test/source-order")
+    errors = {
+        "connect": httpx.ConnectError("offline", request=request),
+        "connect_timeout": httpx.ConnectTimeout("offline", request=request),
+        "pool_timeout": httpx.PoolTimeout("busy", request=request),
+        "read_timeout": httpx.ReadTimeout("unknown", request=request),
+        "protocol": httpx.RemoteProtocolError("unknown", request=request),
+    }
+    if failure in {"not_retained", "ambiguous_503"}:
+        response = httpx.Response(503, request=request, json={"observed": False, "error": "durable_source_order_required" if failure == "not_retained" else "source_order_unavailable"})
+        error = httpx.HTTPStatusError("unavailable", request=request, response=response)
+    else:
+        error = errors[failure]
+    class Robot:
+        async def observe_source_order(self, **kwargs):
+            raise error
+    bot = _FakeTelegramBot()
+    message = types.SimpleNamespace(from_user=types.SimpleNamespace(id=700))
+    result = await tg_bot._observe_ingress_source_guard(bot=bot, robot=Robot(), update_message=message, chat_id=111, thread_id=77, source_sequence=42)
+    assert result is None
+    if failure in {"connect", "connect_timeout", "pool_timeout", "not_retained"}:
+        assert len(bot.messages) == 1
+        assert bot.messages[0]["reply_to_message_id"] == 42
+        assert bot.messages[0]["message_thread_id"] == 77
+        assert "Please retry" in bot.messages[0]["text"]
+    else:
+        assert bot.messages == []
+    assert bot.actions == []
+
+
+@pytest.mark.asyncio
+async def test_pre_admission_outage_notice_does_not_present_for_obsolete_input():
+    import httpx
+    class Robot:
+        async def observe_source_order(self, **kwargs):
+            tg_bot._note_telegram_source_message(111, 77, 43, 700)
+            raise httpx.ConnectError("offline")
+    bot = _FakeTelegramBot()
+    await tg_bot._observe_ingress_source_guard(bot=bot, robot=Robot(), update_message=types.SimpleNamespace(from_user=types.SimpleNamespace(id=700)), chat_id=111, thread_id=77, source_sequence=42)
+    assert bot.messages == []
+    assert bot.actions == []
+
+
+def test_typing_owner_boundaries_are_logged_without_deep_timing(monkeypatch, caplog):
+    monkeypatch.setattr(tg_bot.config, "VIVENTIUM_TELEGRAM_TIMING_ENABLED", False)
+    with caplog.at_level("INFO", logger=tg_bot.logger.name):
+        tg_bot._tg_timing_log("synthetic", "typing_start", tg_bot.time.monotonic())
+        tg_bot._tg_timing_log("synthetic", "typing_stop", tg_bot.time.monotonic())
+        tg_bot._tg_timing_log("synthetic", "chunk", tg_bot.time.monotonic())
+        tg_bot._tg_timing_log("synthetic", "typing_stop", None)
+    assert "typing_start" in caplog.text
+    assert "typing_stop" in caplog.text
+    assert "step=chunk" not in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_cortex_dispatcher_backoff_resets_after_dependency_recovers(monkeypatch, caplog):
+    from utils import librechat_bridge
+    dispatcher = object.__new__(librechat_bridge.LibreChatBridge)
+    calls, sleeps = [], []
+    async def cycle():
+        calls.append(1)
+        if len(calls) in {1, 2, 4}:
+            raise ConnectionError('synthetic dependency outage')
+    async def sleep(delay):
+        sleeps.append(delay)
+        if len(sleeps) == 4:
+            raise asyncio.CancelledError
+    dispatcher._dispatch_cortex_delivery_cycle = cycle
+    monkeypatch.setattr(librechat_bridge.asyncio, 'sleep', sleep)
+    with caplog.at_level('INFO'):
+        with pytest.raises(asyncio.CancelledError):
+            await dispatcher._run_cortex_ack_dispatcher()
+    assert sleeps == [2.0, 4.0, 2.0, 2.0]
+    assert caplog.text.count('dispatcher unavailable') == 2
+    assert 'dependency recovered after 2 failures' in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_real_bridge_surfaces_exact_core_pre_write_rejection(monkeypatch):
+    import httpx
+    from utils import librechat_bridge
+    payload = {"observed": False, "error": "durable_source_order_required", "durability": "process", "replicaSafe": False}
+    calls = []
+    async def transport(request):
+        calls.append(request.url.path)
+        return httpx.Response(503, json=payload)
+    real_client = httpx.AsyncClient
+    monkeypatch.setattr(librechat_bridge.httpx, "AsyncClient", lambda **kwargs: real_client(**{**kwargs, "transport": httpx.MockTransport(transport)}))
+    # Use the actual source-order HTTP adapter, without unrelated constructor stores.
+    robot = object.__new__(librechat_bridge.LibreChatBridge)
+    robot.base_url, robot.secret = "http://example.test", "synthetic"
+    robot.get_conversation_state = lambda _: {"conversation_id": "new", "generation": "synthetic"}
+    robot.capture_conversation_state = lambda _: {"conversation_id": "new", "generation": "synthetic"}
+    bot = _FakeTelegramBot()
+    result = await tg_bot._observe_ingress_source_guard(bot=bot, robot=robot,
+        update_message=types.SimpleNamespace(from_user=types.SimpleNamespace(id=700)),
+        chat_id=111, thread_id=77, source_sequence=42)
+    assert result is None
+    assert calls == ["/api/viventium/telegram/source-order"]
+    assert len(bot.messages) == 1
+    assert bot.messages[0]["reply_to_message_id"] == 42
+    assert bot.actions == []
+
+
+@pytest.mark.parametrize("authoritative", [False, True])
+def test_recovery_typing_waits_for_authoritative_presentation(typing_response, authoritative):
+    async def scenario():
+        context = _FakeContext()
+        class RecoveryRobot(_FakeRobot):
+            async def ask_stream_async(self, *_args, **_kwargs):
+                # Give any prematurely started indicator a chance to run.
+                await asyncio.sleep(0)
+                assert context.bot.actions == []
+                if authoritative:
+                    yield {"type": "logical_turn", "logical_turn_id": "retained-turn", "revision": 1}
+                    await asyncio.sleep(0)
+                    assert len(context.bot.actions) == 1
+                yield {"type": "input_pending"}
+        for _ in range(3):
+            context.bot.actions.clear()
+            await typing_response(context, RecoveryRobot(), input_recovery={"state": "admitted"})
+            assert not _pending_typing_tasks()
+        assert len(context.bot.actions) == (1 if authoritative else 0)
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("currency", ["stale", "unavailable"])
+def test_recovery_binding_without_current_authority_never_types(typing_response, currency):
+    async def scenario():
+        context = _FakeContext()
+        class RecoveryRobot(_FakeRobot):
+            async def source_order_is_current(self, **kwargs):
+                if currency == "unavailable":
+                    raise ConnectionError("Synthetic authority outage")
+                return False
+            async def ask_stream_async(self, *_args, **_kwargs):
+                yield {"type": "logical_turn", "logical_turn_id": "old-turn", "revision": 1}
+                await asyncio.sleep(0)
+                assert context.bot.actions == []
+                yield {"type": "input_pending"}
+        for _ in range(3):
+            await typing_response(context, RecoveryRobot(), input_recovery={"state": "admitted"})
+        assert context.bot.actions == []
+        assert not _pending_typing_tasks()
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("chunks", [("{NTA}",), ("{", "N", "TA}")])
+@pytest.mark.parametrize("terminal", ["quiet", "stale", "failed"])
+def test_authored_no_response_uses_existing_delivery_receipt(monkeypatch, tmp_path, caplog, chunks, terminal):
+    """The actual bot producer must finish silent turns, not leave them for idle recovery."""
+    caplog.set_level("INFO")
+    monkeypatch.setenv("VIVENTIUM_TELEGRAM_RETRACTION_STORE_PATH", str(tmp_path / "receipts.sqlite3"))
+    class Robot(_FakeRobot):
+        def __init__(self):
+            self.acks = []
+            self.current = True
+        async def source_order_is_current(self, **kwargs):
+            return self.current
+        async def ask_stream_async(self, *args, **kwargs):
+            yield {"type": "logical_turn", "logical_turn_id": "quiet-turn", "revision": 2}
+            for chunk in chunks:
+                yield chunk
+            if terminal == "stale":
+                self.current = False
+            elif terminal == "failed":
+                yield {"type": "bridge_error", "error_class": "provider_request_rejected", "text": "", "speak": False}
+        async def ack_delivery_status(self, *args, **kwargs):
+            self.acks.append((args, kwargs))
+            return "recorded"
+        async def ack_delivery(self, *args, **kwargs):
+            self.acks.append((args, kwargs))
+            return True
+    async def no_attachments(**kwargs):
+        assert kwargs["attachments"] == []
+    async def no_speech(*args, **kwargs):
+        pytest.fail("A no-response control must not reach TTS")
+    monkeypatch.setattr(tg_bot, "Users", types.SimpleNamespace(get_config=lambda *a, **k: True))
+    monkeypatch.setattr(tg_bot, "send_librechat_attachments", no_attachments)
+    monkeypatch.setattr(tg_bot, "synthesize_speech", no_speech)
+    context, robot = _FakeContext(), Robot()
+    asyncio.run(tg_bot.getViventiumResponse(
+        update_message=_FakeUpdateMessage(), context=context, title="", robot=robot,
+        message="Keep this private.", chatid=111, messageid=222, convo_id="chat-1",
+        message_thread_id=None, trace_id="quiet-control-receipt", telegram_message_id=222, telegram_update_id=333))
+    assert not context.bot.messages and not context.bot.audios
+    if terminal == "quiet":
+        assert robot.acks == [(("quiet-turn", 2, "committed", "", []), {})]
+        assert any("voice_decision=intentional_quiet" in record.message for record in caplog.records)
+    else:
+        assert all(args[2] != "committed" for args, _ in robot.acks)
+        assert robot.acks and robot.acks[-1][0][2] == ("partial_removed" if terminal == "stale" else "failed")
+
+
+def test_authored_no_response_replay_reuses_exact_ack_without_visible_delivery(monkeypatch, tmp_path):
+    monkeypatch.setenv("VIVENTIUM_TELEGRAM_RETRACTION_STORE_PATH", str(tmp_path / "receipts.sqlite3"))
+    class Robot(_FakeRobot):
+        def __init__(self): self.acks = []
+        async def ask_stream_async(self, *args, **kwargs):
+            yield {"type": "logical_turn", "logical_turn_id": "quiet-replay", "revision": 2}
+            yield "{NTA}"
+        async def ack_delivery_status(self, *args, **kwargs):
+            self.acks.append((args, kwargs))
+            return "recorded"
+    async def no_attachments(**kwargs): assert kwargs["attachments"] == []
+    monkeypatch.setattr(tg_bot, "Users", types.SimpleNamespace(get_config=lambda *a, **k: False))
+    monkeypatch.setattr(tg_bot, "send_librechat_attachments", no_attachments)
+    context, robot = _FakeContext(), Robot()
+    async def replay():
+        for _ in range(2):
+            await tg_bot.getViventiumResponse(update_message=_FakeUpdateMessage(), context=context, title="",
+                robot=robot, message="Keep this private.", chatid=111, messageid=222, convo_id="chat-1",
+                message_thread_id=None, telegram_message_id=222, telegram_update_id=333)
+    asyncio.run(replay())
+    assert robot.acks == [(("quiet-replay", 2, "committed", "", []), {})] * 2
+    assert not context.bot.messages and not context.bot.audios
+
+
+def test_authored_no_response_keeps_canonical_file_delivery_and_receipt(monkeypatch, tmp_path):
+    monkeypatch.setenv("VIVENTIUM_TELEGRAM_RETRACTION_STORE_PATH", str(tmp_path / "receipts.sqlite3"))
+    attachment = {"user": "owner", "file_id": "native_" + "a" * 64, "filename": "result.txt",
+                  "filepath": "/uploads/owner/result.txt", "type": "text/plain", "bytes": 2,
+                  "nativeOutputFile": {"version": 1, "status": "available", "messageId": "answer",
+                                       "downloadUrl": "https://artifacts.example.test/v1/link-refs/result"}}
+    class DocumentBot(_FakeTelegramBot):
+        def __init__(self):
+            super().__init__()
+            self.documents = []
+        async def send_document(self, **kwargs):
+            self.documents.append(kwargs)
+            return _Msg(8800)
+    class Robot(_FakeRobot):
+        def __init__(self): self.acks = []
+        async def ask_stream_async(self, *args, **kwargs):
+            yield {"type": "logical_turn", "logical_turn_id": "quiet-file", "revision": 2}
+            yield {"type": "attachment", "attachment": attachment, "native_file_identity": ("owner", "answer")}
+            yield "{NTA}"
+        async def ack_delivery_status(self, *args, **kwargs):
+            self.acks.append((args, kwargs))
+            return "recorded"
+    async def send_attachment(**kwargs):
+        assert kwargs["attachments"] == [attachment]
+        await kwargs["bot"].send_document(chat_id=111, document=b"ok", filename="result.txt")
+        return {"message_ids": ["8800"], "delivery_unknown": False, "outcomes": {"sent": 1}}
+    async def no_speech(*args, **kwargs): pytest.fail("A quiet file must not reach TTS")
+    monkeypatch.setattr(tg_bot, "Users", types.SimpleNamespace(get_config=lambda *a, **k: True))
+    monkeypatch.setattr(tg_bot, "send_librechat_attachments", send_attachment)
+    monkeypatch.setattr(tg_bot, "synthesize_speech", no_speech)
+    context, robot = _FakeContext(), Robot()
+    context.bot = DocumentBot()
+    asyncio.run(tg_bot.getViventiumResponse(update_message=_FakeUpdateMessage(), context=context, title="",
+        robot=robot, message="Return the file without narration.", chatid=111, messageid=222, convo_id="chat-1",
+        message_thread_id=None, telegram_message_id=222, telegram_update_id=333))
+    assert not context.bot.messages and not context.bot.audios
+    assert len(context.bot.documents) == 1
+    assert robot.acks == [(("quiet-file", 2, "committed", "telegram:111:8800", ["telegram:111:8800"]), {})]
+
+
+@pytest.mark.parametrize("main_text", ["{NTA}", "The requested result."])
+@pytest.mark.parametrize("outcome", ["sent", "unavailable", "rejected", "unknown", "missing_receipt", "notice_failed", "partial_unknown"])
+def test_real_attachment_outcome_controls_foreground_ack(monkeypatch, tmp_path, main_text, outcome):
+    """Use the real sender; a quiet final cannot turn uncertain files into successful delivery."""
+    import httpx
+    from telegram.error import Forbidden
+    monkeypatch.setenv("VIVENTIUM_TELEGRAM_RETRACTION_STORE_PATH", str(tmp_path / "receipts.sqlite3"))
+    quiet = main_text == "{NTA}"
+    class DocumentBot(_FakeTelegramBot):
+        def __init__(self):
+            super().__init__()
+            self.document_calls = []
+            self.confirmed_documents = []
+        async def send_document(self, **kwargs):
+            self.document_calls.append(kwargs)
+            if outcome in {"rejected", "notice_failed"}:
+                raise Forbidden("File send rejected")
+            if outcome == "unknown" or (outcome == "partial_unknown" and len(self.document_calls) == 2):
+                raise httpx.ReadTimeout("Send outcome unknown")
+            if outcome == "missing_receipt":
+                return None
+            message = _Msg(8800 + len(self.document_calls))
+            self.confirmed_documents.append(message.message_id)
+            return message
+        async def send_message(self, **kwargs):
+            if outcome == "notice_failed" and kwargs["text"] == "1 file could not be sent.":
+                raise httpx.ReadTimeout("Failure notice not confirmed")
+            return await super().send_message(**kwargs)
+    class Robot(_FakeRobot):
+        base_url = "https://core.example.test"
+        secret = "synthetic-local-test"
+        def __init__(self): self.acks = []
+        async def ask_stream_async(self, *args, **kwargs):
+            yield {"type": "logical_turn", "logical_turn_id": "file-turn", "revision": 2}
+            yield main_text
+            for index in range(2 if outcome == "partial_unknown" else 1):
+                yield {"type": "attachment", "attachment": {"file_id": f"file-{index}",
+                    "filename": f"result-{index}.txt", "type": "text/plain", "bytes": 2}}
+        async def ack_delivery_status(self, *args, **kwargs):
+            self.acks.append((args, kwargs))
+            return "recorded"
+        async def ack_delivery(self, *args, **kwargs):
+            self.acks.append((args, kwargs))
+            return True
+    async def fetch(**kwargs):
+        if outcome == "unavailable":
+            raise httpx.HTTPStatusError("Missing file", request=httpx.Request("GET", kwargs["url"]),
+                                       response=httpx.Response(404))
+        return b"ok", "text/plain"
+    real_sender = tg_bot.send_librechat_attachments
+    reports = []
+    async def observed_sender(**kwargs):
+        try:
+            report = await real_sender(**kwargs)
+        except Exception as error:
+            reports.append({"exception": type(error).__name__,
+                            "message_ids": getattr(error, "telegram_message_ids", [])})
+            raise
+        reports.append(report)
+        return report
+    monkeypatch.setattr(tg_bot, "Users", types.SimpleNamespace(get_config=lambda *a, **k: False))
+    monkeypatch.setattr(tg_bot, "fetch_librechat_bytes", fetch)
+    monkeypatch.setattr(tg_bot, "send_librechat_attachments", observed_sender)
+    context, robot = _FakeContext(), Robot()
+    context.bot = DocumentBot()
+    asyncio.run(tg_bot.getViventiumResponse(update_message=_FakeUpdateMessage(), context=context, title="",
+        robot=robot, message="Return the requested result.", chatid=111, messageid=222, convo_id="chat-1",
+        message_thread_id=None, telegram_message_id=222, telegram_update_id=333))
+    assert len(reports) == 1
+    uncertain = outcome in {"unknown", "missing_receipt", "notice_failed", "partial_unknown"}
+    states = [args[2] for args, _ in robot.acks]
+    assert states == (["failed"] if uncertain and quiet else ["committed"])
+    if uncertain:
+        confirmed_refs = {f"telegram:111:{mid}" for mid in context.bot.confirmed_documents + context.bot.sent_ids}
+        actual_refs = (robot.acks[0][1].get("presentation_refs", [])
+                       if quiet else robot.acks[0][0][4])
+        assert set(actual_refs) == confirmed_refs
+        assert len(context.bot.document_calls) == (2 if outcome == "partial_unknown" else 1)
+        assert not context.bot.deletes
+    elif outcome == "sent":
+        assert context.bot.confirmed_documents == [8801]
+    else:
+        assert context.bot.messages and any("file" in m["text"] for m in context.bot.messages)
+    if quiet:
+        assert all("{NTA}" not in m["text"] for m in context.bot.messages)
+        assert not context.bot.audios
+@pytest.mark.parametrize("ack_failure", ["unavailable", "exception"])
+def test_silent_ack_uncertainty_replays_same_receipt_without_notice(monkeypatch, tmp_path, ack_failure):
+    """A missing internal receipt must not invent a visible reply to retract."""
+    store_path = tmp_path / "quiet-ack.sqlite3"
+    monkeypatch.setenv("VIVENTIUM_TELEGRAM_RETRACTION_STORE_PATH", str(store_path))
+
+    class Robot(_FakeRobot):
+        def __init__(self):
+            self.acks = []
+
+        async def ask_stream_async(self, *args, **kwargs):
+            yield {"type": "logical_turn", "logical_turn_id": "quiet-ack", "revision": 2}
+            yield "{NTA}"
+
+        async def ack_delivery_status(self, *args, **kwargs):
+            self.acks.append((args, kwargs))
+            if len(self.acks) == 1:
+                if ack_failure == "exception":
+                    raise RuntimeError("temporarily_unavailable")
+                return "unavailable"
+            return "recorded"
+
+    async def no_speech(*args, **kwargs):
+        pytest.fail("A silent receipt retry must not reach TTS")
+
+    monkeypatch.setattr(tg_bot, "Users", types.SimpleNamespace(get_config=lambda *a, **k: True))
+    monkeypatch.setattr(tg_bot, "synthesize_speech", no_speech)
+    context, robot = _FakeContext(), Robot()
+
+    async def scenario():
+        for _ in range(2):
+            await tg_bot.getViventiumResponse(
+                update_message=_FakeUpdateMessage(), context=context, title="", robot=robot,
+                message="Keep this private.", chatid=111, messageid=222, convo_id="chat-1",
+                message_thread_id=None, telegram_message_id=222, telegram_update_id=333,
+            )
+            assert not context.bot.messages and not context.bot.audios
+            if store_path.exists():
+                import sqlite3
+                with sqlite3.connect(store_path) as connection:
+                    exists = connection.execute(
+                        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='telegram_source_pending_terminals'"
+                    ).fetchone()
+                    if exists:
+                        assert connection.execute(
+                            "SELECT COUNT(*) FROM telegram_source_pending_terminals"
+                        ).fetchone()[0] == 0
+
+    asyncio.run(scenario())
+    assert robot.acks == [(("quiet-ack", 2, "committed", "", []), {})] * 2

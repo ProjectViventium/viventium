@@ -73,3 +73,12 @@ journeys:
     degradedAndRecovery: A failed start is not confirmed as saved or complete; a pending accepted occurrence is not claimed completed. Explicit status and wait requests remain available.
     persistenceAndCleanup: Retain original schedules and receipts; retire only disposable fixtures. Shared context files remain accessible but are not scanned or attributed to every completed run.
     evidence: [old and proposed exact-model native tool traces, one actual occurrence, actual channel result, selected native-file integrity, shared no-scan and isolated-input checks, running candidate identity]
+
+  - id: retained-cortex-terminal-cursor
+    requirements: [CC-054, CC-055]
+    userAction: Restart after a retained Scheduling Cortex occurrence has finished while its task cursor remains due; repeat for a one-time and recurring task, then race recovery with Edit and Stop.
+    surfaces: [retained Scheduling Cortex, run history, selected channel]
+    expectedResult: Advance an unchanged cursor once from the finished occurrence or deactivate its one-time definition, without resending it. Keep the finished run's actual result and history; a pending task status bound to it shows the actual terminal result. The next tick applies normal latest-occurrence and misfire rules, records the exact due occurrence, and keeps today's eligible recurring work available.
+    degradedAndRecovery: A current active occurrence, foreign receipt, changed definition, Stop or newer task update rejects stale recovery. A stale stored fingerprint does not block an unchanged computed definition. Retry does not relabel failure as completion or missed delivery, replay old work, or skip today's eligible occurrence.
+    persistenceAndCleanup: A second tick or restart performs no repeated action and no terminal-occurrence spin. Preserve original schedules; retire only synthetic fixtures.
+    evidence: [terminal occurrence and exact task receipt, no dispatch assertion, edit/Stop race proof, current runtime and bounded recovery logs]

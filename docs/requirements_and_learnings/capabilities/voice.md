@@ -1,5 +1,23 @@
 # Voice
 
+## Host failure is distinct from model failure
+
+A host admission connection refusal proves that the original input has not reached Core. The
+existing call-owned ordered courier retains and retries that same body and source identity within
+its current deadline. It also retries Core's typed, retryable pre-launch authority-unavailable
+response; other rejected requests are not treated as safe action retries. A timeout or disconnect
+after a possible write never re-POSTs that action.
+
+A foreground deadline must not speak a repeat-request notice while the original source is still
+being retained: that would invite a second action. Only a final failure on the current presentation,
+in freshly authoritative Call mode, may speak a transport notice. Proven non-admission says the
+request was not sent; an unknown acceptance says it could not be confirmed. Wing, Listen-Only,
+call closure and superseded presentations stay silent. The retained source can still receive its
+authentic receipt after foreground presentation ends; no receipt is invented. Courier notices are
+not canonical Main output, never claim completed work or provider rate limits, and do not change
+Main delivery or removal receipts. Host stream HTTP errors use their typed origin before
+provider-message classification.
+
 ## User promise
 
 Voice Call is a real-time surface for the same authorized Main. Speech stays responsive, interruption
@@ -30,8 +48,59 @@ admission, HTTP and acknowledgement tasks. Missing or failed receipts never crea
 acknowledgement or new action authority. Retention before Core admission is limited to the live call
 process; a transport timeout does not prove admission.
 
-The same source recovery accepts an unfinished Web predecessor for a Voice successor.
-The successor's declared additive scope owns input continuity. Recovery still requires
+Final speech input must reach that ordered admission owner before a transient Core outage can
+abort the SDK turn. The gateway finalizes speaker/timeline context locally and keeps the exact
+original segments and late revisions on the source. Ordinary Call and Listen-Only use the existing
+Core voice/chat ingress, which persists those revisions and re-reads current mode, participant and
+action authority before execution. A duplicate standalone speaker POST and per-turn authority GET
+must not block that healthy path.
+
+Required shared-microphone safety state and Wing engagement preflight stay inside the same
+call-owned admission task. Any interim tombstone already in flight must settle before source
+admission. Existing supervised idempotent revision delivery survives speech interruption; a
+cancelled or rejected tombstone returns to the tracker's pending safety state. A consumed Wing
+receipt stays with its exact source during preflight recovery, with its expiry, revision, speaker
+and mode checks intact. A suspended last-observed mode grants no action or audio authority.
+Core's current mode, missing engagement, unverified guest, revocation and End still fail closed.
+
+Interruption preserves original A/B/C source order, including an empty transcript between two
+non-empty sources. End closes retained preflight/admission work. Owner captions use the same
+non-blocking UI publisher as task activity; waiting for RTC cannot delay canonical input ingress.
+
+A temporary Core/task-stream outage must not permanently change a known physical owner track
+into an unknown speaker. A final non-diarizing source whose participant-track attribution was
+blocked solely by suspended mode stays Unknown while waiting. Only that exact locally bound
+source is marked pending in the existing bounded tracker with the last applied Core mode
+revision, segment revision and track. Its existing ordered admission reads the current call state
+only for that pending source, then refreshes the microphone binding. Current Call must retain the
+exact mode revision: an unseen Call → Wing/Listen-Only → Call change cannot retroactively label
+speech as owner. Every existing push, snapshot, turn-authority and periodic mode update carries
+its revision. A Core-only restart with the gateway retained does not change that revision;
+provider failure/readiness transitions intentionally invalidate it. An unchanged owner track,
+source record, no overlap and no shared-mic tombstone may then complete the existing
+participant-track attribution with a monotonic speaker revision. Source ID, segment ID, text and
+order stay unchanged. Wing, Listen-Only, replaced/unbound microphone, guest, genuine unknown and
+shared-mic sources never acquire that authority. This recovery read cannot restore audio authority.
+Core still rechecks the persisted current actor, mode and safety state before granting tools.
+Healthy Call adds no wait or HTTP request.
+
+A recovery test that only answers arithmetic cannot prove action parity: a restricted unknown
+actor can still receive a conversational answer. The first post-outage action test must prove
+verified source attribution, the configured Queen's authorized handoff tools, native worker
+acceptance, real effect and Main-authored result delivery.
+
+Guest ambient speech remains soft transcript evidence only. Its original segment/revision identity
+and existing ingress lock make retry idempotent, including an unknown response. Its bounded retry
+uses the existing retained call continuation owner, separately from required safety delivery, so it
+cannot hold owner action admission. Interruption of a guest track does not discard its pending
+transcript; revocation stops retry and End cancels it. No guest action grant or new queue is added.
+All source retention before Core admission remains process-local; restarting the gateway itself
+can still lose an unadmitted source.
+
+The same source recovery applies to an unfinished native reply on Web, Telegram or Voice,
+including an unfinished Web predecessor for a Voice successor and a Web successor. The successor's
+declared additive scope owns input continuity. The existing logical-turn owner recovers unanswered
+input only after
 exact source and owner identity, actual removal evidence, released execution and fresh
 accepted-work facts within the existing deadline. Partial removal does not prove provider
 completion or grant new authority; unanswered inputs retain their content and order.
@@ -482,6 +551,36 @@ Acceptance follows the requested outcome, not one announcement per worker. A suc
 `{NTA}` decision is terminal when no new user-facing result is needed. Check the accepted callback
 identity and the actual delivered outcome; require completed audio presentation for every visible
 Voice follow-up, but never force another announcement of a result Main already delivered.
+
+### Task activity transport recovery
+
+Task events keep their existing semantic ordering, cancellation tombstones and speech owner.
+RTC publication is only a copy of UI state: the gateway offers that copy without waiting for the
+network, so a missing packet acknowledgement cannot hold later task or cancellation events.
+The shared data publisher has a one-second SDK completion deadline. A timeout is an unknown
+packet outcome, not a failed worker action or permission to replay speech.
+
+One call-owned publisher retains only the newest unsent task event or speaker-segment revision,
+bounded by the existing combined 4,096-item retention budget. It uses at most one flush task. Failed packets retry from the existing
+authoritative-state reconciliation tick; there is no additional polling timer, model call or durable
+queue. A newer terminal/cancellation revision cannot be removed by an older send completion.
+Call/participant authority stays exact. Disconnect and session close stop new publication; the
+existing authenticated-plane shutdown cancels and joins the publisher. Invalid scope, missing
+destination and oversize data stay unsent.
+
+A successful packet publish does not prove the browser observed it. LiveKit's
+[data packet contract](https://docs.livekit.io/transport/data/packets/) is not durable history.
+Each successful existing 25-second browser call keepalive therefore triggers the task portion of
+the current authenticated snapshot loader. This also recovers a completely missed final event while
+the room remains connected. It adds background task reads, not serial reply latency. Task refreshes
+remain bounded, cannot overlap, and abort on call switch/end. They do not reload speakers, change
+older-history navigation or replay actions/speech. Snapshot failures stay visible and a later
+successful observation repairs them.
+
+Regression owners: gateway `tests/test_task_publication_reliability.py` exercises the actual SDK
+with a withheld FFI completion plus transient failure, newer revision, retention and cleanup cases;
+playground `hooks/useViventiumVoiceEvents.test.tsx` and `hooks/useCallSessionState.test.tsx` cover
+missed-final recovery through the actual existing keepalive, scope, cancellation and history retention.
 
 ## Orchestration observability
 

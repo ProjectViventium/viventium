@@ -31,7 +31,7 @@ def test_detached_launch_installs_librechat_api_watchdog_contract() -> None:
     assert "stop_detached_librechat_api_watchdog" in launcher_text
     assert "start_detached_librechat_api_watchdog" in launcher_text
     assert (
-        "detached watchdog will monitor LibreChat API/artifact health while helper/user surfaces monitor readiness"
+        "detached watchdog will monitor LibreChat API health while helper/user surfaces monitor optional readiness"
         in launcher_text
     )
 

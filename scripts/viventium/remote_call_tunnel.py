@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import ipaddress
 import fcntl
 import json
 import os
@@ -76,6 +77,69 @@ COMMON_BINARY_PATHS: dict[str, tuple[str, ...]] = {
         "/usr/bin/openssl",
     ),
 }
+
+
+class PublicEdgeWanError(RuntimeError):
+    def __init__(self, code: str, message: str) -> None:
+        super().__init__(message)
+        self.code = code
+
+
+PUBLIC_EDGE_WAN_ERROR_CODES = frozenset({"public_edge_wan_changed", "public_edge_wan_unavailable"})
+
+
+def public_edge_wan_error_state(state: dict[str, Any], error: PublicEdgeWanError) -> dict[str, Any]:
+    if state.get("last_error_code") == "public_edge_wan_changed" and error.code == "public_edge_wan_unavailable":
+        return dict(state)
+    return {**state, "last_error": str(error), "last_error_code": error.code}
+
+
+def validate_local_public_media_address(node_ip: str, public_ip: str, local_ip: str, *, livekit_port: int) -> None:
+    if livekit_port <= 0 or not public_ip or not local_ip:
+        return
+    endpoint = str(os.environ.get("LIVEKIT_API_HOST") or "").strip()
+    if endpoint:
+        try:
+            parsed = urllib.parse.urlparse(endpoint)
+            if parsed.hostname not in {"localhost", "127.0.0.1", "::1"} or (parsed.port or 80) != livekit_port:
+                return
+        except ValueError:
+            return
+    try:
+        address = ipaddress.ip_address(node_ip)
+    except ValueError:
+        return
+    if address.version != 4 or not address.is_global or node_ip == public_ip:
+        return
+    assigned = assigned_local_ipv4s()
+    if local_ip not in assigned or node_ip in assigned:
+        return
+    raise PublicEdgeWanError(
+        "public_edge_wan_changed",
+        "The configured public LiveKit media address does not match this edge's verified router public address. "
+        "Update the configured LiveKit media address, then stop and start Viventium. "
+        "Existing remote-access processes and mappings were kept.",
+    )
+
+
+def validate_saved_local_public_media_address(state: dict[str, Any], public_ip: str, local_ip: str) -> None:
+    target = parse_url((state.get("livekit") or {}).get("target"))
+    if not target or target.hostname not in {"localhost", "127.0.0.1", "::1"}:
+        return
+    mappings = (state.get("router") or {}).get("mappings") or []
+    if not any(
+        mapping.get("internal_host") == local_ip
+        and mapping.get("internal_port") == mapping.get("external_port")
+        and (
+            mapping.get("protocol") == "UDP"
+            or (mapping.get("protocol") == "TCP" and mapping.get("external_port") not in {80, 443, 5349})
+        )
+        for mapping in mappings if isinstance(mapping, dict)
+    ):
+        return
+    validate_local_public_media_address(
+        str(state.get("livekit_node_ip") or "").strip(), public_ip, local_ip, livekit_port=target.port or 80,
+    )
 
 
 def parse_timeout_seconds(raw: str | None, default: int = DEFAULT_REMOTE_CALL_TUNNEL_TIMEOUT_SECONDS) -> int:
@@ -389,6 +453,8 @@ def iter_surfaces(state: dict[str, Any]):
 
 
 def state_is_healthy(state: dict[str, Any]) -> bool:
+    if state.get("last_error") or state.get("last_error_code"):
+        return False
     provider = str(state.get("provider") or "").strip()
     surfaces = list(iter_surfaces(state))
     if not provider or not surfaces:
@@ -409,6 +475,10 @@ def state_is_healthy(state: dict[str, Any]) -> bool:
     if provider == "public_https_edge":
         caddy = state.get("caddy") or {}
         saved_lan_ip = str((state.get("router") or {}).get("local_ip") or "").strip()
+        try:
+            validate_saved_local_public_media_address(state, str(state.get("public_ip") or ""), saved_lan_ip)
+        except PublicEdgeWanError:
+            return False
         return pid_is_running(caddy.get("pid")) and (
             not saved_lan_ip or saved_lan_ip in assigned_local_ipv4s()
         )
@@ -1338,6 +1408,47 @@ def public_edge_mapping_description(protocol: str, external_port: int) -> str:
     return "Viventium LiveKit TCP media"
 
 
+def inspect_public_edge_wan(
+    state: dict[str, Any], upnpc_bin: str | None, *, allow_external_lookup: bool = False
+) -> dict[str, Any]:
+    try:
+        if not upnpc_bin:
+            raise RuntimeError("miniupnpc is unavailable")
+        live_router = list_upnpc_state(upnpc_bin)
+    except (RuntimeError, OSError, subprocess.SubprocessError) as exc:
+        if not allow_external_lookup:
+            raise PublicEdgeWanError(
+                "public_edge_wan_unavailable",
+                "The router public address could not be verified. Check the router connection and retry. "
+                "Existing remote-access processes and mappings were kept.",
+            ) from exc
+        live_router = {}
+    saved_public_ip = str(state.get("public_ip") or "").strip()
+    current_public_ip = str(live_router.get("external_ip") or "").strip()
+    if allow_external_lookup and not current_public_ip:
+        try:
+            current_public_ip = str(discover_public_ipv4(None) or "").strip()
+        except (RuntimeError, OSError, subprocess.SubprocessError):
+            current_public_ip = ""
+        live_router = {**live_router, "external_ip": current_public_ip}
+    if saved_public_ip:
+        if not current_public_ip:
+            raise PublicEdgeWanError(
+                "public_edge_wan_unavailable",
+                "The router public address could not be verified. Check the router connection and retry. "
+                "Existing remote-access processes and mappings were kept.",
+            )
+        if current_public_ip != saved_public_ip:
+            raise PublicEdgeWanError(
+                "public_edge_wan_changed",
+                "The router public address changed. Update public DNS and the configured LiveKit media address, "
+                "then stop and start Viventium. Existing remote-access processes and mappings were kept.",
+            )
+    if str(live_router.get("local_ip") or "").strip():
+        validate_saved_local_public_media_address(state, current_public_ip, str(live_router["local_ip"]).strip())
+    return live_router
+
+
 def refresh_public_https_edge_mappings(state: dict[str, Any], *, lease_seconds: int) -> dict[str, Any]:
     if str(state.get("provider") or "").strip() != "public_https_edge":
         return state
@@ -1350,7 +1461,9 @@ def refresh_public_https_edge_mappings(state: dict[str, Any], *, lease_seconds: 
     if not isinstance(mappings, list) or not mappings:
         return state
 
-    live_router = list_upnpc_state(upnpc_bin)
+    live_router = inspect_public_edge_wan(state, upnpc_bin)
+    saved_public_ip = str(state.get("public_ip") or "").strip()
+    current_public_ip = str(live_router.get("external_ip") or "").strip()
     previous_lan_ip = str(router.get("local_ip") or "").strip()
     current_lan_ip = str(live_router.get("local_ip") or "").strip()
     assigned_ips = assigned_local_ipv4s()
@@ -1420,6 +1533,16 @@ def refresh_public_https_edge_mappings(state: dict[str, Any], *, lease_seconds: 
     refreshed_router["mapping_lease_seconds"] = int(max(0, lease_seconds))
     refreshed_router["last_refreshed_at"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
     refreshed_state["router"] = refreshed_router
+    if (
+        refreshed_state.get("last_error_code") in PUBLIC_EDGE_WAN_ERROR_CODES
+        and saved_public_ip
+        and current_public_ip == saved_public_ip
+    ):
+        recovered_state = dict(refreshed_state)
+        recovered_state.pop("last_error", None)
+        recovered_state.pop("last_error_code", None)
+        if state_is_healthy(recovered_state):
+            refreshed_state = recovered_state
     return refreshed_state
 
 
@@ -1587,6 +1710,13 @@ def start_public_https_edge(
     if not lan_ip:
         raise RuntimeError("Unable to determine the local LAN IPv4 address for router port forwarding")
     public_ip = discover_public_ipv4(upnpc_bin or None)
+    if (
+        str(upnp_state.get("external_ip") or "").strip() == public_ip
+        and (int(getattr(args, "livekit_tcp_port", 0) or 0) > 0 or int(getattr(args, "livekit_udp_port", 0) or 0) > 0)
+    ):
+        validate_local_public_media_address(
+            str(args.livekit_node_ip or "").strip(), public_ip, lan_ip, livekit_port=int(args.livekit_port or 0),
+        )
 
     surfaces: dict[str, dict[str, Any]] = {}
     caddy_sites: list[tuple[str, int]] = []
@@ -1937,6 +2067,21 @@ def cmd_start(args: argparse.Namespace) -> int:
             stop_state(existing)
             existing = {}
         elif existing:
+            if provider == "public_https_edge" and existing.get("public_ip") and (existing.get("router") or {}).get("mappings"):
+                try:
+                    inspect_public_edge_wan(existing, resolve_binary("upnpc"), allow_external_lookup=True)
+                except PublicEdgeWanError as exc:
+                    save_state(state_path, public_edge_wan_error_state(existing, exc))
+                    raise
+                if existing.get("last_error_code") == "public_edge_wan_unavailable":
+                    recovered = dict(existing)
+                    recovered.pop("last_error", None)
+                    recovered.pop("last_error_code", None)
+                    if state_is_healthy(recovered):
+                        existing = recovered
+                        save_state(state_path, existing)
+            if existing.get("last_error_code") in PUBLIC_EDGE_WAN_ERROR_CODES:
+                raise RuntimeError(str(existing.get("last_error") or "Remote public address needs verification"))
             requested_state_matches = state_matches_requested_livekit_node_ip(provider, args, existing)
             if provider == "public_https_edge":
                 requested_state_matches = requested_state_matches and state_matches_requested_public_edge_surfaces(
@@ -1965,7 +2110,10 @@ def cmd_start(args: argparse.Namespace) -> int:
             else:
                 raise RuntimeError(f"Unsupported remote call provider: {provider}")
         except Exception as exc:
-            save_state(state_path, build_error_state(provider, str(exc)))
+            failure = build_error_state(provider, str(exc))
+            if isinstance(exc, PublicEdgeWanError):
+                failure = public_edge_wan_error_state(failure, exc)
+            save_state(state_path, failure)
             raise
 
         save_state(state_path, state)
@@ -2008,12 +2156,18 @@ def cmd_refresh_mappings(args: argparse.Namespace) -> int:
         state = load_state(state_path)
         if not state:
             raise RuntimeError(f"No remote access state found at {state_path}")
-        refreshed_state = refresh_public_https_edge_mappings(
-            state,
-            lease_seconds=int(args.upnp_lease_seconds or DEFAULT_PUBLIC_EDGE_UPNP_LEASE_SECONDS),
-        )
+        try:
+            refreshed_state = refresh_public_https_edge_mappings(
+                state,
+                lease_seconds=int(args.upnp_lease_seconds or DEFAULT_PUBLIC_EDGE_UPNP_LEASE_SECONDS),
+            )
+        except PublicEdgeWanError as exc:
+            save_state(state_path, public_edge_wan_error_state(state, exc))
+            raise
         save_state(state_path, refreshed_state)
         print(json.dumps(refreshed_state))
+        if refreshed_state.get("last_error"):
+            raise RuntimeError(str(refreshed_state["last_error"]))
         return 0
     finally:
         try:
