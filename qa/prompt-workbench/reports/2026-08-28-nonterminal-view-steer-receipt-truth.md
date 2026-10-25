@@ -19,7 +19,7 @@
 
 | Use Case ID | Natural user action | Real surface used | Result | Visible evidence | Logs/DB/state/docs/artifact evidence | Remaining gap |
 | --- | --- | --- | --- | --- | --- | --- |
-| `PW-UC-050` | Launch durable work and open its nonterminal View / Steer link. | No real browser surface; source and automated harness only. | PARTIAL | No installed visible label was observed. | Typed launch metadata and sanitized URL/receipt binding hashes passed focused checks. | Compile, install, activate, run one configured Main launch, inspect the visible label, and verify refresh binding. |
+| `PW-UC-027` | Launch durable work and open its nonterminal View / Steer link. | No real browser surface; source and automated harness only. | PARTIAL | No installed visible label was observed. | Typed launch metadata and sanitized URL/receipt binding hashes passed focused checks. | Compile, install, activate, run one configured Main launch, inspect the visible label, and verify refresh binding. |
 
 ## Traceability
 
@@ -28,7 +28,7 @@
 - Feature: Prompt Workbench nonterminal mission-control receipt truth
 - Requirement: Visible View / Steer links must bind to the exact launch receipt without exposing raw private URLs.
 - Use case: A user launches durable work and opens the correct nonterminal mission-control surface.
-- QA case: `PW-050` / `PW-UC-050`
+- QA case: `PW-050` / `PW-UC-027`
 - Expected result: One canonical View / Steer label and a typed receipt-to-URL binding for that launch.
 - Actual evidence: Source and automated suites passed; no installed visible-surface proof exists.
 - Remaining gap or fix: Compile and activate the source, rerun one exact configured Main case, inspect the installed browser label, and verify reload persistence.
@@ -37,7 +37,7 @@
 
 | Evidence surface | Required question | Result / sanitized pointer |
 | --- | --- | --- |
-| Requirement and use case | Which requirement, user case, and QA case is being proven? | `PW-050` / `PW-UC-050`; partial source proof only. |
+| Requirement and use case | Which requirement, user case, and QA case is being proven? | `PW-050` / `PW-UC-027`; partial source proof only. |
 | Code owning path | Which code path owns the behavior? | Typed GlassHive launch metadata, mission-control link projection, and exact-model evidence adapter. |
 | Docs and nested docs/repos | Which docs or nested repo docs define the expected behavior? | Prompt architecture owner, Prompt Workbench cases, and nested GlassHive MCP contract. |
 | Scripts or harnesses | Which scripts, fixtures, QA harnesses, or automated suites exercised it? | Focused launch/View/Steer/continue, MCP-server, and exact-model journey suites. |

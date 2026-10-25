@@ -1,5 +1,9 @@
 # GlassHive Standard QA
 
+This is a retained GlassHive QA reference. For the current managed xPerfect component, use the
+[owning capability and QA links](../../docs/requirements_and_learnings/capabilities/glasshive.md)
+and the approved QA scope. Historical commands below are not the current component entrypoint.
+
 ## Scope
 
 - Owning requirements doc: `docs/requirements_and_learnings/48_GlassHive_Workstation_Sandbox_Runtime.md`
@@ -33,28 +37,10 @@ Common operator/user variants such as "run GlassHive QA", "run the standard QA s
 GlassHive Standard QA" mean this same procedure. This is an agent/operator instruction, not a
 runtime keyword-matching rule.
 
-The raw original request included machine-local skill paths and approved-resource names. This
-public-safe copy intentionally replaces those private values with placeholders while preserving the
-test semantics and the wildcard wording:
-
-```text
-I and you should have these tests / QA sets that you can run and evaluate to ensure its always working:
-
-repeat all via direct glasshive UI, Librechat, direct MCP usage
-Cases:
-1. Web Search: Quick easy test something about latest news "Who won the game between... x vs y on thursday"
-2. File Upload / Download: Attach a file like a PDF or a Excel workbook, tastefully redesign this into a PowerPoint or Html file. (must successfully take your basic file upload and prompt, autonomously do the magic on its own, and delivers files where you will be able to like a user download, view, and validate these files and identify + report and gaps or issues or misalignments. as per our documentations the bootstraps agents.md that gets supplied and used in the workspace has instructions that gets the AI worker to check its own delivery to ensure full alignments and achievement of success critreia and such. so we do not wanna modify this agents.md spelling out all the cases (that is illegal overfitting), rather we want to give it a universal harness approach to make it fully independent and reliable
-3. Scheduling: in 20 minutes (or on mondays for example) ...  do "xyz..." where xyz could be any prompt or workflow... (in this case, this is just about glasshive and must work for cases where its raw original Librechat or MCP being used - hence no scheduling cortex)
-4. Persistance: in an existing workspace, name it and its worker as you'd like user friendly and pin it as favorite. have the AI in librechat run "Tell my worker JohnDoe... (example worker name I made up), to use my Marketing sandbox (example workspace name) to do XYZ" where you need to test saving files and browser customizations manually as a user via browser use and we expect turning off and on glasshive or its workers and everything, it would be possible to bring them back, efficiently and immediately resume them, and leverage the saved state and continue using those. (Cost = Efficiency = Idle = suspect to avoid accumulating cost... this is intended to be used by hundreds of enterprise users each spawning many workers, so we should have env vars and default vars to configure how many workers can be running simulatenosuly and how many workpaces)
-5. Wild card (ensuring cases are covered based on general and universal compatibility and worker's own intelligence and no overfitting / no hardcoded crap) - search web, for usecases that you can do a quick version of but encompasses the same complexity of what people are using openclaw, codex, agents, codeinterpreter as of most latest and define 3 tests and run them via glasshive
-
-beyond this, access, security, efficiency, performance, must be assessed, checked, and addressed to be aligned with requirements you shal find and outline in our glasshive docs.
-
-the results and docs explaining expectations and requirements must be double checked by [Claude review skill] to ensure alignment, no gaps, no issues.
-
-while doing each
-closely observe, logs, db, code
-```
+Use the [case catalog](cases.md) as the public requirement: varied text or file inputs,
+substantive native-worker research and analysis, and usable answers or artifacts. Exercise the
+applicable success, failure and recovery paths within the agreed QA scope. Keep raw requests,
+machine-specific setup and unsanitized evidence outside the public repository.
 
 ## Required Suites
 
