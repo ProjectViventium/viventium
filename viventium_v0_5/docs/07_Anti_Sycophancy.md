@@ -337,90 +337,17 @@ accepted product state.
 - [Background Agent QA](../../qa/background_agents/cases.md)
 - [Dedicated Red Team QA](../../qa/red-team-cortex/cases.md)
 
-## Product-owner source notes — verbatim anti-drift record
+## Public requirement summary
 
-The concise architecture above must remain faithful to these notes. Typos and wording are preserved
-on purpose.
+The [canonical anti-sycophancy and truth-seeking contract](../../docs/requirements_and_learnings/58_Anti_Sycophancy_and_Truth_Seeking.md)
+owns the current requirements. The exact source discussion is retained privately.
 
-<details>
-<summary>Anti-drift and diagram guardrail</summary>
-
-```text
-na na redo, you literally took my vision and perspective out of. context and changed it and did not understand it and overcomplicated it the wrong way..
-
-one single diagram / chart must fully cover this vision / philosoophy of mine. dont over complicate it like this.
-
-you can use svg if thats easier or draw io or continue mermaid...
-
-i want cleaner more obvious charges / diagrams to visually understand for new devs and agents, visually clean and beautiful.
-
-especially this other part attached makes no sense and not aligned with my thing
-
-document these notes verbatum in this single md file so you dont drift / regress. and revise the Diagram to top to buttom show my vision exactly without getting stupid creative, top flow starts... input... and bottom most is output... high level butwith the same fidelity i said here, do not drop a word / detail ive noted here or in this convo
-```
-
-</details>
-
-<details>
-<summary>Original high-level vision</summary>
-
-```text
-At a very high level, how can we make viventium or an AI not syncopath and accurate? My thoughts high-level is
-A. Context = memory and background (immediate surface level map I guess the existing librechat memory keys)
-B. Short short memory so it's fast and efficiently continuing across  (I guess we already built that into the LC memories too... If the damn memory agent and dreMing features work properly!!!)
-C. Finally, full memory access, the full search, deep long term memory access
-D. Scratch pad supercharged... The whole Life folder, crms, tools, computer use access and beyond. Max ultimate context baby.
-
-Am I right so far? Did I miss anything?
-
-And once this main context layer is done properly
-It's actually more of a my world context
-So then there will be a second context dimension
-
-Other sources
-Web search and other sources
-I guess with a good main conscious AI, this one's about just a quick prompt or secondary check (check trusted sources, gather other people's experiences, examine them to see if beyond your thoughts and ideas to avoid being a syncopath, you're aware of likelihood of things, and realities)
-
-Maybe we could also fit
-Different AIs? Sub agents?
-Red team more involved?
-
-PLEASE start a documentations on this core high-level anti sycophant philosophy and guardrails
-Do not do broken telephone in these ideas, proposed and show me then your full vision aligned with this for my review and approval. This is meant to be a single anti sycophant MD doc with diagrams, use my level of high-level and avoid verbose blabber
-```
-
-</details>
-
-<details>
-<summary>Parallel-memory correction</summary>
-
-```text
-the ai cant recognize if its "enough"
-they need to be in parallel A and B
-reflect this in your doc
-and C happens regardless or maybe as a background agent? to have Subconscious agent Deep Memory Search surface Phase B if there is something "remembered" later?
-beauty is that its using the exact existing tools, features, agent builder we already have
-D would be under A and used deeper at the Main Agent's (as per golden rule) own descretion to use or not but preferred and should be used when helpful without any over explanatin over prompting
-```
-
-</details>
-
-<details>
-<summary>Foreground handoff and current A–F flow</summary>
-
-```text
-i think red team is so important, we should consider it being ALSO, additionally, a handoff agent. and idk if LC agent builder logic already does it like this... but i expect, if there is a handoff, the main agent does not have to manually pass shit to the handoff agent and the hand off agent would get access to all the context and conversation and tools of the main agent in this specific case at least.... i think it should be :
-
-
-A. User Input
-B. Regular, as documented/implement existing Background Agent / Subconscious Cortex activation detection, activation, processing in background in parallel
-C. Context Preparation (My World: Short Term memory [includes core important top of mind, context, memories, key summaries, etc... literally how LibreChat Memory System is, but call it Viventium Immediate Access Memory Keys because its not LC any more, weve updated it into something unique] + Immediate Context Map [Memory/Rag search, /Life (CRMs, files, scratchpads, projects, etc...), Tools/MCPs ( Scheduling cortex, literally all the tools/MCPs out there // no forced duplicate mentions here!)])
-D. Main Agent / Conscious Cortex: (no points in talking to this main agent if it does not have the full picture and access to spread its tentacles deeper. so main agent gets all this information + awareness.) + Outside worls is also important (so whether or not background cortices activated and whether they activated fast enough for main agent to have been notified whichones/why, it would also have system instructions @ Prompt Workbench, where it would know in one/2 lines, when it should hand off to Reality Check Agent / Cortex (deep research agent powered by glasshive that verbatum what i described looks at sources and collects data + NO ASSUMPTIONS, and looks at realitity do do reality checks) and then, only then from these results all Added (if reality check was needed and done) then optionally detects and also hands off to do Red Team same cortex. so that the final:
-E. Final Answers: includes Context, Tools, Reality, Challenged, Truly Confident True response.
-F. Phase B surfaces insights. Main Agent decides if something new / worth / valuable.
-```
-
-</details>
+- Give evidence-based, candid help instead of automatic agreement, flattery or unsupported claims.
+- Respect the user's goals and agency while explaining relevant risks, uncertainty and corrections.
+- Reuse Main, Reality Check, Red Team and Deep Memory with their documented foreground/background
+  roles. Preserve one coherent conversation and the approved nonblocking work pattern.
+- Keep current requirements, implemented behavior and acceptance evidence distinct. Apply the same
+  requirements to each supported channel and retain explicit gaps where acceptance is incomplete.
 
 ## Approval and acceptance gate
 

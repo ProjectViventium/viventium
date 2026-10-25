@@ -847,13 +847,10 @@ summarize the visible result here.
 
 ## GH-STD-024 - Master Wildcard Deep-Work Document Delivery QA
 
-- Requirement: `48_GlassHive_Workstation_Sandbox_Runtime.md#glasshive-standard-qa` and the
-  first-delivery client expectation captured verbatim below.
-- Source expectation, verbatim:
-
-```text
-w.  are going to devise one category of tests based on what my client really needs out of the first delivery of this version of glass Hive and that's basically where we create a a document file. whether it's a PDF, Microsoft word or a PowerPoint, it will be one of the wild card factors and then we want to make sure that the worker is able to deliver. absolutely spectacular and most complete deep research work just like you would get from chatgpt or Claude cowork. and we get it as a document... format? wild card... the point of this test is to have simplified one QA prompt. which has variety of file input or maybe just user text prompt input, text output or maybe also file(s) output, and deep work inside. with variations. so first, record this as the master QA since we already have standards glasshive QA and keep it exactly as I said... it's input (wildcard) deep work, output (Also type and format wildcard), so tests or development don't get overfitted to just one thing, because again... this is about supporting any prompts or requests user would/might have. so yeah.. document this expectations and requirements without paraphrasing and broken telephone, test it as it... identify current state and user facing issues... such as Claude CLI vs codex CLI delivered quality of work. do.deep research of how these tools work for actually users and even computer use test them on this computer to compare results. consult with Claude max effort
-```
+- Requirement: `48_GlassHive_Workstation_Sandbox_Runtime.md#glasshive-standard-qa`.
+- User outcome: complete substantive research and analysis from varied text or file inputs,
+  and deliver usable results in the requested format. Compare quality and capability use with
+  direct native-worker baselines; do not optimize for one prompt, provider or document type.
 
 - Risk covered: the first GlassHive delivery optimizes for one fixed prompt, one file type, one
   provider, one worker profile, or one artifact path, while real users expect open-ended deep work
