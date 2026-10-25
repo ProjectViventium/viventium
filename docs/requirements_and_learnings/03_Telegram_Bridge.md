@@ -13,6 +13,17 @@ not select the main Viventium Telegram bridge's model.
 ## Core Requirements
 
 - Telegram users receive complete responses or a clear error if the agent or voice stack disconnects.
+- A proven pre-admission connection failure or typed pre-write source-order rejection sends one
+  plain retry notice to the exact current input. It does not enter Main or TTS. Unknown acceptance
+  stays with the existing durable input recovery; the adapter must not resubmit actions.
+- Typing belongs only to an admitted foreground presentation. Never use a typing action as a
+  blocked-account probe. Start and stop boundaries are logged without enabling detailed telemetry.
+  A retained terminal input must settle its presentation receipt instead of reclaiming forever.
+  Recovery polling starts no indicator until Core returns the exact presentation or logical turn.
+  That recovered presentation must also pass the existing durable current-source check; an authentic
+  old binding alone cannot show activity after a restart or conversation change.
+- Background acknowledgement transport uses capped dependency backoff and reports recovery once;
+  it must not flood logs or hold the foreground typing indicator.
 - A released foreground reply that needs `provider_progress_stalled` attention must return that
   typed failure promptly. Telegram offers `/cancel` only after Core verifies its saved failed
   native response, unchanged source, linked owner, conversation and chat/thread scope, current

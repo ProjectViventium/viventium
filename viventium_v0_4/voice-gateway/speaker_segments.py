@@ -152,6 +152,7 @@ class SpeakerSegmentTracker:
         self._current_turn_segment_ids: list[str] = []
         self._pending_revisions: list[dict[str, Any]] = []
         self._pending_session_states: list[dict[str, Any]] = []
+        self._pending_owner_track_attribution: dict[str, tuple[int, int, str]] = {}
         self._shared_session_state_emitted = bool(initial_shared_microphone)
         self._active_segment_ids: dict[str, str] = {}
         self._last_event_fingerprint: Optional[tuple[str, bool, str, float]] = None
@@ -378,6 +379,65 @@ class SpeakerSegmentTracker:
         self._turn_sequence += 1
         return current, revisions
 
+    def defer_owner_track_attribution(
+        self, segments: list[dict[str, Any]], *, mode_revision: Optional[int],
+    ) -> None:
+        """Remember only final physical-owner evidence deferred by a suspended mode."""
+        if (type(mode_revision) is not int or mode_revision < 0
+                or not self._owner_signed or not self._track_sid or self.shared_microphone_detected):
+            return
+        for segment in segments:
+            speaker = segment.get("speaker", {})
+            if (self._segments_by_id.get(segment.get("segmentId")) == segment
+                    and segment.get("isFinal") is True and segment.get("overlap") is not True
+                    and speaker.get("actorTrust") == "unknown"
+                    and not speaker.get("providerSpeakerId")
+                    and speaker.get("participantIdentity") == self._participant_identity
+                    and speaker.get("trackSid") == self._track_sid):
+                self._pending_owner_track_attribution[segment["segmentId"]] = (
+                    mode_revision, segment["revision"], self._track_sid,
+                )
+
+    def has_pending_owner_track_attribution(self, segments: list[dict[str, Any]]) -> bool:
+        return any(item.get("segmentId") in self._pending_owner_track_attribution
+                   for item in segments if isinstance(item, dict))
+
+    def resolve_pending_owner_track_attribution(
+        self, segments: list[dict[str, Any]], *, current_call: bool,
+        mode_revision: Optional[int],
+    ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+        """Resolve exact deferred source identities, never arbitrary Unknown speech."""
+        resolved = []
+        revisions = []
+        for original in segments:
+            segment_id = original.get("segmentId")
+            if segment_id not in self._pending_owner_track_attribution:
+                resolved.append(original)
+                continue
+            pending_revision, segment_revision, track_sid = self._pending_owner_track_attribution.pop(segment_id)
+            stored = self._segments_by_id.get(segment_id)
+            speaker = original.get("speaker", {})
+            if (current_call and self._owner_signed and self._track_sid
+                    and type(mode_revision) is int and mode_revision == pending_revision
+                    and original.get("revision") == segment_revision and self._track_sid == track_sid
+                    and not self.shared_microphone_detected and stored == original
+                    and original.get("isFinal") is True and original.get("overlap") is not True
+                    and speaker.get("actorTrust") == "unknown"
+                    and not speaker.get("providerSpeakerId")
+                    and speaker.get("participantIdentity") == self._participant_identity
+                    and speaker.get("trackSid") == self._track_sid):
+                updated = deepcopy(stored)
+                updated["speaker"] = self._speaker_payload("", stable_attribution=False,
+                                                            allow_owner_participant_track=True)
+                updated["uncertain"] = False
+                updated["revision"] += 1
+                self._segments_by_id[segment_id] = updated
+                resolved.append(deepcopy(updated))
+                revisions.append(deepcopy(updated))
+            else:
+                resolved.append(original)
+        return resolved, revisions
+
     def pop_session_state_changes(self) -> list[dict[str, Any]]:
         states = [deepcopy(item) for item in self._pending_session_states]
         self._pending_session_states = []
@@ -403,6 +463,7 @@ class SpeakerSegmentTracker:
             if removable is None:
                 return
             self._segments_by_id.pop(removable, None)
+            self._pending_owner_track_attribution.pop(removable, None)
 
     def _downgrade_existing_segments(self) -> list[dict[str, Any]]:
         revisions: list[dict[str, Any]] = []

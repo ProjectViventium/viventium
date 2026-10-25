@@ -144,6 +144,7 @@ from librechat_llm import (
     _followup_audio_text,
     LibreChatAuth, LibreChatLLM, TYPED_INPUT_EXTRA_KEY, _VoiceTtsDeltaBuffer,
     _voice_source_event_id,
+    _RetryableVoiceIngressError,
 )
 from livekit.agents.llm import ChatContext, ChatMessage
 from sse import (
@@ -3788,8 +3789,9 @@ async def _publish_livekit_speaker_segments(
     segments: list[dict[str, Any]],
     *,
     owner_participant_identity: str,
-) -> None:
+) -> bool:
     """Publish validated gateway-owned segments without logging transcript content."""
+    accepted = True
     for segment in segments:
         if not isinstance(segment, dict) or segment.get("version") != 1:
             continue
@@ -3801,6 +3803,7 @@ async def _publish_livekit_speaker_segments(
             correlation_id=str(segment.get("segmentId") or ""),
             destination_identity=owner_participant_identity,
         ):
+            accepted = False
             continue
         speaker = segment.get("speaker") if isinstance(segment.get("speaker"), dict) else {}
         logger.info(
@@ -3817,19 +3820,144 @@ async def _publish_livekit_speaker_segments(
         )
 
 
+    return accepted
+
+
+_LIVEKIT_DATA_PUBLISH_TIMEOUT_S = 1.0
+
+
+class _CallTaskEventPublisher:
+    """Latest UI state only; semantic events and speech keep their existing owner."""
+
+    def __init__(self, local_participant: Any, *, call_session_id: str,
+                 owner_participant_identity: str, max_tasks: int = 4096) -> None:
+        self._participant = local_participant
+        self._call_id = call_session_id
+        self._owner = owner_participant_identity.strip()
+        # Match the existing task gate/follow-up retention, not call duration.
+        self._limit = max(1, int(max_tasks))
+        self._pending: dict[Any, dict[str, Any]] = {}
+        self._latest: dict[Any, Any] = {}
+        self._flush_task: asyncio.Task[None] | None = None
+        self._not_before = 0.0
+        self._closed = False
+
+    def offer(self, event: dict[str, Any]) -> bool:
+        if (self._closed or not self._owner or not self._call_id
+                or not isinstance(event, dict) or event.get("version") != 1
+                or event.get("callSessionId") != self._call_id
+                or not isinstance(event.get("taskId"), str) or not event["taskId"]
+                or not isinstance(event.get("sequence"), int) or isinstance(event["sequence"], bool)
+                or event["sequence"] < 0):
+            return False
+        task_id = event["taskId"]
+        if event["sequence"] <= self._latest.get(task_id, -1):
+            return False
+        try:
+            payload = json.dumps(event, ensure_ascii=True, separators=(",", ":"))
+        except (TypeError, ValueError):
+            return False
+        if len(payload.encode("utf-8")) > 14_000:
+            logger.warning("[VoiceTask] publish_skipped taskId=%s reason=payload_too_large durableSnapshotRecovery=true", task_id)
+            return False
+        self._latest.pop(task_id, None)
+        self._latest[task_id] = event["sequence"]
+        self._pending[task_id] = dict(event)
+        while len(self._latest) > self._limit:
+            oldest = next(iter(self._latest))
+            self._latest.pop(oldest)
+            if self._pending.pop(oldest, None) is not None:
+                logger.warning("[VoiceTask] pending_evicted callSessionId=%s taskId=%s durableSnapshotRecovery=true", self._call_id, oldest)
+        self.flush_if_due()
+        return True
+
+    def offer_speaker(self, segment: dict[str, Any]) -> bool:
+        if (self._closed or not self._owner or not isinstance(segment, dict)
+                or segment.get("version") != 1 or segment.get("callSessionId") != self._call_id
+                or not isinstance(segment.get("segmentId"), str) or not segment["segmentId"]
+                or type(segment.get("sequence")) is not int or segment["sequence"] < 0
+                or type(segment.get("revision")) is not int or segment["revision"] < 0):
+            return False
+        key = ("speaker", segment["segmentId"])
+        revision = (segment["sequence"], segment["revision"])
+        if key in self._latest and revision <= self._latest[key]:
+            return False
+        if len(json.dumps(segment, ensure_ascii=True, separators=(",", ":")).encode("utf-8")) > 14_000:
+            return False
+        self._latest.pop(key, None)
+        self._latest[key] = revision
+        self._pending[key] = dict(segment)
+        while len(self._latest) > self._limit:
+            oldest = next(iter(self._latest))
+            self._latest.pop(oldest)
+            self._pending.pop(oldest, None)
+        self.flush_if_due()
+        return True
+
+    def flush_if_due(self) -> None:
+        # Called by offers and the existing authoritative-mode tick. No new timer.
+        if (self._closed or not self._pending
+                or self._flush_task is not None
+                or asyncio.get_running_loop().time() < self._not_before):
+            return
+        self._flush_task = asyncio.create_task(self._flush())
+        self._flush_task.add_done_callback(self._finished)
+
+    async def _flush(self) -> None:
+        for task_id in tuple(self._pending)[:32]:
+            if self._closed:
+                return
+            event = self._pending.get(task_id)
+            if event is None:
+                continue
+            if isinstance(task_id, tuple):
+                accepted = await _publish_livekit_speaker_segments(self._participant, [event],
+                    owner_participant_identity=self._owner)
+            else:
+                accepted = await _publish_livekit_task_event(self._participant, event,
+                    owner_participant_identity=self._owner)
+            if not accepted:
+                # The outcome can be unknown. Retry this identical UI event only;
+                # never replay the semantic handler, worker action or speech.
+                self._not_before = asyncio.get_running_loop().time() + 1.0
+                return
+            if self._pending.get(task_id) is event:
+                self._pending.pop(task_id)
+
+    def _finished(self, task: asyncio.Task[None]) -> None:
+        self._flush_task = None
+        if not task.cancelled() and task.exception() is not None:
+            self._not_before = asyncio.get_running_loop().time() + 1.0
+            logger.warning("[VoiceTask] publish_failed callSessionId=%s reason=transport_exception durableSnapshotRecovery=true", self._call_id)
+        self.flush_if_due()
+
+    def stop(self, *_args: Any) -> None:
+        self._closed = True
+        self._pending.clear()
+        self._latest.clear()
+        if self._flush_task is not None:
+            self._flush_task.cancel()
+
+    async def close(self, *_args: Any) -> None:
+        task = self._flush_task
+        self.stop()
+        if task is not None:
+            await asyncio.gather(task, return_exceptions=True)
+
+
 async def _publish_livekit_task_event(
     local_participant: Any,
     task_event: dict[str, Any],
     *,
     owner_participant_identity: str,
-) -> None:
+) -> bool:
     if (
         not isinstance(task_event, dict)
         or task_event.get("version") != 1
         or not isinstance(task_event.get("taskId"), str)
         or not isinstance(task_event.get("sequence"), int)
     ):
-        return
+        return False
     payload = json.dumps(task_event, ensure_ascii=True, separators=(",", ":"))
     if not await _publish_bounded_livekit_data(
         local_participant,
@@ -3838,7 +3966,7 @@ async def _publish_livekit_task_event(
         correlation_id=str(task_event.get("eventId") or task_event.get("taskId") or ""),
         destination_identity=owner_participant_identity,
     ):
-        return
+        return False
     logger.info(
         "[VoiceTask] event_published callSessionId=%s taskId=%s eventId=%s sequence=%s state=%s phase=%s",
         task_event.get("callSessionId", ""),
@@ -3848,6 +3976,8 @@ async def _publish_livekit_task_event(
         task_event.get("state", ""),
         task_event.get("phase", ""),
     )
+
+    return True
 
 
 async def _publish_bounded_livekit_data(
@@ -3876,12 +4006,15 @@ async def _publish_bounded_livekit_data(
         )
         return False
     try:
-        await local_participant.publish_data(
-            payload,
-            reliable=True,
-            topic=topic,
-            destination_identities=[destination],
-        )
+        # The SDK waits for an FFI completion without an application deadline.
+        # A lost data ACK must not keep any call-owned courier alive indefinitely.
+        async with asyncio.timeout(_LIVEKIT_DATA_PUBLISH_TIMEOUT_S):
+            await local_participant.publish_data(
+                payload,
+                reliable=True,
+                topic=topic,
+                destination_identities=[destination],
+            )
         return True
     except Exception as exc:
         logger.warning(
@@ -4100,10 +4233,6 @@ class VoiceEngagementAuthority:
             receipt = self._receipts_by_turn.get(turn_id)
         if receipt is None:
             return None
-        self._receipts_by_turn.pop(turn_id, None)
-        self._consumed_turns[turn_id] = None
-        while len(self._consumed_turns) > 256:
-            self._consumed_turns.pop(next(iter(self._consumed_turns)))
         if not self.matches_current_turn(receipt, segments):
             return None
         if self._verify_receipt is None:
@@ -4112,6 +4241,8 @@ class VoiceEngagementAuthority:
             verified = self._verify_receipt(receipt)
             if inspect.isawaitable(verified):
                 verified = await verified
+        except (_RetryableVoiceIngressError, aiohttp.ClientError, asyncio.TimeoutError):
+            raise
         except Exception as error:
             logger.warning(
                 "[VoiceWing] engagement_verification_failed category=%s",
@@ -4120,6 +4251,10 @@ class VoiceEngagementAuthority:
             return None
         if verified is not True or not self.matches_current_turn(receipt, segments):
             return None
+        self._receipts_by_turn.pop(turn_id, None)
+        self._consumed_turns[turn_id] = None
+        while len(self._consumed_turns) > 256:
+            self._consumed_turns.pop(next(iter(self._consumed_turns)))
         return receipt
 
 
@@ -4130,10 +4265,20 @@ class AuthoritativeCallModeState:
     def __init__(self) -> None:
         self._mode: Optional[str] = None
         self._authoritative = False
+        self._revision: Optional[int] = None
 
     @property
     def mode(self) -> Optional[str]:
         return self._mode if self._authoritative else None
+
+    @property
+    def last_observed_mode(self) -> Optional[str]:
+        """Select required preflight after suspension; never grant action authority."""
+        return self._mode
+
+    @property
+    def last_observed_revision(self) -> Optional[int]:
+        return self._revision
 
     @property
     def allows_agent_dispatch(self) -> bool:
@@ -4143,11 +4288,12 @@ class AuthoritativeCallModeState:
     def suppressed_mode(self) -> str:
         return "listen_only" if self.mode == "listen_only" else "uncertain"
 
-    def apply(self, mode: str) -> None:
+    def apply(self, mode: str, *, revision: Optional[int] = None) -> None:
         if mode not in {"call", "wing", "listen_only"}:
             self.suspend()
             return
         self._mode = mode
+        self._revision = revision if type(revision) is int and revision >= 0 else None
         self._authoritative = True
 
     def suspend(self) -> None:
@@ -4488,6 +4634,8 @@ def _ingest_raw_stt_speaker_event(
     speech_stream: Any = None,
     stt_diarization: Optional[bool] = None,
     call_mode: Optional[str] = None,
+    last_observed_mode: Optional[str] = None,
+    last_observed_revision: Optional[int] = None,
 ) -> tuple[list[dict[str, Any]], bool]:
     """Preserve provider timing/diarization before AgentSession strips SpeechData."""
     event_type = getattr(event, "type", None)
@@ -4529,6 +4677,11 @@ def _ingest_raw_stt_speaker_event(
             is_final and stt_diarization is False and call_mode == "call"
         ),
     )
+    if (is_final and stt_diarization is False and call_mode is None
+            and last_observed_mode == "call"):
+        # No attribution or action authority is granted while suspended. This
+        # marks only the exact final physical-owner source for fresh resolution.
+        tracker.defer_owner_track_attribution(changes, mode_revision=last_observed_revision)
     return changes, is_final
 
 
@@ -4546,6 +4699,8 @@ class ViventiumVoiceAgent(Agent):
         speaker_timeline_origin: Optional[Any] = None,
         refresh_speaker_track: Optional[Any] = None,
         refresh_turn_authority: Optional[Any] = None,
+        refresh_call_state: Optional[Any] = None,
+        defer_turn_admission: bool = False,
         p0_timing: Optional[VoiceP0Timing] = None,
         prewarm_tts: Optional[Any] = None,
         **kwargs: Any,
@@ -4560,17 +4715,24 @@ class ViventiumVoiceAgent(Agent):
         self._speaker_timeline_offset = speaker_timeline_offset
         self._speaker_timeline_origin = speaker_timeline_origin
         self._refresh_speaker_track = refresh_speaker_track
+        self._refresh_call_state = refresh_call_state
         self._speaker_timeline_utc_available = True
         self._refresh_turn_authority = refresh_turn_authority
+        self._defer_turn_admission = defer_turn_admission
         self._p0_timing = p0_timing
         self._prewarm_tts = prewarm_tts
 
     async def _suppress_current_turn(
         self, context: dict[str, Any], mode: str
     ) -> None:
+        context.pop("voiceEngagement", None)
         try:
             if self._persist_suppressed_turn is not None:
                 await self._persist_suppressed_turn(context, mode)
+        except (_RetryableVoiceIngressError, aiohttp.ClientError, asyncio.TimeoutError):
+            if self._defer_turn_admission:
+                raise
+            logger.warning("[VoiceMode] suppressed_turn_persist_unavailable responseSuppressed=true")
         except Exception as exc:
             logger.warning(
                 "[%s] suppressed_turn_persist_failed error=%s responseSuppressed=true",
@@ -4591,6 +4753,10 @@ class ViventiumVoiceAgent(Agent):
         try:
             result = self._refresh_turn_authority(context)
             current = await result if inspect.isawaitable(result) else result
+        except (_RetryableVoiceIngressError, aiohttp.ClientError, asyncio.TimeoutError):
+            if self._defer_turn_admission:
+                raise
+            current = None
         except Exception as error:
             logger.warning(
                 "[VoiceMode] turn_authority_refresh_failed category=%s",
@@ -4621,7 +4787,7 @@ class ViventiumVoiceAgent(Agent):
             await self._suppress_current_turn(context, "uncertain")
 
         if self._authoritative_mode_state is not None:
-            self._authoritative_mode_state.apply(mode)
+            self._authoritative_mode_state.apply(mode, revision=current.get("revision"))
 
         if expected_segments:
             stored_segments = current.get("speakerSegments")
@@ -4716,6 +4882,50 @@ class ViventiumVoiceAgent(Agent):
                     finalized = self._on_finalized_speaker_context(context)
                     if inspect.isawaitable(finalized):
                         await finalized
+        if self._defer_turn_admission:
+            # Core owns ordinary turn persistence/authority. Any necessary Wing
+            # preflight belongs to its ordered call-owned admission task below.
+            return
+        await self.prepare_turn_admission(context)
+
+    async def resolve_pending_owner_track_attribution(
+        self, context: dict[str, Any],
+    ) -> list[dict[str, Any]]:
+        tracker = self._speaker_tracker
+        segments = context.get("speakerSegments")
+        if (tracker is None or not isinstance(segments, list)
+                or not tracker.has_pending_owner_track_attribution(segments)):
+            return []
+        state = self._authoritative_mode_state
+        if state is not None and state.mode is None:
+            logger.info("[VoiceSpeaker] owner_track_attribution_wait callSessionId=%s turnId=%s reason=mode_suspended",
+                        segments[0].get("callSessionId", ""), segments[0].get("turnId", ""))
+        # This pending-only read proves that no unseen mode write occurred. It
+        # does not restore speech authority; the existing task stream owns that.
+        snapshot = await self._refresh_call_state() if self._refresh_call_state is not None else None
+        call_session_id = segments[0].get("callSessionId", "")
+        fresh = parse_voice_call_state_v1(snapshot, expected_call_session_id=call_session_id)
+        if self._refresh_speaker_track is not None:
+            self._refresh_speaker_track()
+        resolved, revisions = tracker.resolve_pending_owner_track_attribution(
+            segments, current_call=bool(fresh and fresh["mode"] == "call"
+                                       and fresh["status"] not in {"ended", "failed"}),
+            mode_revision=fresh["revision"] if fresh else None,
+        )
+        context["speakerSegments"] = resolved
+        logger.info("[VoiceSpeaker] owner_track_attribution_settled callSessionId=%s turnId=%s mode=%s revised=%s",
+                    segments[0].get("callSessionId", ""), segments[0].get("turnId", ""),
+                    fresh["mode"] if fresh else "unavailable", len(revisions))
+        if revisions:
+            context["speakerSegmentRevisions"] = [
+                *(context.get("speakerSegmentRevisions") or []), *revisions,
+            ]
+            labels = {item.get("speaker", {}).get("label") for item in resolved}
+            if len(labels) == 1:
+                context["speakerLabel"] = next(iter(labels)) or "room"
+        return revisions
+
+    async def prepare_turn_admission(self, context: dict[str, Any]) -> None:
         with voice_stage_span(logger, "turn_authority", context):
             await self._refresh_current_turn_authority(context)
         mode_state = self._authoritative_mode_state
@@ -4727,13 +4937,15 @@ class ViventiumVoiceAgent(Agent):
                 if bounded_segments
                 else ""
             )
-            receipt = (
-                await self._voice_engagement_authority.await_turn(
-                    turn_id, bounded_segments
-                )
-                if self._voice_engagement_authority is not None
-                else None
-            )
+            receipt = context.get("voiceEngagement")
+            if not (isinstance(self._voice_engagement_authority, VoiceEngagementAuthority)
+                    and isinstance(receipt, dict)
+                    and self._voice_engagement_authority.matches_current_turn(receipt, bounded_segments)):
+                receipt = (await self._voice_engagement_authority.await_turn(turn_id, bounded_segments)
+                           if self._voice_engagement_authority is not None else None)
+            if receipt is not None:
+                # Keep the exact consumed receipt if a later fresh GET needs retry.
+                context["voiceEngagement"] = receipt
             await self._refresh_current_turn_authority(context)
             segments = context.get("speakerSegments")
             current_segments = segments if isinstance(segments, list) else []
@@ -4851,6 +5063,10 @@ class ViventiumVoiceAgent(Agent):
                             stt_diarization=getattr(source_stt.capabilities, "diarization", None),
                             call_mode=(self._authoritative_mode_state.mode
                                        if self._authoritative_mode_state is not None else None),
+                            last_observed_mode=(self._authoritative_mode_state.last_observed_mode
+                                                if self._authoritative_mode_state is not None else None),
+                            last_observed_revision=(self._authoritative_mode_state.last_observed_revision
+                                                    if self._authoritative_mode_state is not None else None),
                         )
                         if changes and not is_final and self._on_interim_speaker_changes is not None:
                             result = self._on_interim_speaker_changes(changes)
@@ -7789,16 +8005,26 @@ async def entrypoint(ctx: JobContext) -> None:
         await followup_scheduler.close()
 
     voice_auth_plane_closers.append(_close_followup_scheduler)
+    task_event_publisher = _CallTaskEventPublisher(
+        ctx.room.local_participant, call_session_id=call_session_id,
+        owner_participant_identity=owner_participant_identity,
+    )
+    ctx.room.on("disconnected", task_event_publisher.stop)
+    session.on("close", task_event_publisher.stop)
+
+    async def _close_task_event_publisher(*_args: Any) -> None:
+        ctx.room.off("disconnected", task_event_publisher.stop)
+        session.off("close", task_event_publisher.stop)
+        await task_event_publisher.close()
+
+    voice_auth_plane_closers.append(_close_task_event_publisher)
+
     async def _relay_and_track_task_event(task_event: dict[str, Any]) -> None:
         followup_scheduler.on_task_event(
             task_event,
             is_task_suppressed=llm_impl.is_task_output_suppressed,
         )
-        await _publish_livekit_task_event(
-            ctx.room.local_participant,
-            task_event,
-            owner_participant_identity=owner_participant_identity,
-        )
+        task_event_publisher.offer(task_event)
 
     llm_impl.set_task_event_handler(_relay_and_track_task_event)
 
@@ -7829,17 +8055,19 @@ async def entrypoint(ctx: JobContext) -> None:
     voice_engagement_authority = VoiceEngagementAuthority(
         call_session_id=call_session_id,
         owner_participant_identity=owner_participant_identity,
-        verify_receipt=llm_impl.verify_voice_engagement,
+        verify_receipt=lambda receipt: llm_impl.verify_voice_engagement(receipt, retry_unavailable=True),
     )
 
     async def _persist_ambient_speaker_session_state(
         state: dict[str, Any]
     ) -> None:
-        await llm_impl.post_speaker_segment_revisions([], session_state=state)
+        await asyncio.shield(llm_impl.queue_speaker_segment_revisions([], session_state=state))
 
     async def _persist_ambient_turn(payload: dict[str, Any]) -> None:
         try:
-            await llm_impl.post_ambient_transcript(payload)
+            # The track consumer may be interrupted; the existing call-owned
+            # continuation retains this idempotent soft evidence until ACK/End.
+            await asyncio.shield(llm_impl.queue_ambient_transcript(payload))
         except Exception as exc:
             logger.warning(
                 "[VoiceSpeaker] ambient_persist_failed callSessionId=%s segments=%s error=%s",
@@ -7943,7 +8171,7 @@ async def entrypoint(ctx: JobContext) -> None:
             latest_pushed_mode_revision[0],
             revision,
         )
-        authoritative_mode_state.apply(call_mode)
+        authoritative_mode_state.apply(call_mode, revision=revision)
         _apply_authoritative_call_mode_to_speech_planes(
             call_mode,
             ambient_ingress=multi_track_ingress,
@@ -8058,7 +8286,7 @@ async def entrypoint(ctx: JobContext) -> None:
             )
             return
         previous_mode = authoritative_mode_state.mode
-        authoritative_mode_state.apply(mode)
+        authoritative_mode_state.apply(mode, revision=revision)
         _apply_authoritative_call_mode_to_speech_planes(
             mode,
             ambient_ingress=multi_track_ingress,
@@ -8098,6 +8326,7 @@ async def entrypoint(ctx: JobContext) -> None:
             )
 
         async def _reconcile_once() -> None:
+            task_event_publisher.flush_if_due()
             terminal_state_seen[0] = False
             if not task_stream_authority.authoritative:
                 restored = await task_stream_authority.reconcile()
@@ -8114,8 +8343,15 @@ async def entrypoint(ctx: JobContext) -> None:
                     )
                 return
             previous_mode = authoritative_mode_state.mode
+            observed_state: Optional[dict[str, Any]] = None
+
+            async def _fetch_mode_snapshot() -> Optional[dict[str, Any]]:
+                nonlocal observed_state
+                observed_state = await llm_impl.get_call_state()
+                return observed_state
+
             authoritative_mode = await sync_authoritative_call_mode_once(
-                fetch_mode=llm_impl.get_call_state,
+                fetch_mode=_fetch_mode_snapshot,
                 mode_state=authoritative_mode_state,
                 set_ambient_mode=multi_track_ingress.set_mode,
                 on_mode_transition=_on_mode_transition,
@@ -8143,7 +8379,8 @@ async def entrypoint(ctx: JobContext) -> None:
                     call_session_id,
                 )
                 return
-            authoritative_mode_state.apply(authoritative_mode)
+            authoritative_mode_state.apply(authoritative_mode,
+                revision=observed_state.get("revision") if observed_state else None)
             # Also clears a prior fail-safe suspension when the mode value is unchanged.
             followup_scheduler.set_mode(authoritative_mode)
             if authoritative_mode != previous_mode:
@@ -8233,16 +8470,15 @@ async def entrypoint(ctx: JobContext) -> None:
             item for item in changes if item.get("turnId") != speaker_tracker.turn_id
         ]
         session_states = speaker_tracker.pop_session_state_changes()
-        await _publish_livekit_speaker_segments(
-            ctx.room.local_participant,
-            changes,
-            owner_participant_identity=owner_participant_identity,
-        )
         if late_revisions or session_states:
-            llm_impl.queue_speaker_segment_revisions(
+            delivery = llm_impl.queue_speaker_segment_revisions(
                 late_revisions,
                 session_state=session_states[-1] if session_states else None,
             )
+            llm_impl.retain_speaker_safety_delivery(delivery,
+                on_unconfirmed=lambda: speaker_tracker.requeue_session_state_changes(session_states))
+        for segment in changes:
+            task_event_publisher.offer_speaker(segment)
 
     async def _on_finalized_owner_speaker_context(
         context: dict[str, Any],
@@ -8258,22 +8494,18 @@ async def entrypoint(ctx: JobContext) -> None:
         revisions.extend(overlap_revisions)
         context["speakerSegmentRevisions"] = revisions
         session_states = speaker_tracker.pop_session_state_changes()
-        # Persist every final owner turn before publication so model classification and the final
-        # gateway dispatch both re-read the same durable, revision-aware authority.
-        finalized_for_authority = segments
-        if finalized_for_authority or revisions or session_states:
-            with voice_stage_span(logger, "speaker_persist", context):
-                await llm_impl.post_speaker_segment_revisions(
-                    [*finalized_for_authority, *revisions],
-                    session_state=session_states[-1] if session_states else None,
-                )
+        # The canonical chat ingress already persists these exact segments and
+        # revisions before fresh permission checks. Do not put an RPC before the
+        # SDK can hand this source to its existing durable admission courier.
+        if session_states:
+            context["speakerSessionState"] = session_states[-1]
+            delivery = llm_impl.queue_speaker_segment_revisions([], session_state=session_states[-1])
+            llm_impl.retain_speaker_safety_delivery(delivery,
+                on_unconfirmed=lambda: speaker_tracker.requeue_session_state_changes(session_states))
         if segments or overlap_revisions:
             with voice_stage_span(logger, "owner_caption", context):
-                await _publish_livekit_speaker_segments(
-                    ctx.room.local_participant,
-                    [*segments, *overlap_revisions],
-                    owner_participant_identity=owner_participant_identity,
-                )
+                for segment in [*segments, *overlap_revisions]:
+                    task_event_publisher.offer_speaker(segment)
 
     async def _refresh_persisted_owner_turn_authority(
         context: dict[str, Any],
@@ -8286,8 +8518,8 @@ async def entrypoint(ctx: JobContext) -> None:
             else ""
         )
         if turn_id:
-            return await llm_impl.get_turn_authority(turn_id)
-        state = await llm_impl.get_call_state()
+            return await llm_impl.get_turn_authority(turn_id, retry_unavailable=True)
+        state = await llm_impl.get_call_state(retry_unavailable=True)
         return {**state, "speakerSegments": []} if isinstance(state, dict) else None
 
     logger.info(
@@ -8426,10 +8658,38 @@ async def entrypoint(ctx: JobContext) -> None:
             speaker_tracker, ctx.room, owner_participant_identity
         ),
         refresh_turn_authority=_refresh_persisted_owner_turn_authority,
+        refresh_call_state=lambda: llm_impl.get_call_state(retry_unavailable=True),
+        defer_turn_admission=True,
         p0_timing=p0_timing,
         prewarm_tts=(primary_tts_impl.prewarm
                      if HAS_XAI_TTS and isinstance(primary_tts_impl, PooledXaiTTS) else None),
     )
+
+    async def _prepare_source_for_admission(context: dict[str, Any]) -> bool:
+        # Call/chat owns source persistence and current Call/Listen-Only authority.
+        # Shared-mic state and Wing classification need their existing safety
+        # preflight first, inside the same interruption-safe ordered courier.
+        resolved_revisions = await agent.resolve_pending_owner_track_attribution(context)
+        for revision in resolved_revisions:
+            task_event_publisher.offer_speaker(revision)
+        state = context.get("speakerSessionState")
+        if isinstance(state, dict):
+            await llm_impl.post_speaker_segment_revisions([], session_state=state)
+            context.pop("speakerSessionState", None)
+        if authoritative_mode_state.last_observed_mode != "wing":
+            return True
+        await llm_impl.post_speaker_segment_revisions([
+            *(context.get("speakerSegments") or []),
+            *(context.get("speakerSegmentRevisions") or []),
+        ])
+        try:
+            await agent.prepare_turn_admission(context)
+        except StopResponse:
+            return False
+        return True
+
+    llm_impl.set_turn_admission_handler(_prepare_source_for_admission)
+    llm_impl.set_admission_notice_gate(lambda: authoritative_mode_state.mode == "call")
 
     # === VIVENTIUM START ===
     # Feature: Transcript display correctness and TTS-failure resilience.

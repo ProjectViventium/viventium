@@ -126,10 +126,41 @@ truthful Main presentation without losing or repeating durable work.
 - Failed optional follow-up synthesis must not turn raw internal insights into another Main
   answer. Preserve the failure record, existing empty-primary recovery, and durable callback retry;
   a provider failure is not a model decision that a required result should remain silent.
+- Preserve an authored no-response decision as conversation evidence. It is not a missing or
+  interrupted primary answer and must not trigger automatic forced-visible recovery. Ordinary
+  Main follow-up judgment may still act on or speak useful new evidence through its existing
+  capabilities; irrelevant or unfulfilled recalled work alone does not prove a completed action.
+  Truly blank or interrupted primary answers retain the existing recovery path. The production
+  completion caller forces delivery only for an explicitly deferred Main response; completed
+  insights beside an authored no-response decision do not create that override. Caller-level QA
+  must follow the flag through the actual prepare consumer and selected prompt, not test each
+  helper alone. Optional synthesis failure must still keep raw specialist evidence out of chat
+  and speech.
 - A silent Main decision may still owe an accepted output file. Core emits that file with empty
   text and audio disabled through the existing attachment carrier. Telegram preserves its normal
   dispatch permit, per-file authorization, and delivery receipt; it adds no placeholder message or
   speech. An empty result without files and a literal no-response control remain suppressed.
+- An authored no-response control still completes the same input. Telegram reuses its existing
+  quiet-completion acknowledgment with the exact turn and revision, without a text placeholder or
+  TTS. Source-order, failed-stream, per-file authorization and replay fences remain in force.
+  Suppressing presentation must not return before its delivery receipt and leave idle input recovery.
+  If that acknowledgment is unavailable and no item was presented, keep the outcome silent and
+  retain the existing input recovery. Replay retries the same saved final receipt; it does not post
+  a retry/removal notice for a reply that was never shown or start a separate notice retry.
+  The foreground sender must consume the attachment sender's actual result. A confirmed file or
+  confirmed unavailability notice can settle presentation. An unknown send, missing receipt or
+  failed notice cannot prove that file was delivered. If answer text was confirmed, commit only
+  confirmed item references so the visible exchange remains in accepted memory. Without confirmed
+  answer text, keep confirmed file references and record failed presentation through the existing
+  durable acknowledgment path. Retry an unavailable acknowledgment, not the accepted model/action
+  or uncertain file send. Failed presentation settles with no retry at its normal lease check,
+  without changing Main's completed answer or reporting uncertain items as delivered.
+  A successful durable final is production truth even while the legacy unfinished display flag
+  awaits external presentation. Before classifying such a polling result as incomplete, reuse the
+  existing final's owner, source, current-author and body validation. Do not replace an authored
+  answer or no-response decision with a generic failure because its presentation ACK is pending.
+  A quiet Main receipt closes only Main; useful later Cortex and worker results retain their own
+  existing ledger authority, presentation identity and receipt, without duplicate parent delivery.
 
 ### Foreground and background execution
 
@@ -163,6 +194,35 @@ truthful Main presentation without losing or repeating durable work.
 - An unavailable recovery proof must not make ordinary answer persistence fail. Keep the existing
   Stop, supersession and native publication controls; real persistence failures still fail.
 
+### Recovery must make progress without replay
+
+- Temporary job retention is a cache, not the lifetime of a saved Main answer or useful Cortex
+  addition. After cache loss in either supported store, recover only the exact canonical completed
+  native snapshot or host completion receipt, with original source, owner, conversation, current
+  revision and channel binding. Read recovery never re-admits execution or repeats a tool effect.
+- A persisted Cortex addition stays Main-authored. Claim, pre-send authorization and acknowledgment
+  apply the same canonical parent/child and durable ingress proof. Deleted, unfinished, failed,
+  changed-body or changed-source messages cannot be sent. Current claim generation, graph-result
+  hashes and presentation lease still fence each send; a live author conflict never falls back to
+  a weaker retained proof. Unknown transport remains quarantined, not replayed.
+- A known failed older presentation may settle as failed/superseded when exact retained failure,
+  original response binding and a newer authenticated source in the same chat/topic scope prove
+  it is obsolete, across failed input, new conversations and expiry of temporary input records.
+  Persisted original-input or native/host source proof supplies the durable watermark after expiry.
+  Compare the actual presentation sequence and exclude the turn's own merged inputs. This retires only
+  its presentation recovery and lease. A later independent answer alone never proves older work
+  completed; accepted actions and original source evidence remain intact.
+- An expired job, missing provider, missing channel link and true supersession remain distinct.
+  A definite newer durable source settles an obsolete Cortex cohort through the existing
+  conversation-moved-on outcome; a missing proof or dependency remains unavailable and retryable.
+  Invalid or unavailable older delivery candidates defer through existing eligibility fields so
+  valid unrelated owners can progress. Deferral does not consume another synthesis attempt.
+- A Main-authored worker result is reused during delivery retry. An existing superseded/fenced
+  callback settles superseded once. The existing retry limit also bounds delivery-only failure;
+  exhausted delivery keeps the authored message and typed failure instead of re-authoring forever.
+- Required Core startup failure exits nonzero before claiming readiness. An optional error handler
+  must not leave HTTP serving with channel, native-result, memory and schedule recovery missing.
+
 ## Non-goals
 
 - Do not infer authoring or supersession scope from provider, adapter, or channel names.
@@ -191,3 +251,17 @@ durable effect that committed before a later source.
 - [No Response Feature](../21_No_Response_Feature.md)
 - [Parallel Work Orchestration](../55_Parallel_Work_Orchestration.md)
 - [Main Continuity Kernel](../56_Main_Continuity_Kernel.md)
+
+### Failed Main presentation and retained input settlement
+
+A failed Telegram presentation receipt for an exact finished Main failure settles the same durable
+input through the existing failed-ACK owner, whether the live stream is still cached or has been
+lost. The same transaction settles listed merged-input aliases only while their exact owner,
+primary source, conversation, stream, admitted state and claim remain bound. Original segment IDs,
+messages and receipts stay intact; unrelated or replaced aliases are untouched. The recovery
+consumer also reuses that owner before taking another presentation lease. Clear
+only the matched claim under the original binding and claim-token CAS. Preserve the failure,
+source, invocation and body proof; never mark the work complete, cancel an accepted worker, or
+rerun an action. A live replacement/fallback, changed source, foreign owner or conflicting receipt
+cannot settle the former input. A current canonical failure without a failed presentation ACK
+remains recoverable; it must not be silently treated as already presented.

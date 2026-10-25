@@ -50,7 +50,7 @@ RECOVERY_BUNDLE_ONLY=0
 
 while [[ $# -gt 0 ]]; do
   case "${1:-}" in
-    install|uninstall)
+    install|uninstall|ensure-running)
       MODE="$1"
       shift
       ;;
@@ -341,9 +341,10 @@ write_helper_config() {
   local python_bin
   python_bin="$(resolve_repo_python)"
   "$python_bin" - "$HELPER_CONFIG_FILE" "$HELPER_RUNTIME_REPO_ROOT" "$APP_SUPPORT_DIR" \
-    "$HELPER_RUNTIME_ALLOW_PROTECTED" <<'PY'
+    "$HELPER_RUNTIME_ALLOW_PROTECTED" "$SCRIPT_DIR" <<'PY'
 import json
 import os
+import stat
 import sys
 import tempfile
 from pathlib import Path
@@ -353,34 +354,38 @@ repo_root = sys.argv[2]
 app_support_dir = sys.argv[3]
 allow_protected = sys.argv[4] == "1"
 path.parent.mkdir(parents=True, exist_ok=True)
-existing = {}
-if path.exists():
-    try:
+sys.path.insert(0, sys.argv[5])
+from helper_runtime_intent import helper_config_lock
+with helper_config_lock(path):
+    existing = {}
+    if os.path.lexists(path):
+        metadata = path.lstat()
+        if not stat.S_ISREG(metadata.st_mode) or metadata.st_uid != os.getuid() or metadata.st_nlink != 1:
+            raise SystemExit("[viventium] Refusing unsafe helper configuration")
         existing = json.loads(path.read_text(encoding="utf-8"))
-    except json.JSONDecodeError:
-        existing = {}
 
-config = dict(existing)
-config.update(
-    {
-        "repoRoot": repo_root,
-        "appSupportDir": app_support_dir,
-        "allowProtectedRepoRoot": allow_protected,
-        "showInStatusBar": bool(existing.get("showInStatusBar", True)),
-    }
-)
-payload = (json.dumps(config, indent=2) + "\n").encode("utf-8")
-descriptor, temporary_name = tempfile.mkstemp(prefix=f".{path.name}.", dir=path.parent)
-temporary = Path(temporary_name)
-try:
-    with os.fdopen(descriptor, "wb") as handle:
-        handle.write(payload)
-        handle.flush()
-        os.fsync(handle.fileno())
-    os.chmod(temporary, 0o600)
-    os.replace(temporary, path)
-finally:
-    temporary.unlink(missing_ok=True)
+    config = dict(existing)
+    config.update(
+        {
+            "repoRoot": repo_root,
+            "appSupportDir": app_support_dir,
+            "allowProtectedRepoRoot": allow_protected,
+            "showInStatusBar": bool(existing.get("showInStatusBar", True)),
+            "launchAtLogin": existing.get("launchAtLogin"),
+        }
+    )
+    payload = (json.dumps(config, indent=2) + "\n").encode("utf-8")
+    descriptor, temporary_name = tempfile.mkstemp(prefix=f".{path.name}.", dir=path.parent)
+    temporary = Path(temporary_name)
+    try:
+        with os.fdopen(descriptor, "wb") as handle:
+            handle.write(payload)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.chmod(temporary, 0o600)
+        os.replace(temporary, path)
+    finally:
+        temporary.unlink(missing_ok=True)
 PY
 }
 
@@ -752,7 +757,7 @@ write_launch_agent_plist() {
   local python_bin public_install_dir
   python_bin="$(resolve_repo_python)"
   public_install_dir="$(default_public_install_repo_root)"
-  "$python_bin" - "$LAUNCH_AGENT_PLIST" "$HELPER_APP_BUNDLE" "$HELPER_EXECUTABLE_NAME" \
+  "$python_bin" - "${HELPER_SELECTED_AGENT_PLIST:-$LAUNCH_AGENT_PLIST}" "$HELPER_APP_BUNDLE" "$HELPER_EXECUTABLE_NAME" \
     "$HOME" "$PATH" "$HELPER_RUNTIME_REPO_ROOT" "$public_install_dir" "$HELPER_LOG_FILE" <<'PY'
 import os
 import plistlib
@@ -776,6 +781,8 @@ payload = {
     "ProgramArguments": [str(Path(helper_bundle) / "Contents" / "MacOS" / executable_name)],
     "WorkingDirectory": home,
     "RunAtLoad": True,
+    "KeepAlive": {"SuccessfulExit": False},
+    "ThrottleInterval": 10,
     "LimitLoadToSessionType": ["Aqua"],
     "EnvironmentVariables": {
         "PATH": executable_path,
@@ -786,6 +793,7 @@ payload = {
     "StandardErrorPath": log_file,
 }
 path = Path(output_path)
+path.parent.mkdir(parents=True, exist_ok=True)
 descriptor, temporary_name = tempfile.mkstemp(prefix=f".{path.name}.", dir=path.parent)
 temporary = Path(temporary_name)
 try:
@@ -798,6 +806,41 @@ try:
 finally:
     temporary.unlink(missing_ok=True)
 PY
+}
+
+select_helper_agent_path() {
+  local python_bin preference=""
+  python_bin="$(resolve_repo_python)"
+  preference="$("$python_bin" - "$HELPER_CONFIG_FILE" "$LAUNCH_AGENT_PLIST" "$SKIP_LOGIN_ITEM" <<'PYPREFERENCE'
+import json, sys
+from pathlib import Path
+config, agent = map(Path, sys.argv[1:3])
+if not config.exists():
+    print("false" if sys.argv[3] == "1" else "true")
+else:
+    try:
+        value = json.loads(config.read_text()).get("launchAtLogin")
+        print(str(value).lower() if isinstance(value, bool) else ("true" if agent.exists() else "unknown"))
+    except (OSError, ValueError):
+        print("unknown")
+PYPREFERENCE
+)"
+  if [[ "$preference" == "unknown" && "$SKIP_LOGIN_ITEM" != "1" ]]; then
+    local legacy=""
+    legacy="$("$python_bin" - "$OSASCRIPT_TIMEOUT_SECONDS" <<'PYLOGINQUERY'
+import subprocess, sys
+try:
+    result=subprocess.run(['/usr/bin/osascript', '-e', 'tell application "System Events" to return exists login item "Viventium"'], capture_output=True, text=True, timeout=min(5, float(sys.argv[1])))
+    if result.returncode == 0: print(result.stdout.strip())
+except (OSError, ValueError, subprocess.TimeoutExpired):
+    pass
+PYLOGINQUERY
+)"
+    [[ "$legacy" != "true" && "$legacy" != "false" ]] || preference="$legacy"
+  fi
+  HELPER_LOGIN_PREFERENCE="$preference"
+  HELPER_SELECTED_AGENT_PLIST="$APP_SUPPORT_DIR/runtime/helper-supervisor.plist"
+  [[ "$preference" != "true" ]] || HELPER_SELECTED_AGENT_PLIST="$LAUNCH_AGENT_PLIST"
 }
 
 register_login_item() {
@@ -1198,8 +1241,8 @@ stop_existing_helper() {
 bootstrap_launch_agent() {
   [[ "$SKIP_LAUNCHCTL" == "1" ]] && return 0
   [[ "$LAUNCH_AFTER_INSTALL" == "1" ]] || return 0
-  launchctl bootout "gui/$UID" "$LAUNCH_AGENT_PLIST" >/dev/null 2>&1 || true
-  launchctl bootstrap "gui/$UID" "$LAUNCH_AGENT_PLIST"
+  launchctl bootout "gui/$UID/ai.viventium.helper" >/dev/null 2>&1 || true
+  launchctl bootstrap "gui/$UID" "${HELPER_SELECTED_AGENT_PLIST:-$LAUNCH_AGENT_PLIST}"
   if [[ "$LAUNCH_AFTER_INSTALL" == "1" ]]; then
     launchctl kickstart -k "gui/$UID/ai.viventium.helper" >/dev/null 2>&1 || true
   fi
@@ -1207,7 +1250,7 @@ bootstrap_launch_agent() {
 
 remove_launch_agent() {
   [[ "$SKIP_LAUNCHCTL" == "1" ]] || launchctl bootout "gui/$UID" "$LAUNCH_AGENT_PLIST" >/dev/null 2>&1 || true
-  rm -f "$LAUNCH_AGENT_PLIST"
+  rm -f "$LAUNCH_AGENT_PLIST" "$APP_SUPPORT_DIR/runtime/helper-supervisor.plist"
 }
 
 launch_helper_app() {
@@ -1216,7 +1259,84 @@ launch_helper_app() {
   fi
 }
 
+persist_helper_login_preference() {
+  [[ "${HELPER_LOGIN_PREFERENCE:-unknown}" != "unknown" ]] || return 0
+  local python_bin
+  python_bin="$(resolve_repo_python)"
+  "$python_bin" - "$SCRIPT_DIR" "$HELPER_CONFIG_FILE" "$HELPER_LOGIN_PREFERENCE" <<'PYLOGIN'
+import json, os, sys, tempfile
+from pathlib import Path
+sys.path.insert(0, sys.argv[1])
+from helper_runtime_intent import helper_config_lock
+path=Path(sys.argv[2])
+with helper_config_lock(path):
+    value=json.loads(path.read_text())
+    value["launchAtLogin"]=sys.argv[3]=="true"
+    fd, name=tempfile.mkstemp(prefix=".helper-login-", dir=path.parent)
+    try:
+        os.fchmod(fd, 0o600)
+        with os.fdopen(fd,"w") as out:
+            json.dump(value,out,indent=2);out.write("\n");out.flush();os.fsync(out.fileno())
+        os.replace(name,path)
+    finally:
+        Path(name).unlink(missing_ok=True)
+PYLOGIN
+}
+
+verify_helper_supervisor_binding() {
+  local python_bin
+  python_bin="$(resolve_repo_python)"
+  "$python_bin" - "$HELPER_CONFIG_FILE" "$HELPER_RUNTIME_REPO_ROOT" "$APP_SUPPORT_DIR" \
+    "$HELPER_APP_BUNDLE/Contents/MacOS/$HELPER_EXECUTABLE_NAME" "$LAUNCH_AGENT_PLIST" \
+    "$APP_SUPPORT_DIR/runtime/helper-supervisor.plist" "$UID" <<'PYBINDING'
+import json, os, plistlib, stat, subprocess, sys
+from pathlib import Path
+config, repo, support, executable, *other = sys.argv[1:]
+uid = other.pop()
+for name in [config, *other]:
+    path=Path(name)
+    if not os.path.lexists(path):
+        continue
+    metadata=path.lstat()
+    if not stat.S_ISREG(metadata.st_mode) or metadata.st_uid != os.getuid() or metadata.st_nlink != 1:
+        raise SystemExit("[viventium] Refusing unsafe helper supervisor state")
+    if name != config:
+        with path.open('rb') as handle: job=plistlib.load(handle)
+        if job.get('Label') != 'ai.viventium.helper' or job.get('ProgramArguments') != [executable]:
+            raise SystemExit("[viventium] Refusing unrelated helper supervisor registration")
+value=json.loads(Path(config).read_text())
+if Path(value.get('repoRoot','')).resolve() != Path(repo).resolve() or Path(value.get('appSupportDir','')).resolve() != Path(support).resolve():
+    raise SystemExit("[viventium] Refusing to change another helper runtime binding")
+job=subprocess.run(['launchctl','print',f'gui/{uid}/ai.viventium.helper'], capture_output=True,text=True)
+if job.returncode == 0:
+    programs=[line.strip().partition(' = ')[2] for line in job.stdout.splitlines() if line.strip().startswith('program = ')]
+    if programs != [executable]:
+        raise SystemExit("[viventium] Refusing unrelated loaded helper supervisor")
+PYBINDING
+}
+
+ensure_existing_helper_running() {
+  [[ "$SKIP_LAUNCHCTL" != "1" ]] || return 0
+  [[ -d "$HELPER_APP_BUNDLE" ]] || { echo "[viventium] Owned helper is missing; run install-helper." >&2; return 1; }
+  prepare_helper_app_destination
+  [[ -f "$HELPER_CONFIG_FILE" && ! -L "$HELPER_CONFIG_FILE" ]] || return 1
+  verify_helper_supervisor_binding
+  select_helper_agent_path
+  persist_helper_login_preference
+  write_launch_agent_plist
+  if [[ "$HELPER_LOGIN_PREFERENCE" == "false" ]]; then rm -f "$LAUNCH_AGENT_PLIST"; fi
+  if ! launchctl print "gui/$UID/ai.viventium.helper" >/dev/null 2>&1; then
+    # Adopt only this validated helper bundle into its existing native OS owner.
+    stop_existing_helper
+    launchctl bootstrap "gui/$UID" "$HELPER_SELECTED_AGENT_PLIST"
+  fi
+  launchctl kickstart "gui/$UID/ai.viventium.helper"
+}
+
 case "$MODE" in
+ensure-running)
+    ensure_existing_helper_running
+    ;;
 install)
     if [[ "$RECOVERY_BUNDLE_ONLY" == "1" ]]; then
       [[ -d "$HELPER_APP_BUNDLE" && ! -L "$HELPER_APP_BUNDLE" ]] || {
@@ -1244,6 +1364,7 @@ install)
       fi
       exit 0
     fi
+    select_helper_agent_path
     write_helper_install_receipt
     cleanup_legacy_terminal_helper_launchers
     cleanup_legacy_scheduler_launch_agent
@@ -1258,21 +1379,20 @@ install)
     else
       write_helper_config
     fi
+    persist_helper_login_preference
     qa_kill_helper_install_if_requested config
     install_scheduler_runtime_component
     prepare_telegram_runtime_component
     qa_kill_helper_install_if_requested scheduler
     write_helper_launcher_scripts
     qa_kill_helper_install_if_requested scripts
-    stop_existing_helper
-    unregister_login_item || true
+    if [[ "$HELPER_LOGIN_PREFERENCE" != "unknown" ]]; then unregister_login_item || true; fi
     remove_launch_agent
+    stop_existing_helper
     activate_staged_bundle
     qa_kill_helper_install_if_requested activation
-    register_login_item || {
-      write_launch_agent_plist
-      bootstrap_launch_agent
-    }
+    write_launch_agent_plist
+    bootstrap_launch_agent
     qa_kill_helper_install_if_requested registration
     launch_helper_app
     commit_install_transaction

@@ -120,6 +120,52 @@ confusing upstream component boundaries.
   This recovery runs the existing whole-runtime restart: active calls, Main turns and workers
   can be interrupted. Their existing durable recovery and result delivery must be proved; this
   path does not promise an uninterrupted call or preserve an in-memory process.
+- Explicit CLI Start/Launch restores the installed helper through its validated macOS job. The
+  job restarts unexpected helper failure, with native launchd throttling; a clean Quit remains
+  down. Existing Start at Login preference chooses persistent or current-session registration.
+  Hiding the menu icon changes visibility only; it does not stop the supervisor or change login
+  preference. Registration refuses another bundle, repository binding, or loaded job owner.
+  An older config without a login field is not an explicit off preference: installation may
+  record its existing persistent registration or bounded legacy login-item state. If neither
+  state is known, it uses current-session registration and leaves the preference unknown.
+  Migration can therefore add the login field; do not report byte-identical helper settings.
+  Missing helper restoration requires this install's saved ownership receipt. A deliberate
+  `uninstall-helper` clears that ownership; normal launch then leaves the helper uninstalled.
+- A fresh startup claim is distinct from a surviving serving process group. Recovery may reuse
+  the existing scoped whole-runtime restart only when a configured local process and its own
+  recovery owner are both absent. A live watchdog retains recovery. External service, provider,
+  credential, or network failures report attention and do not authorize stopping healthy work.
+  The existing dependency repair path checks Redis before restarting Core; if unavailable, its
+  existing explicit degraded mode keeps conversation available. Optional artifact health cannot
+  restart the conversation API.
+  If Core already started with Redis explicitly disabled, a returned Redis process alone cannot
+  change that process's startup environment. Restore the requested capabilities through the
+  supported restart at a proven idle window; do not interrupt active work with periodic healthy
+  restarts or claim automatic hot re-enable. Initial deferred Redis handoff still restores the
+  flags before Core starts when readiness arrives within its existing bounded window.
+- Managed readiness checks include the configured xPerfect and Voice gateway endpoints. Each
+  endpoint uses its own health/protocol status contract; HTTP503 is unready, but remains reachable
+  when checking whether an owned local service has stopped. Remote dependencies are excluded from
+  Stop completion. Native releases do not infer developer-only ports.
+- Explicit Start/Stop writes a new intent revision under one short helper-config lock. Observed
+  health/backoff writes require the same current intent revision and approved runtime binding.
+  A later Stop or repeated Start therefore wins over an older asynchronous completion; settings
+  writes preserve current intent and unknown future config fields. If an observed backoff save
+  fails from storage I/O, recovery may retain bounded in-memory bookkeeping only after a fresh
+  owner-controlled config read confirms the exact same running intent and binding. Unsafe paths,
+  unreadable authority, newer Stop or changed revision still prevent launch.
+  Rejected configuration is reported as a typed private log reason and an existing helper
+  status row, “Configuration needs repair.” It must not silently disable supervision or imply
+  that unsafe authority is accepted. Repair uses the supported owner; permission checks remain.
+  Native failed-install rollback uses the same lock and current binding authority. It retains
+  later explicit Start/Stop and preference changes while restoring the prior owned binding;
+  unchanged or health-only state restores exact prior config. A newer Stop prevents reopening
+  the predecessor helper. Foreign or deleted binding refuses rollback before owner actions.
+- Managed process replacement retains the prior nonempty log before opening a new log. Existing
+  rotation bounds the retained generations and keeps owner-only permissions. A refused linked
+  or foreign log/history file remains untouched; a fresh private recovery log in the validated
+  owned directory keeps service startup available, using the same bounded rotation. Unsafe
+  parent directories still fail closed. An empty failed startup does not erase useful history.
 - A Telegram component selection or integrity refusal, or an incompatible handoff-helper
   command interface, is not a transient bot failure. The bot-only watchdog ends with the
   configuration-failure class after one attempt and preserves the integrity refusal; the

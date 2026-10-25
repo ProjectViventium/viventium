@@ -4888,6 +4888,7 @@ def test_launch_stack_detached_skips_restart_while_detached_group_is_alive() -> 
                     "initialize_telegram_user_config_authority() { :; }\n"
                     "user_surface_healthy() { return 1; }\n"
                 "detached_launch_process_group_running() { return 0; }\n"
+                "runtime_owned_recovery_needed() { return 1; }\n"
                 "is_stack_running() { printf 'stack-check\\n' >&2; return 0; }\n"
                 "stop_stack_for_upgrade() { printf 'restarted\\n'; }\n"
                 "if launch_stack_detached; then\n"
@@ -4902,7 +4903,7 @@ def test_launch_stack_detached_skips_restart_while_detached_group_is_alive() -> 
     )
 
     assert completed.stdout.splitlines() == [
-        "Viventium is already starting.",
+        "Viventium remains owned; available services are preserved while dependencies or their recovery owners recover.",
         "ok",
     ]
     assert "stack-check" not in completed.stderr
@@ -4959,6 +4960,7 @@ def test_launch_stack_detached_waits_when_sidecar_repair_is_already_starting(
                     "user_surface_healthy() { return 0; }\n"
                 "runtime_optional_surfaces_healthy() { return 1; }\n"
                 "detached_launch_process_group_running() { return 0; }\n"
+                "runtime_owned_recovery_needed() { return 1; }\n"
                 "is_stack_running() { printf 'stack-check\\n' >&2; return 0; }\n"
                 "stop_stack_for_upgrade() { printf 'unexpected-stop\\n'; return 0; }\n"
                 "if launch_stack_detached; then\n"
@@ -4973,7 +4975,7 @@ def test_launch_stack_detached_waits_when_sidecar_repair_is_already_starting(
     )
 
     assert completed.stdout.splitlines() == [
-        "Viventium is already starting.",
+        "Viventium remains owned; available services are preserved while dependencies or their recovery owners recover.",
         "ok",
     ]
     assert "stack-check" not in completed.stderr
@@ -7677,6 +7679,7 @@ def test_launch_stack_detached_live_receipt_suppresses_partial_stack_restart(
                     "ensure_app_support_layout() { :; }\n"
                     "initialize_telegram_user_config_authority() { return 0; }\n"
                     "user_surface_healthy() { return 1; }\n"
+                    "runtime_owned_recovery_needed() { return 1; }\n"
                     "runtime_optional_surfaces_healthy() { return 1; }\n"
                     f"is_stack_running() {{ : >'{restart_marker}'; return 0; }}\n"
                     f"stop_stack_for_upgrade() {{ : >'{restart_marker}'; }}\n"
@@ -7692,7 +7695,7 @@ def test_launch_stack_detached_live_receipt_suppresses_partial_stack_restart(
         sleeper.kill()
         sleeper.wait(timeout=5)
 
-    assert completed.stdout.strip() == "Viventium is already starting."
+    assert completed.stdout.strip() == "Viventium remains owned; available services are preserved while dependencies or their recovery owners recover."
     assert not restart_marker.exists()
 
 

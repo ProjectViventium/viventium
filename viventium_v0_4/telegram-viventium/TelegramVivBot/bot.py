@@ -86,6 +86,9 @@ from utils.librechat_bridge import (
     TELEGRAM_FOREGROUND_CANCEL_UNAVAILABLE,
     _STRUCTURED_STREAM_ERROR_MESSAGES,
     _stream_error_message,
+    _start_chat_error_safe_to_retry,
+    _start_chat_error_message,
+    _ingress_definitely_not_retained,
     render_telegram_markdown,
     _verified_attachment_grants,
     sanitize_telegram_display_text,
@@ -1690,7 +1693,9 @@ class _TelegramSourceOrderGuard:
             success = await self.retract_ref(chat_id, message_id) and success
         return success
 
-    async def acknowledge_non_delivery(self, state: Literal["partial_removed", "failed"]) -> None:
+    async def acknowledge_non_delivery(
+        self, state: Literal["partial_removed", "failed"], *, presentation_refs=None
+    ) -> None:
         if (
             not self._non_delivery_acked
             and self.logical_turn_id
@@ -1699,7 +1704,8 @@ class _TelegramSourceOrderGuard:
         ):
             self._non_delivery_acked = True
             await self.robot.ack_delivery(
-                self.logical_turn_id, self.revision, state, f"telegram:{self.chat_id}"
+                self.logical_turn_id, self.revision, state, f"telegram:{self.chat_id}",
+                **({"presentation_refs": presentation_refs} if presentation_refs is not None else {}),
             )
 
     async def mark_stale(self) -> bool:
@@ -2024,6 +2030,24 @@ async def _observe_ingress_source_guard(
             "Core source-order observation failed before Telegram output: %s",
             type(exc).__name__,
         )
+        # This notice is transport-only. Ambiguous acceptance is left to Core's existing
+        # retained-input recovery; never invite a duplicate execution after an unknown POST.
+        if (_start_chat_error_safe_to_retry(exc) or _ingress_definitely_not_retained(exc)) and _is_newest_telegram_source_message(
+            chat_id, thread_id, source_sequence, telegram_user_id
+        ):
+            try:
+                notice = {
+                    "chat_id": chat_id,
+                    "reply_to_message_id": source_sequence,
+                    "text": _start_chat_error_message(exc),
+                }
+                if thread_id is not None:
+                    notice["message_thread_id"] = thread_id
+                await bot.send_message(**notice)
+            except asyncio.CancelledError:
+                raise
+            except Exception as notice_exc:
+                logger.warning("Telegram pre-admission notice failed: %s", type(notice_exc).__name__)
         return None
     registered_input = observation.get("input")
     if preparation is not None:
@@ -2912,7 +2936,9 @@ def _tg_timing_enabled() -> bool:
 
 
 def _tg_timing_log(trace_id: str, step: str, start_ts: float, extra: str | None = None) -> None:
-    if not _tg_timing_enabled():
+    if not _tg_timing_enabled() and step not in {"typing_start", "typing_stop"}:
+        return
+    if start_ts is None:
         return
     elapsed_ms = (time.monotonic() - start_ts) * 1000.0
     if extra:
@@ -3809,18 +3835,6 @@ async def refresh_call_button_message(
         _PENDING_INFO_CALL_REFRESHES.discard(key)
 
 from telegram.error import Forbidden, TelegramError
-async def is_bot_blocked(bot, user_id: int) -> bool:
-    try:
-        # Attempt to send a test message to the user
-        await bot.send_chat_action(chat_id=user_id, action="typing")
-        return False  # If successfully sent, the bot is not blocked
-    except Forbidden:
-        logger.warning(f"Bot has been blocked by user {user_id}")
-        return True  # If Forbidden error received, the bot is blocked
-    except TelegramError:
-        # Handle other possible errors
-        return False  # If other error, assume bot is not blocked
-
 async def _getViventiumResponse(
     update_message,
     context,
@@ -3875,6 +3889,7 @@ async def _getViventiumResponse(
     delivery_disposition_present = False
     delivery_audio_text = None
     quiet_completion = False
+    attachment_delivery_unknown = False
     final_segments = []
     logical_turn_id = ""
     logical_turn_revision = None
@@ -3904,9 +3919,6 @@ async def _getViventiumResponse(
         stream_edit_interval_s = 0.35
     stream_edit_interval_s = max(0.1, min(stream_edit_interval_s, 3.0))
     # === VIVENTIUM END ===
-
-    if await is_bot_blocked(context.bot, chatid):
-        return
 
     answer_messageid = None
     # === VIVENTIUM START ===
@@ -3942,6 +3954,15 @@ async def _getViventiumResponse(
                 continue
 
     typing_task = None
+
+    async def _start_response_typing(reason):
+        nonlocal typing_task, typing_start_ts
+        if typing_task is None and not typing_stop.is_set():
+            if _input_recovery and not await source_guard.is_current():
+                return
+            typing_start_ts = time.monotonic()
+            typing_task = asyncio.create_task(_typing_loop(), name="telegram-response-typing")
+            _tg_timing_log(trace_id, "typing_start", typing_start_ts, extra=f"reason={reason}")
     # === VIVENTIUM END ===
 
     # === VIVENTIUM START ===
@@ -4501,9 +4522,10 @@ async def _getViventiumResponse(
 
     try:
         # The stream owns this indicator. Preflight failure/cancellation must never orphan it.
-        typing_start_ts = time.monotonic()
-        typing_task = asyncio.create_task(_typing_loop(), name="telegram-response-typing")
-        _tg_timing_log(trace_id, "typing_start", typing_start_ts, extra="reason=stream_owned")
+        # Recovery polling alone is not a foreground response. Core must first
+        # return the retained presentation or turn before it owns an indicator.
+        if not _input_recovery:
+            await _start_response_typing("stream_owned")
         # Simplified: Only send text and convo_id to bridge
         # All other parameters (model, language, system_prompt, plugins, api_key, api_url, pass_history) are ignored by LiveKitBridge
         # === VIVENTIUM START ===
@@ -4636,11 +4658,14 @@ async def _getViventiumResponse(
                         return
                     if data.get("type") == "input_presentation":
                         source_guard.bind_input_presentation(data.get("input_presentation"))
+                        await _start_response_typing("retained_presentation")
                         continue
                     if data.get("type") == "logical_turn":
                         logical_turn_id = str(data.get("logical_turn_id") or "").strip()
                         logical_turn_revision = data.get("revision")
                         source_guard.bind_delivery(logical_turn_id, logical_turn_revision)
+                        if logical_turn_id and logical_turn_revision is not None:
+                            await _start_response_typing("retained_turn")
                         continue
                     if data.get("type") == "durable_effect":
                         source_guard.bind_durable_effect(data.get("effect_ref"))
@@ -4727,14 +4752,13 @@ async def _getViventiumResponse(
         # === VIVENTIUM START ===
         # Feature: Strip trailing {NTA} from content+tag responses before delivery/suppression check.
         result = strip_trailing_nta(result)
-        # Feature: If the main assistant response is `{NTA}` (no-response-only), do not deliver anything.
+        # A completed no-response control still owes its exact input a delivery receipt.
+        # Reuse quiet completion so it stays silent without leaving idle recovery work.
         if is_no_response_only(result):
-            if answer_messageid:
-                try:
-                    await context.bot.delete_message(chat_id=chatid, message_id=answer_messageid)
-                except Exception:
-                    pass
-            return
+            if not await _supersede_stream_preview():
+                return
+            result = ""
+            quiet_completion = True
         delivery_plan = parse_delivery_controls(result)
         result = delivery_plan.clean_text
         logical_segments = list(delivery_plan.segments)
@@ -4768,7 +4792,7 @@ async def _getViventiumResponse(
                 return blob, content_type
 
             if await _source_is_current_for_presentation():
-                await send_librechat_attachments(
+                attachment_delivery = await send_librechat_attachments(
                     bot=context.bot,
                     base_url=getattr(robot, "base_url", "") or "",
                     secret=getattr(robot, "secret", "") or "",
@@ -4782,8 +4806,15 @@ async def _getViventiumResponse(
                     text_fallback=text_fallback,
                     fetch_bytes=_fetch_with_timing,
                 )
+                # Quiet text does not prove that its owed files reached Telegram.
+                attachment_delivery_unknown = bool(lc_attachments) and (
+                    not isinstance(attachment_delivery, dict)
+                    or attachment_delivery.get("delivery_unknown") is not False
+                    or not attachment_delivery.get("message_ids")
+                )
         except Exception as exc:
-            logger.warning("LibreChat attachment delivery failed: %s", exc)
+            attachment_delivery_unknown = bool(lc_attachments)
+            logger.warning("LibreChat attachment delivery failed: %s", type(exc).__name__)
         # === VIVENTIUM END ===
     # === VIVENTIUM START ===
     # Feature: Prompt Telegram users to link their LibreChat account.
@@ -4917,6 +4948,11 @@ async def _getViventiumResponse(
     if not await _source_is_current_for_presentation():
         await source_guard.mark_stale()
         return
+
+    if attachment_delivery_unknown:
+        bridge_error_audio_allowed = False
+        _tg_timing_log(trace_id, "attachment_delivery_unknown", response_start_ts,
+                       extra=f"confirmed_refs={len(source_guard.presentation_refs())}")
 
     # Add image URL detection and sending
     if image_has_send == 0:
@@ -5234,9 +5270,13 @@ async def _getViventiumResponse(
         return
 
     # === VIVENTIUM START ===
-    # Fix: a presented failure notice closes the turn as failed; it never commits source coverage.
-    if main_stream_failed:
-        await source_guard.acknowledge_non_delivery("failed")
+    # A confirmed answer remains accepted when a file send is uncertain.
+    # Commit only confirmed refs; quiet text cannot prove file delivery or replay work.
+    if main_stream_failed or (attachment_delivery_unknown and not text_delivery_succeeded):
+        await source_guard.acknowledge_non_delivery(
+            "failed", presentation_refs=(source_guard.presentation_refs()
+                                         if attachment_delivery_unknown else None),
+        )
         return
     # === VIVENTIUM END ===
 
@@ -5275,6 +5315,10 @@ async def _getViventiumResponse(
                 "Telegram commit acknowledgement failed closed: %s", type(exc).__name__
             )
         if delivery_ack_status != "recorded":
+            if quiet_completion and not presentation_refs:
+                # Nothing was shown or needs retracting. The retained input retries
+                # this same final receipt; internal ACK uncertainty stays silent.
+                return
             if delivery_ack_status not in {
                 "stale_revision",
                 "stale_source_order",
