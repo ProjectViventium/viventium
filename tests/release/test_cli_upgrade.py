@@ -4984,8 +4984,12 @@ def test_launch_stack_detached_waits_when_sidecar_repair_is_already_starting(
 def test_launch_stack_detached_starts_repair_when_core_healthy_and_sidecars_unhealthy(
     tmp_path: Path,
 ) -> None:
+    # Failed protocol readiness alone is dependency attention. This repair case
+    # represents an enabled local process whose existing recovery owner is gone.
     cli_source = (REPO_ROOT / "bin" / "viventium").read_text(encoding="utf-8")
-    function_def = extract_shell_function(cli_source, "launch_stack_detached")
+    function_def = "".join(extract_shell_function(cli_source, name) for name in (
+        "value_is_true", "capture_detached_start_log_offset", "launch_stack_detached",
+    ))
     fake_python = tmp_path / "python"
     write_executable(fake_python, "#!/bin/sh\nprintf '4242\\n'\n")
     app_support = tmp_path / "app-support"
@@ -5011,6 +5015,7 @@ def test_launch_stack_detached_starts_repair_when_core_healthy_and_sidecars_unhe
                     "user_surface_healthy() { return 0; }\n"
                 "runtime_optional_surfaces_healthy() { return 1; }\n"
                 "detached_launch_process_group_running() { return 1; }\n"
+                "runtime_owned_recovery_needed() { RUNTIME_RECOVERY_REASON=google_mcp_owner_missing; return 0; }\n"
                 "is_stack_running() { printf 'stack-check\\n' >&2; return 0; }\n"
                 "stop_stack_for_upgrade() { printf 'unexpected-stop\\n'; return 0; }\n"
                 "if launch_stack_detached; then\n"
@@ -5026,10 +5031,13 @@ def test_launch_stack_detached_starts_repair_when_core_healthy_and_sidecars_unhe
 
     assert completed.stdout.splitlines() == [
         "Viventium core surfaces are running, but enabled sidecars need startup. Repairing...",
+        "Recovery reason: google_mcp_owner_missing.",
         "Launched Viventium in the background (pid 4242).",
         "ok",
     ]
     assert "stack-check" not in completed.stderr
+    assert "command not found" not in completed.stderr
+    assert "unexpected-stop" not in completed.stdout
     assert "restarted" not in completed.stdout
 
 
