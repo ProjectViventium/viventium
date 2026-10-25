@@ -8,6 +8,13 @@ source or fallback. Existing `integrations.glasshive` config, `glasshive-harness
 IDs, environment variables, supported protocol routes, and `glasshive` state directories remain
 compatible. Changing the source dependency does not move or recreate user state.
 
+The pinned component's standalone control panel supports saved expert revisions,
+recoverable management, retained Library/files and a clearer project form. A user can reuse a
+setup and return to saved work instead of rebuilding it. Native browser recovery applies to
+configured Linux shared-workspace desktops. The [xPerfect guide](https://www.xperfect.ai/docs/)
+owns that user flow. The [component pin](../../../components.lock.json) records reviewed source
+integration; it does not certify the generated or installed Viventium runtime.
+
 The former provider-owned `main_context_v1` claim (`main_context_owner=provider_legacy`) is not a
 supported route in the current component. Viventium sends Core-owned V1 snapshots from its accepted
 conversation history after upgrade; it keeps the configured `glasshive-harness` provider and model.

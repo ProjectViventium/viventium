@@ -2,7 +2,21 @@
 
 ## Unreleased
 
-### GlassHive Ultimate Phase 1
+### Reuse expertise and return to saved work
+
+- Updated the pinned xPerfect component with saved expert versions and recoverable
+  Archive, Remove and Restore. Reuse a reviewed worker setup for another job without
+  changing existing workers or losing their saved files and results.
+- The standalone control panel has a clearer job, context, worker and workspace form,
+  section icons, and a simple Create card beside the five starter experts.
+- In configured Linux shared-workspace desktops, an already-open human browser stays usable
+  while AI work is paused. After supported idle maintenance, Resume then Open browser reuses
+  the saved profile. Storage, account and access refusals give specific recovery steps.
+- Published the reviewed standalone Linux arm64 package and
+  [visual user guide](https://www.xperfect.ai/docs/). Core records the component source pin;
+  installed Viventium acceptance remains separate.
+
+### GlassHive Ultimate Phase 1 (earlier milestone)
 
 - Added owner-scoped personal Codex and Claude subscriptions with native setup, reconnect, test,
   removal, exclusive leases, and isolated credential projection.

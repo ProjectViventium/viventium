@@ -1,5 +1,8 @@
 # Migration Guide (v0.3 -> v0.4)
 
+For current upgrades and migrations, use [Upgrade and migrate](how-to/upgrade-and-migrate.md).
+This page preserves the earlier v0.3 to v0.4 migration.
+
 This is a high-level migration map. The goal is parity without breaking production workflows.
 
 ## What Changes

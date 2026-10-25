@@ -1,5 +1,8 @@
 # Troubleshooting
 
+For current installation and troubleshooting, use [Install and operate](how-to/install-and-operate.md).
+This page is retained for historical stack-specific details.
+
 This is the shared troubleshooting index. For stack-specific detail, see:
 - v0.3: `viventium_v0_3_py/docs/06_TROUBLESHOOTING.md`
 - v0.4: `viventium_v0_4/docs/` (see `VIVENTIUM_STATUS.md` and `EXPECTED_BEHAVIOR.md`)

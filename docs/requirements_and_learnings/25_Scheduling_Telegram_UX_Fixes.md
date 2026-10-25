@@ -1,7 +1,8 @@
 # Scheduling Telegram UX Fixes
 
 **Date:** 2026-02-11
-**Status:** Implemented
+**Historical result:** Implemented on the dated candidate. See
+[current Scheduling QA](../../qa/scheduling-cortex/README.md) for the current checks and evidence.
 **Scope:** Fix "Checking now." and "(No response generated.)" noise on Telegram for scheduler-triggered runs
 
 ---
