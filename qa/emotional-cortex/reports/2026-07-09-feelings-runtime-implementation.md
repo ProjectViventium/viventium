@@ -60,7 +60,7 @@
 | `EMO-UC-009` | Trigger malformed output | Browser chat + health panel | PASS | Reply unaffected; degraded state visible | `invalid_output`, unchanged version; retry added | None |
 | `EMO-UC-010` | Refresh/restart | Browser + full local restart | PASS | State/capsule returned after restart | Version/trail/health persisted | None |
 | `EMO-UC-011` | Web, voice, Telegram, delegate | Web + background live; other path tests | PARTIAL | Web/background passed | Shared source/test evidence | Live voice/Telegram/worker matrix remains |
-| `EMO-UC-012` | Switch scope to conscious-only | Compiler and routing tests | PASS | Not a per-user UI setting | Generated env and skip tests | None for operator contract |
+| `EMO-UC-012` | Switch scope to `conscious_agent` (then described as conscious-only) | Compiler and routing tests | PASS | Not a per-user UI setting | Generated env and skip tests | None for operator contract |
 | `EMO-UC-027` | Keyboard/mobile/reduced motion | 390 px browser + dialog keyboard | PARTIAL | Controls in bounds; Escape/focus passed | CSS reduced-motion contract | Live OS reduced-motion toggle remains |
 | `EMO-UC-014` | Stale edit or overlapping stimuli | API/service/real-Mongo tests | PARTIAL | Not run with two live tabs | `409`/refetch, serialized queue, hashed deduplication, atomic CAS rebase | Two-tab browser probe remains |
 | `EMO-UC-015` | Re-enable after long off period | Synthetic clock/kernel tests | PARTIAL | Not time-warped in live browser | Lazy-decay regression passes | Long elapsed live soak remains |

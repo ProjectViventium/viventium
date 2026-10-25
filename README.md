@@ -41,6 +41,10 @@ of truth moving forward. The diagram shows the target; current support remains d
 - **Safe execution**: move from conversation into real work with tools, code, scheduling, and controlled automation.
 - **Run it your way**: local-first, bring-your-own-keys, connected accounts, or managed paths as the product evolves.
 
+For saving expert setups and returning to saved worker results, see the
+[current xPerfect capabilities](docs/requirements_and_learnings/capabilities/glasshive.md#component-and-compatibility)
+and its linked standalone guide.
+
 ## What You Get
 
 A local Viventium install can give you:

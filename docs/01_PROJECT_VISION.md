@@ -1,5 +1,9 @@
 # Project Vision
 
+Active vision owner: [approved cognitive-system vision and diagrams](architecture/cognitive-system.md).
+Shared rules: [key principles](requirements_and_learnings/01_Key_Principles.md).
+This preserved page contains historical vision; it is not current product acceptance.
+
 ## Core Idea
 Viventium is a brain-inspired voice AI system where a single conscious agent handles live dialogue while multiple specialized background agents analyze in parallel. The system should feel like one coherent mind with fast, natural voice interaction and non-blocking background reasoning.
 
