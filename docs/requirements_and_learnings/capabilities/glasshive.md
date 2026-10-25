@@ -15,6 +15,22 @@ configured Linux shared-workspace desktops. The [xPerfect guide](https://www.xpe
 owns that user flow. The [component pin](../../../components.lock.json) records reviewed source
 integration; it does not certify the generated or installed Viventium runtime.
 
+The reviewed source also retains usage and cost against the exact execution attempt. Missing
+cost stays unknown; replaying a receipt does not count it twice. Optional owner/project work
+pauses preserve accepted work and resume it through the existing queue. These controls are not
+a billing cap. Provider failures retain safe cause and request references without exporting
+private response bodies. Claude Code connections can declare their own Bedrock region and exact
+model choices; saved configuration does not prove AWS access.
+
+xPerfect owns these reusable controls, its optional evidence/delivery kit and its native Linux
+arm64/amd64 package pairs. Its [capability guide](https://github.com/xPerfectAI/xPerfect/blob/main/docs/capability-matrix.md)
+and [deployment guide](https://github.com/xPerfectAI/xPerfect/blob/main/docs/deployment.md) own their
+scope and qualifications. Viventium still owns cognition, user context and channel presentation.
+Updating this source pin neither changes a running service nor migrates its database. Follow
+the [supported upgrade and recovery procedure](../../how-to/upgrade-and-migrate.md) and retain a
+matching source/state checkpoint before activation. Standalone package acceptance does not
+certify a rebuilt or installed Viventium Native payload.
+
 The former provider-owned `main_context_v1` claim (`main_context_owner=provider_legacy`) is not a
 supported route in the current component. Viventium sends Core-owned V1 snapshots from its accepted
 conversation history after upgrade; it keeps the configured `glasshive-harness` provider and model.

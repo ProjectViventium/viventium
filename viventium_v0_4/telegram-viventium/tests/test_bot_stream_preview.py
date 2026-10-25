@@ -7367,6 +7367,39 @@ async def test_ingress_failure_notice_only_for_definite_non_admission(failure):
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("newer_source", [False, True])
+@pytest.mark.parametrize("state", ["preparing", "ready", "admitted", "completed", "cancelled", "failed"])
+async def test_retained_ingress_ordering_failure_reports_saved_without_retry_or_execution(newer_source, state):
+    import httpx
+    request = httpx.Request("POST", "http://example.test/source-order")
+    response = httpx.Response(503, request=request, json={
+        "observed": False, "error": "source_order_unavailable",
+        "input": {"retained": True, "state": state, "sourceEventId": "a" * 64,
+                  "sourceMessageId": "saved-source", "conversationId": "saved-conversation"},
+    })
+    class Robot:
+        async def observe_source_order(self, **kwargs):
+            if newer_source:
+                tg_bot._note_telegram_source_message(111, 77, 43, 700)
+            raise httpx.HTTPStatusError("ordering unavailable", request=request, response=response)
+    bot = _FakeTelegramBot()
+    result = await tg_bot._observe_ingress_source_guard(
+        bot=bot, robot=Robot(), update_message=types.SimpleNamespace(from_user=types.SimpleNamespace(id=700)),
+        chat_id=111, thread_id=77, source_sequence=42,
+    )
+    assert result is None
+    assert bot.actions == []
+    if newer_source or state not in {"preparing", "ready", "admitted"}:
+        assert bot.messages == []
+    else:
+        assert len(bot.messages) == 1
+        assert bot.messages[0]["reply_to_message_id"] == 42
+        assert bot.messages[0]["message_thread_id"] == 77
+        assert "saved" in bot.messages[0]["text"].lower()
+        assert "retry" not in bot.messages[0]["text"].lower()
+
+
+@pytest.mark.asyncio
 async def test_pre_admission_outage_notice_does_not_present_for_obsolete_input():
     import httpx
     class Robot:

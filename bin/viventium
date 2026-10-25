@@ -5722,6 +5722,16 @@ telegram_codex_surface_healthy() {
   runtime_pid_file_running "telegram_codex.pid"
 }
 
+redis_surface_healthy() {
+  "$PYTHON_BIN" - "$REPO_ROOT/scripts/viventium" "$RUNTIME_DIR" <<'PYREDIS'
+import sys
+from pathlib import Path
+sys.path.insert(0, sys.argv[1])
+from install_summary import load_runtime_env, redis_protocol_ready
+raise SystemExit(0 if redis_protocol_ready(load_runtime_env(Path(sys.argv[2]))) else 1)
+PYREDIS
+}
+
 optional_install_surfaces_healthy() {
   if runtime_env_true "START_SEARXNG" "false" && ! searxng_surface_healthy; then
     return 1
@@ -5762,25 +5772,48 @@ PYINTENT
 
 runtime_owned_recovery_needed() {
   local api_port="" frontend_port="" playground_port="" sandpack_port=""
+  RUNTIME_RECOVERY_REASON=""
   assign_runtime_ports api_port frontend_port playground_port sandpack_port
   if ! runtime_port_listening "$api_port" &&
-    ! runtime_pid_file_running "librechat-api-watchdog.pid" true; then return 0; fi
-  if ! runtime_port_listening "$frontend_port"; then return 0; fi
-  if ! express_install_experience && ! runtime_port_listening "$playground_port"; then return 0; fi
-  if telegram_recovery_owner_missing; then return 0; fi
+    ! runtime_pid_file_running "librechat-api-watchdog.pid" true; then
+    RUNTIME_RECOVERY_REASON="api_owner_missing"; return 0
+  fi
+  if ! runtime_port_listening "$frontend_port"; then
+    RUNTIME_RECOVERY_REASON="frontend_owner_missing"; return 0
+  fi
+  if ! express_install_experience && ! runtime_port_listening "$playground_port"; then
+    RUNTIME_RECOVERY_REASON="playground_owner_missing"; return 0
+  fi
+  if telegram_recovery_owner_missing; then
+    RUNTIME_RECOVERY_REASON="telegram_owner_missing"; return 0
+  fi
+  if runtime_env_true "START_GOOGLE_MCP" "false" &&
+    ! runtime_pid_file_running "google_workspace_mcp.pid" true; then
+    RUNTIME_RECOVERY_REASON="google_mcp_owner_missing"; return 0
+  fi
   if runtime_env_true "START_GLASSHIVE" "false" &&
     [[ "$(read_generated_env_value "GLASSHIVE_SERVICE_TOPOLOGY" "")" != "external_split" ]] &&
     ! runtime_pid_file_running "glasshive_runtime.pid" true &&
-    ! runtime_pid_file_running "glasshive_runtime_watchdog.pid" true; then return 0; fi
+    ! runtime_pid_file_running "glasshive_runtime_watchdog.pid" true; then
+    RUNTIME_RECOVERY_REASON="glasshive_owner_missing"; return 0
+  fi
   if runtime_env_true "START_SCHEDULING_MCP" "false" &&
     ! runtime_pid_file_running "scheduling_cortex_mcp.pid" true &&
-    ! runtime_pid_file_running "scheduling_cortex_mcp_watchdog.pid" true; then return 0; fi
+    ! runtime_pid_file_running "scheduling_cortex_mcp_watchdog.pid" true; then
+    RUNTIME_RECOVERY_REASON="scheduling_owner_missing"; return 0
+  fi
   if runtime_env_true "VIVENTIUM_VOICE_ENABLED" "false" &&
-    ! runtime_pid_file_running "voice_gateway.pid" true; then return 0; fi
+    ! runtime_pid_file_running "voice_gateway.pid" true; then
+    RUNTIME_RECOVERY_REASON="voice_owner_missing"; return 0
+  fi
   return 1
 }
 
 runtime_optional_surfaces_healthy() {
+  if { runtime_env_true "USE_REDIS" "false" || runtime_env_true "USE_REDIS_STREAMS" "false"; } &&
+    ! redis_surface_healthy; then
+    return 1
+  fi
   if runtime_env_true "START_RAG_API" "false" && ! rag_api_surface_healthy; then
     return 1
   fi
@@ -5827,11 +5860,24 @@ pid_matches_repo_scope() {
   local pid="${1:-}"
   [[ -n "$pid" ]] || return 1
 
+  local scope="$REPO_ROOT"
+  [[ ! -d "$scope" ]] || scope="$(cd "$scope" && pwd -P)"
+  local cwd=""
+  if command -v lsof >/dev/null 2>&1; then
+    cwd="$(lsof -a -d cwd -p "$pid" -Fn 2>/dev/null | sed -n 's/^n//p' | head -n 1 || true)"
+  fi
+  if [[ -z "$cwd" ]] && command -v pwdx >/dev/null 2>&1; then
+    cwd="$(pwdx "$pid" 2>/dev/null | sed 's/^[^:]*: //' | head -n 1 || true)"
+  fi
+  case "$cwd" in
+    "$scope"|"$scope"/*) return 0 ;;
+  esac
+
   local cmd
   cmd="$(ps -p "$pid" -o command= 2>/dev/null || true)"
   if [[ -n "$cmd" ]]; then
     case "$cmd" in
-      "$REPO_ROOT"|"$REPO_ROOT"/*|*" $REPO_ROOT"|*" $REPO_ROOT"/*)
+      "$scope"|"$scope"/*|*" $scope"|*" $scope"/*)
         return 0
         ;;
     esac
@@ -5969,6 +6015,7 @@ launch_stack_detached() {
   if detached_launch_process_group_running; then
     if runtime_owned_recovery_needed; then
       echo "An owned local service and its recovery owner are stopped; repairing the selected runtime."
+      echo "Recovery reason: ${RUNTIME_RECOVERY_REASON:-local_owner_missing}."
       VIVENTIUM_CLI_LOCK_INHERITED_ONCE=1 VIVENTIUM_PRESERVE_HELPER_RUNTIME_INTENT=1 stop_stack_for_upgrade || return 1
     else
       echo "Viventium remains owned; available services are preserved while dependencies or their recovery owners recover."
@@ -5976,9 +6023,19 @@ launch_stack_detached() {
     fi
   fi
   if [[ "$core_surfaces_healthy" == "0" ]]; then
+    if ! runtime_owned_recovery_needed; then
+      echo "Viventium core surfaces are running; dependency attention does not restart available services."
+      return 0
+    fi
     echo "Viventium core surfaces are running, but enabled sidecars need startup. Repairing..."
+    echo "Recovery reason: ${RUNTIME_RECOVERY_REASON:-local_owner_missing}."
   elif is_stack_running; then
+    if ! runtime_owned_recovery_needed; then
+      echo "Viventium remains owned; available services are preserved while dependencies or their recovery owners recover."
+      return 0
+    fi
     echo "Detected Viventium processes, but no healthy user-facing surface. Restarting the local stack..."
+    echo "Recovery reason: ${RUNTIME_RECOVERY_REASON:-local_owner_missing}."
     stop_stack_for_upgrade
   fi
 
@@ -6381,6 +6438,10 @@ install_waiting_on_surfaces() {
   assign_runtime_ports api_port frontend_port playground_port sandpack_port
   glasshive_port="$(read_generated_env_value "GLASSHIVE_RUNTIME_PORT" "8766")"
 
+  if { runtime_env_true "USE_REDIS" "false" || runtime_env_true "USE_REDIS_STREAMS" "false"; } &&
+    ! redis_surface_healthy; then
+    waiting_on+=("Redis commands")
+  fi
   if ! api_surface_healthy "$api_port"; then
     if [[ "$display_mode" == "compact" ]]; then
       waiting_on+=("API :$api_port")

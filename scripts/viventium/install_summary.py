@@ -8,6 +8,7 @@ import os
 import shutil
 import socket
 import sqlite3
+import ssl
 import stat
 import subprocess
 import sys
@@ -90,6 +91,85 @@ def load_runtime_env(runtime_dir: Path | None) -> dict[str, str]:
             key, value = line.split("=", 1)
             merged[key.strip()] = strip_wrapping_quotes(value.strip())
     return merged
+
+
+def redis_protocol_ready(runtime_env: dict[str, str], *, timeout: float = 1.0) -> bool:
+    """Observe the configured Redis connection without changing stored data or runtime state."""
+    if not any(resolve_bool(runtime_env.get(key), False) for key in ("USE_REDIS", "USE_REDIS_STREAMS")):
+        return True
+    socket_path = str(runtime_env.get("REDIS_SOCKET_PATH") or "").strip()
+    username = str(runtime_env.get("REDIS_USERNAME") or "")
+    password = str(runtime_env.get("REDIS_PASSWORD") or "")
+    host = ""
+    port = 6379
+    secure = False
+    if socket_path:
+        if not Path(socket_path).is_absolute():
+            return False
+    else:
+        try:
+            endpoint = urllib.parse.urlsplit(str(runtime_env.get("REDIS_URI") or ""))
+            if endpoint.scheme not in {"redis", "rediss"} or not endpoint.hostname or endpoint.query or endpoint.fragment:
+                return False
+            port = endpoint.port if endpoint.port is not None else 6379
+            if not 0 < port <= 65535:
+                return False
+            host = endpoint.hostname
+            secure = endpoint.scheme == "rediss"
+            username = urllib.parse.unquote(endpoint.username or "") or username
+            password = urllib.parse.unquote(endpoint.password or "") or password
+        except ValueError:
+            return False
+
+    def command(parts: list[str]) -> bytes:
+        return (f"*{len(parts)}\r\n".encode() + b"".join(
+            f"${len(part.encode())}\r\n".encode() + part.encode() + b"\r\n" for part in parts
+        ))
+
+    request = b""
+    expected = b""
+    if password:
+        request += command(["AUTH", username, password] if username else ["AUTH", password])
+        expected += b"+OK\r\n"
+    # QUIT closes only this probe connection; no stored data or selected database changes.
+    request += command(["PING"]) + command(["QUIT"])
+    expected += b"+PONG\r\n+OK\r\n"
+    if len(request) > 4096:
+        return False
+    connection = None
+    try:
+        deadline = time.monotonic() + max(0.01, min(float(timeout), 5.0))
+
+        def remaining() -> float:
+            value = deadline - time.monotonic()
+            if value <= 0:
+                raise TimeoutError
+            return value
+
+        if socket_path:
+            connection = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+            connection.settimeout(remaining())
+            connection.connect(socket_path)
+        else:
+            connection = socket.create_connection((host, port), timeout=remaining())
+            if secure:
+                connection.settimeout(remaining())
+                connection = ssl.create_default_context().wrap_socket(connection, server_hostname=host)
+        connection.settimeout(remaining())
+        connection.sendall(request)
+        response = bytearray()
+        while len(response) < len(expected):
+            connection.settimeout(remaining())
+            part = connection.recv(len(expected) - len(response))
+            if not part:
+                return False
+            response.extend(part)
+        return bytes(response) == expected
+    except (OSError, ValueError):
+        return False
+    finally:
+        if connection is not None:
+            connection.close()
 
 
 def foundation_api_key_present(config: dict[str, Any]) -> bool:
@@ -902,6 +982,7 @@ def telegram_service_status(
     pending_marker_file_name: str | None = None,
     pending_detail: str | None = None,
     requires_lc_api: bool = False,
+    redis_ready: bool | None = None,
 ) -> tuple[str, str]:
     token = str(runtime_env.get(token_env_key, "") or "").strip()
     state_roots = runtime_state_root_candidates(config, runtime_env, runtime_dir, repo_root)
@@ -958,6 +1039,11 @@ def telegram_service_status(
                 return (
                     "Running with issues",
                     f"LibreChat API is unreachable at {detail}; Telegram cannot start new chats until it recovers.",
+                )
+            if not (redis_protocol_ready(runtime_env) if redis_ready is None else redis_ready):
+                return (
+                    "Running with issues",
+                    "Configured Redis did not pass its command check; Telegram intake needs attention. Check the service, access and storage.",
                 )
         return "Running", running_detail
 
@@ -1619,6 +1705,9 @@ def build_service_rows(
         if probe_live
         else False
     )
+    redis_required = any(resolve_bool(runtime_env.get(key), False)
+                         for key in ("USE_REDIS", "USE_REDIS_STREAMS"))
+    redis_ready = redis_protocol_ready(runtime_env) if probe_live and redis_required else True
     playground_ok = (
         any_http_ok(
             playground_url,
@@ -1641,7 +1730,9 @@ def build_service_rows(
     )
     rows: list[tuple[str, str, str]] = [
         ("LibreChat Frontend", "Running" if frontend_ok else missing_core_status, frontend_url),
-        ("LibreChat API", "Running" if api_ok else missing_core_status, api_url),
+        ("LibreChat API", ("Running" if redis_ready else "Running with issues") if api_ok else missing_core_status,
+         "HTTP is reachable; Redis did not pass its command check. Check its service, access and storage."
+         if api_ok and not redis_ready else api_url),
         (
             "Modern Playground",
             "Running" if playground_ok else ("Deferred" if express_experience else missing_core_status),
@@ -1663,6 +1754,12 @@ def build_service_rows(
         ),
         ("Remote Access", remote_status, remote_detail),
     ]
+    if redis_required:
+        rows.append(("Redis", ("Running" if redis_ready else "Action Required") if probe_live else "Configured",
+                     "Configured Redis answered PING; write acceptance is checked by each operation."
+                     if probe_live and redis_ready else
+                     "Check the configured Redis service and storage; a listening port alone is not readiness."
+                     if probe_live else "Command readiness is checked when live status is requested."))
 
     scheduler_status, scheduler_detail = scheduler_status_and_detail(
         config,
@@ -1874,6 +1971,7 @@ def build_service_rows(
             pending_marker_file_name="telegram_bot_deferred.pending",
             pending_detail="Waiting for LibreChat API before first Telegram bridge start on this Mac",
             requires_lc_api=True,
+            redis_ready=redis_ready,
         )
         rows.append(("Telegram Bridge", telegram_status, telegram_detail))
     if resolve_bool((integrations.get("telegram_codex") or {}).get("enabled"), False):
@@ -2065,13 +2163,13 @@ def resolve_summary_heading(
         )
 
     if any(
-        status == "Action Required"
+        status in {"Action Required", "Running with issues"}
         for name, status, _detail in rows
         if name in {"LibreChat Frontend", "LibreChat API", "Modern Playground"}
     ):
         return (
             "Viventium needs attention",
-            "Required local services are unavailable. Check the service status below.",
+            "Required local services or their dependencies need attention. Check the service status below.",
             "Live Services",
         )
 

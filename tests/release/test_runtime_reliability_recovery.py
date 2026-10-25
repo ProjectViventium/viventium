@@ -5,7 +5,9 @@ import importlib.util
 import json
 import os
 import plistlib
+import select
 import shlex
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -65,6 +67,92 @@ runtime_owned_recovery_needed
 '''
     result = shell(script, MISSING=missing, WATCHDOG=str(watchdog).lower(), TOPOLOGY=topology)
     assert result.returncode == expected, result.stderr
+
+
+@pytest.fixture
+def relative_runtime_owner(tmp_path: Path):
+    def run(component: str, interpreter: str = "python", *, scope_matches: bool = True,
+            group_matches: bool = True, selected_root_matches: bool = True):
+        repository = tmp_path / "repository"
+        repository.mkdir(exist_ok=True)
+        cwd = (repository if scope_matches else tmp_path / "foreign") / component
+        cwd.mkdir(parents=True, exist_ok=True)
+        if interpreter == "node":
+            executable = shutil.which("node")
+            if executable is None:
+                pytest.skip("Node is required for the native Node ownership control")
+            (cwd / "worker.js").write_text("console.log('ready'); setInterval(() => {}, 1000);\n")
+            command = [executable, "worker.js"]
+        else:
+            (cwd / "worker.py").write_text("import time\nprint('ready', flush=True)\ntime.sleep(30)\n")
+            command = [sys.executable, "worker.py", "start"]
+        process = subprocess.Popen(command, cwd=cwd, start_new_session=True,
+                                   stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        try:
+            assert process.stdout is not None
+            assert select.select([process.stdout], [], [], 3)[0], "Owned fixture did not start"
+            assert process.stdout.readline().strip() == "ready"
+            state = tmp_path / "state"
+            state.mkdir(exist_ok=True)
+            pid_file, enabled, reason = {
+                "voice": ("voice_gateway.pid", "VIVENTIUM_VOICE_ENABLED", "voice_owner_missing"),
+                "glasshive": ("glasshive_runtime.pid", "START_GLASSHIVE", "glasshive_owner_missing"),
+                "scheduling": ("scheduling_cortex_mcp.pid", "START_SCHEDULING_MCP", "scheduling_owner_missing"),
+                "google": ("google_workspace_mcp.pid", "START_GOOGLE_MCP", "google_mcp_owner_missing"),
+            }[component]
+            (state / pid_file).write_text(f"{process.pid}\n")
+            selected = repository if selected_root_matches else tmp_path / "changed-selection"
+            selected.mkdir(exist_ok=True)
+            functions = "".join(shell_function(CLI, name) for name in (
+                "runtime_pid_file_running", "pid_is_running", "pid_matches_repo_scope",
+                "pid_matches_runtime_process_group", "runtime_owned_recovery_needed",
+            ))
+            script = functions + f'''
+REPO_ROOT={shlex.quote(str(selected))}
+APP_SUPPORT_DIR={shlex.quote(str(tmp_path))}
+read_generated_env_value() {{
+  if [[ "$1" == VIVENTIUM_STATE_ROOT ]]; then printf '%s\\n' {shlex.quote(str(state))};
+  else printf '%s\\n' "${{2:-}}"; fi
+}}
+read_detached_launch_process_group() {{ printf '%s\\n' {process.pid if group_matches else process.pid + 1}; }}
+assign_runtime_ports() {{ api_port=10001 frontend_port=10002 playground_port=10003; }}
+runtime_port_listening() {{ return 0; }}
+express_install_experience() {{ return 0; }}
+telegram_recovery_owner_missing() {{ return 1; }}
+runtime_env_true() {{ [[ "$1" == {shlex.quote(enabled)} ]]; }}
+if runtime_owned_recovery_needed; then
+  printf 'recovery=yes reason=%s\\n' "${{RUNTIME_RECOVERY_REASON:-}}"
+else printf 'recovery=no\\n'; fi
+'''
+            result = shell(script)
+            assert process.poll() is None, "Read-only owner inspection changed its process"
+            return result, reason
+        finally:
+            process.terminate()
+            process.wait(timeout=5)
+
+    return run
+
+
+@pytest.mark.parametrize("component", ["voice", "glasshive", "scheduling", "google"])
+@pytest.mark.parametrize("interpreter", ["python", "node"])
+def test_relative_commands_keep_the_existing_local_recovery_owner(
+    relative_runtime_owner, component: str, interpreter: str,
+) -> None:
+    result, _reason = relative_runtime_owner(component, interpreter)
+    assert result.returncode == 0, result.stderr
+    assert result.stdout == "recovery=no\n", "A relative command in its owned cwd is not a missing service"
+
+
+@pytest.mark.parametrize("component", ["voice", "glasshive", "scheduling", "google"])
+@pytest.mark.parametrize("refusal", ["foreign-cwd", "foreign-group", "changed-selection"])
+def test_foreign_scope_or_group_cannot_suppress_owned_recovery(
+    relative_runtime_owner, component: str, refusal: str,
+) -> None:
+    result, reason = relative_runtime_owner(component, scope_matches=refusal != "foreign-cwd",
+        group_matches=refusal != "foreign-group", selected_root_matches=refusal != "changed-selection")
+    assert result.returncode == 0, result.stderr
+    assert result.stdout == f"recovery=yes reason={reason}\n"
 
 
 @pytest.mark.parametrize("claim,recovery,stop", [(False, True, True), (False, False, False), (True, True, False)])
@@ -181,12 +269,17 @@ print("intent-ok")
 def test_helper_readiness_and_stop_use_different_contracts(tmp_path: Path) -> None:
     source = HELPER.read_text()
     definitions = "private struct RuntimePorts:" + source.split("private struct RuntimePorts:", 1)[1].split("private extension HelperController", 1)[0]
+    definitions += "private struct ManagedServicesReadiness" + source.split("private struct ManagedServicesReadiness", 1)[1].split("private struct HealWorkflowSettings", 1)[0]
     methods = source.split("    nonisolated static func managedServicesRunning(runtime:", 1)[1].split("    nonisolated static func stackOwnedByDifferentRepo(", 1)[0]
     methods = "    nonisolated static func managedServicesRunning(runtime:" + methods
     definitions += "\nprivate class HelperController {\n" + methods + r'''
 static var status = 503
 static func firstHTTPStatus(urls: [URL]) async -> Int? { status }
 static func candidateURLs(for url: URL) -> [URL] { [url] }
+static func runSystemProcess(executableURL: URL, arguments: [String], standardInput: String? = nil,
+                             timeoutSeconds: TimeInterval? = nil) -> (status: Int32, stdout: String, stderr: String) {
+    preconditionFailure("Disabled Redis must not start a probe")
+}
 }
 '''
     body = r'''

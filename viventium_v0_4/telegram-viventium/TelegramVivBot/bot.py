@@ -89,6 +89,7 @@ from utils.librechat_bridge import (
     _start_chat_error_safe_to_retry,
     _start_chat_error_message,
     _ingress_definitely_not_retained,
+    _ingress_input_retained,
     render_telegram_markdown,
     _verified_attachment_grants,
     sanitize_telegram_display_text,
@@ -2032,7 +2033,8 @@ async def _observe_ingress_source_guard(
         )
         # This notice is transport-only. Ambiguous acceptance is left to Core's existing
         # retained-input recovery; never invite a duplicate execution after an unknown POST.
-        if (_start_chat_error_safe_to_retry(exc) or _ingress_definitely_not_retained(exc)) and _is_newest_telegram_source_message(
+        if (_start_chat_error_safe_to_retry(exc) or _ingress_definitely_not_retained(exc)
+                or _ingress_input_retained(exc)) and _is_newest_telegram_source_message(
             chat_id, thread_id, source_sequence, telegram_user_id
         ):
             try:

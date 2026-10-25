@@ -107,6 +107,25 @@ Recovery preserves crash evidence and verifies the existing storage identity, wr
 transaction support, and live consumer reads before reporting readiness.
 Native fallback startup appends to the existing server log without clearing prior failure evidence.
 
+### Dependency attention and helper recovery
+
+A responding service and its dependencies have separate health. When an owned local service is
+still running, a dependency failure must not trigger a full stack restart. Keep available services
+running and show that attention is needed. An enabled Redis connection is checked by its command
+reply, not an open port; a successful PING does not prove that later writes will succeed.
+Each write still owns its acceptance and recovery.
+An enabled process-owned sidecar whose owner is missing still enters the existing repair path;
+the local Google Workspace MCP uses the same checkout and process-group checks. Docker-owned
+services retain their separate recovery. A live but unready owner stays an attention condition.
+
+Commands started with relative paths retain the validated checkout and process-group ownership
+checks. A helper bundle refresh pauses and restores the one validated supervisor instead of
+opening a second helper. Preserve intentional Stop and reject foreign or ambiguous ownership.
+Source tests and a rebuilt helper do not certify an installed helper, OS login, permissions or
+reboot behavior; those need their own runtime evidence.
+The [source recovery publication report](../../../qa/runtime-install-release/reports/2026-10-25-source-recovery-publication.md)
+records the affected checks, rebuilt artifact and exact limits.
+
 ### Worker component cutover
 
 - xPerfect is the managed worker source at `viventium_v0_4/xPerfect/`. The original

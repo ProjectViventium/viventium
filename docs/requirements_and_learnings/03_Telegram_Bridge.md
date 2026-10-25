@@ -16,6 +16,9 @@ not select the main Viventium Telegram bridge's model.
 - A proven pre-admission connection failure or typed pre-write source-order rejection sends one
   plain retry notice to the exact current input. It does not enter Main or TTS. Unknown acceptance
   stays with the existing durable input recovery; the adapter must not resubmit actions.
+- A typed ordering failure with Core's saved, nonterminal input receipt sends one saved-message
+  notice to the current input. It does not ask for a retry, start Main or TTS, or show typing.
+  A terminal receipt, missing receipt or newer source does not show this notice.
 - Typing belongs only to an admitted foreground presentation. Never use a typing action as a
   blocked-account probe. Start and stop boundaries are logged without enabling detailed telemetry.
   A retained terminal input must settle its presentation receipt instead of reclaiming forever.

@@ -1373,8 +1373,19 @@ def test_recovery_arm_preserves_helper_config_bytes_and_active_pointer(
     recovery_pointer = continuity / "telegram-recovery-active.json"
     recovery_pointer.write_text('{"synthetic":"armed"}\n', encoding="utf-8")
     recovery_pointer.chmod(0o600)
+    # The isolated fixture has no loaded helper job. Keep the real user's native
+    # registration outside this test while retaining the production binding check.
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    launchctl_calls = tmp_path / "launchctl-calls"
+    launchctl = fake_bin / "launchctl"
+    launchctl.write_text('#!/bin/sh\nprintf "%s\\n" "$1" >> "$FIXTURE_LAUNCHCTL_CALLS"\n'
+                         '[ "$1" = print ] || exit 99\nexit 1\n')
+    launchctl.chmod(0o755)
     env = {
         **os.environ,
+        "PATH": str(fake_bin) + os.pathsep + os.environ.get("PATH", ""),
+        "FIXTURE_LAUNCHCTL_CALLS": str(launchctl_calls),
         "HOME": str(fake_home),
         "VIVENTIUM_HELPER_SKIP_BUILD": "1",
         "VIVENTIUM_HELPER_SKIP_LAUNCHCTL": "1",
@@ -1405,6 +1416,7 @@ def test_recovery_arm_preserves_helper_config_bytes_and_active_pointer(
     assert result.returncode == 0, result.stderr
     assert helper_config.read_bytes() == original
     assert recovery_pointer.read_text(encoding="utf-8") == '{"synthetic":"armed"}\n'
+    assert launchctl_calls.read_text().splitlines() == ["print"]
 
 
 def test_helper_telegram_recovery_is_fail_closed_and_uses_sealed_component() -> None:
@@ -2257,7 +2269,8 @@ def test_helper_source_autostarts_stack_on_launch() -> None:
     assert "return await self.frontendHealthy(port: playgroundPort)" not in source
     assert "await self.stackHealthSnapshot(runtime: runtime).healthy" in user_facing_health_section
     assert "await self.playgroundHealthy(port: runtime.playgroundPort)" in source
-    assert "return await self.managedServicesHealthy(runtime: runtime)" in source
+    assert "var readiness = await self.managedServicesReadiness(runtime: runtime)" in source
+    assert "allLocalServicesRunning: optionalSurfaces.allLocalServicesRunning" in source
     assert "let shouldPreserveBusyState =" in source
     assert "self.stackState.actionBusy &&" in source
     assert "inFlightState != nil" in source
@@ -2516,7 +2529,7 @@ def test_helper_uses_easy_install_required_surface_health_contract() -> None:
     assert 'let sandpackPort = Int(values["SANDPACK_BUNDLER_LISTEN_PORT"] ?? "") ?? 3191' in source
     assert 'values["SANDPACK_BUNDLER_URL"] != nil' in source
     assert "let apiReady = nativeReady && apiSurfaceReady" in source
-    assert "optionalSurfacesReady: optionalSurfacesReady && artifactRuntimeReady" in source
+    assert "optionalSurfacesReady: optionalSurfaces.ready && artifactRuntimeReady" in source
     assert "if runtime.requiresPlayground" in source
 def test_prebuilt_helper_source_digest_marker_matches_current_sources() -> None:
     helper_dir = HELPER_PACKAGE.parent

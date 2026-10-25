@@ -2,6 +2,28 @@
 
 ## Unreleased
 
+### Preserve work during dependency recovery
+
+- The menu-bar helper and command-line status distinguish a running service from a dependency
+  that needs attention. Available owned services keep running instead of restarting the stack.
+  Redis command readiness is visible; each write still checks its own acceptance.
+- Commands started with relative paths retain their checkout ownership checks. Helper bundle
+  refresh reuses one validated supervisor and preserves intentional Stop.
+- Telegram can tell the sender that an input is saved when Core returns a valid retained-input
+  receipt during an outage. It does not ask the user to resend accepted work or start a duplicate
+  reply. Ambiguous failures and requests rejected before intake keep their separate recovery paths.
+
+### Keep worker costs and recovery clear
+
+- Updated the reviewed xPerfect source pin with exact-attempt usage, safe provider failure
+  details and optional owner/project work pauses. Unknown cost stays unknown; repeated receipts
+  do not count twice. Resume keeps the accepted work instead of creating another job.
+- Claude Code connections can declare separate Bedrock regions and model choices. AWS access
+  and model entitlement still need the owner's configuration and verification.
+- xPerfect offers an optional evidence/delivery kit and native Linux arm64/amd64 package pairs.
+  These remain standalone capabilities with their own qualification limits. The Core source pin
+  does not upgrade an existing service or certify a new installed Viventium Native payload.
+
 ### Reuse expertise and return to saved work
 
 - Updated the pinned xPerfect component with saved expert versions and recoverable
