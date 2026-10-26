@@ -61,6 +61,13 @@ internals.
 
 - **ONB-013:** Stop records one intentional stopped state that helpers and supervisors honor until
   explicit Start or Restart.
+- Upgrade and missing-process repair stops preserve the saved Run/Stop choice. Protected upgrade
+  validation uses the existing live parent lock, exact transaction, selected source revision and
+  bound checkpoints before starting a candidate with background writers disabled. It does not
+  turn a later user Stop into permission to restart. Old helper configurations without newer
+  intent fields remain valid; malformed or foreign configuration stays refused. An explicit Start
+  records its new choice once before committed recovery; a later Stop must survive finalization.
+  Automatic, preserved-intent and writer-disabled starts cannot renew intent to bypass Stop.
 - Broad checkout or process-pattern cleanup requires verified ownership of the selected runtime
   process group. A missing or removed group receipt cannot authorize a same-checkout sweep.
   Legacy recovery remains limited to configured service ports and owned PID files; another

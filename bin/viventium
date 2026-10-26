@@ -1086,6 +1086,18 @@ cli_lock_active_owner() {
   [[ "$current_command" == *"bin/viventium"* ]]
 }
 
+verified_parent_cli_lock() {
+  # Internal markers and a lock acquired by this process are not parent proof.
+  local parent_pid="${1:-${VIVENTIUM_CLI_LOCK_OWNER_PID:-}}"
+  if [[ -z "${1:-}" ]]; then
+    [[ "${VIVENTIUM_CLI_LOCK_HELD:-0}" == "1" &&
+      "${VIVENTIUM_CLI_LOCK_DIR:-}" == "$CLI_LOCK_DIR" ]] || return 1
+  fi
+  [[ -n "$parent_pid" && "$parent_pid" != "$$" &&
+    "$parent_pid" == "$(read_cli_lock_metadata | sed -n '1p')" ]] &&
+    cli_lock_active_owner "$parent_pid"
+}
+
 acquire_cli_lock() {
   local command_name="${1:-unknown}"
 
@@ -5770,6 +5782,31 @@ raise SystemExit(0 if permitted else 1)
 PYINTENT
 }
 
+quiesced_helper_runtime_intent_allows_start() {
+  [[ "${VIVENTIUM_SUCCESSOR_VALIDATION_MODE:-}" == "quiesced" &&
+    "${VIVENTIUM_SUCCESSOR_VALIDATION_DISABLED_WRITERS:-}" == "$SUCCESSOR_VALIDATION_DISABLED_WRITERS" ]] || return 1
+  verified_parent_cli_lock "${1:-}" || return 1
+  "$PYTHON_BIN" "$REPO_ROOT/scripts/viventium/first_upgrade_bridge.py" \
+    quiesced-helper-intent --repo-root "$REPO_ROOT" \
+    --app-support-dir "$APP_SUPPORT_DIR" >/dev/null
+}
+
+automatic_runtime_intent_allows_start() {
+  helper_runtime_intent_allows_start ||
+    quiesced_helper_runtime_intent_allows_start "${1:-}"
+}
+
+preserve_active_quiesced_stop_intent() {
+  verified_parent_cli_lock || return 1
+  local inspection=""
+  inspection="$(
+    "$PYTHON_BIN" "$REPO_ROOT/scripts/viventium/first_upgrade_bridge.py" \
+      active-quiesced --repo-root "$REPO_ROOT" \
+      --app-support-dir "$APP_SUPPORT_DIR"
+  )" || return 1
+  "$PYTHON_BIN" -c 'import json,sys; raise SystemExit(0 if json.loads(sys.argv[1]).get("status") == "active" else 1)' "$inspection"
+}
+
 runtime_owned_recovery_needed() {
   local api_port="" frontend_port="" playground_port="" sandpack_port=""
   RUNTIME_RECOVERY_REASON=""
@@ -5985,7 +6022,7 @@ launch_stack_detached() {
     return 1
   fi
   ensure_app_support_layout "$APP_SUPPORT_DIR"
-  if value_is_true "${VIVENTIUM_DETACHED_START:-false}" && ! helper_runtime_intent_allows_start; then
+  if value_is_true "${VIVENTIUM_DETACHED_START:-false}" && ! automatic_runtime_intent_allows_start; then
     echo "Automatic startup retained the saved stopped or unverified runtime intent."
     return 0
   fi
@@ -6036,7 +6073,7 @@ launch_stack_detached() {
     fi
     echo "Detected Viventium processes, but no healthy user-facing surface. Restarting the local stack..."
     echo "Recovery reason: ${RUNTIME_RECOVERY_REASON:-local_owner_missing}."
-    stop_stack_for_upgrade
+    VIVENTIUM_PRESERVE_HELPER_RUNTIME_INTENT=1 stop_stack_for_upgrade
   fi
 
   local launch_log="$APP_SUPPORT_DIR/logs/helper-start.log"
@@ -7320,9 +7357,9 @@ recover_running_stack_after_failed_upgrade() {
         "upgrade" "$UPGRADE_TRANSACTION_DIR"
     then
       if [[ "${UPGRADE_TRANSACTION_WAS_RUNNING:-0}" == "1" ]]; then
-        # The internal upgrade stop deliberately suppresses helper relaunches by
-        # persisting "stopped". Restore the user's prior running intent before
-        # handing the verified predecessor back to detached supervision.
+        # Return the verified predecessor to its prior operational state before
+        # handing it back to detached supervision. The live CLI lock suppresses
+        # helper launches while this recovery still owns the runtime.
         set_helper_runtime_intent running
         if [[ "$telegram_recovery_ready" == "1" ]] &&
           VIVENTIUM_DETACHED_COMPAT_LAUNCHER="$STAGED_TELEGRAM_COMPAT_LAUNCHER" \
@@ -8595,7 +8632,7 @@ PY
     fi
     if [[ "$UPGRADE_STACK_WAS_RUNNING" == "1" ]]; then
       echo "Running Viventium stack detected. Stopping before component refresh..."
-      if ! stop_stack_for_upgrade; then
+      if ! VIVENTIUM_PRESERVE_HELPER_RUNTIME_INTENT=1 stop_stack_for_upgrade; then
         echo "Upgrade aborted because the running stack could not be stopped safely." >&2
         echo "No source pull or component refresh was attempted. Resolve the stop failure, then retry." >&2
         exit 1
@@ -8683,9 +8720,9 @@ PY
       exit 1
     fi
     upgrade_transaction_checkpoint "continuity_verified"
-    if [[ "$UPGRADE_STACK_WAS_RUNNING" == "1" ]]; then
-      set_helper_runtime_intent running
-    else
+    # Internal stops retain intent; validation must not overwrite a newer Stop
+    # or reset the helper's revision, recovery counters, or backoff.
+    if [[ "$UPGRADE_STACK_WAS_RUNNING" != "1" ]]; then
       echo "Returning Viventium to its pre-upgrade stopped state..."
       if ! stop_stack_for_upgrade; then
         echo "Upgrade candidate could not preserve the prior stopped state; rolling back." >&2
@@ -9595,9 +9632,7 @@ PY
       echo "First-upgrade runtime bridge requires a verified parent upgrade lock." >&2
       exit 1
     fi
-    bridge_lock_pid="$(read_cli_lock_metadata | sed -n '1p')"
-    if [[ -z "$bridge_lock_pid" || "$bridge_lock_pid" != "${VIVENTIUM_CLI_LOCK_OWNER_PID:-}" ]] ||
-      ! cli_lock_active_owner "$bridge_lock_pid"
+    if ! verified_parent_cli_lock
     then
       echo "First-upgrade runtime bridge parent lock is no longer trustworthy." >&2
       exit 1
@@ -9636,6 +9671,12 @@ PY
     esac
     ;;
   start)
+    # The lock consumer clears inherited environment. Retain its verified owner,
+    # then recheck that live identity and the checkpoint at the automatic guard.
+    quiesced_start_parent_pid=""
+    if verified_parent_cli_lock; then
+      quiesced_start_parent_pid="$VIVENTIUM_CLI_LOCK_OWNER_PID"
+    fi
     acquire_cli_lock "$COMMAND"
     if [[ "${1:-}" == "--help" || "${1:-}" == "-h" ]]; then
       subcommand_usage start
@@ -9661,6 +9702,14 @@ PY
       echo "Recovered the interrupted local-runtime promotion. Rerun start from the active checkout if you still want to start it."
       exit 0
     fi
+    # Explicit Start clears an earlier Stop before committed finalization.
+    # Automatic and protected starts retain the saved intent.
+    if ! value_is_true "${VIVENTIUM_DETACHED_START:-false}" &&
+      [[ "${VIVENTIUM_SUCCESSOR_VALIDATION_MODE:-}" != "quiesced" &&
+        "${VIVENTIUM_PRESERVE_HELPER_RUNTIME_INTENT:-0}" != "1" ]]
+    then
+      set_helper_runtime_intent running
+    fi
     if ! recover_pending_quiesced_upgrade_finalization; then
       echo "A committed upgrade is waiting for full-runtime recovery; start remains failed closed." >&2
       exit 1
@@ -9670,16 +9719,11 @@ PY
       exit 1
     fi
     if value_is_true "${VIVENTIUM_DETACHED_START:-false}"; then
-      if ! helper_runtime_intent_allows_start; then
+      if ! automatic_runtime_intent_allows_start "$quiesced_start_parent_pid"; then
         echo "Automatic startup retained the saved stopped or unverified runtime intent."
         exit 0
       fi
       export VIVENTIUM_PRESERVE_HELPER_RUNTIME_INTENT=1
-    fi
-    if [[ "${VIVENTIUM_SUCCESSOR_VALIDATION_MODE:-}" != "quiesced" &&
-      "${VIVENTIUM_PRESERVE_HELPER_RUNTIME_INTENT:-0}" != "1" ]]
-    then
-      set_helper_runtime_intent running
     fi
     ensure_app_support_layout "$APP_SUPPORT_DIR"
     ensure_macos_runtime_supervisor || true
@@ -9855,6 +9899,11 @@ PY
     exit "$start_status"
     ;;
   stop)
+    # The shipped predecessor calls the successor stop inside its validated
+    # quiesced transaction. Preserve current intent, including a newer user Stop.
+    if preserve_active_quiesced_stop_intent; then
+      VIVENTIUM_PRESERVE_HELPER_RUNTIME_INTENT=1
+    fi
     acquire_cli_lock "$COMMAND"
     if [[ "${1:-}" == "--help" || "${1:-}" == "-h" ]]; then
       subcommand_usage stop

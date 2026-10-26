@@ -167,13 +167,16 @@ def test_existing_launcher_admits_recovery_only_after_startup_and_recovery_owner
     fake_python = tmp_path / 'fake-python'
     fake_python.write_text('#!/bin/sh\ncat >/dev/null\nprintf "4242\\n"\n')
     fake_python.chmod(0o700)
-    result = shell(function(CLI, 'launch_stack_detached') + f'''
+    result = shell(function(CLI, 'runtime_owned_recovery_needed')
+                   + function(CLI, 'launch_stack_detached') + f'''
 APP_SUPPORT_DIR={shlex.quote(str(tmp_path))}
 CONFIG_FILE={shlex.quote(str(config))}
 RUNTIME_DIR={shlex.quote(str(tmp_path / 'runtime'))}
 REPO_ROOT={shlex.quote(str(ROOT))}
 LOCK_FILE={shlex.quote(str(tmp_path / 'lock'))}
 PYTHON_BIN={shlex.quote(str(fake_python))}
+VIVENTIUM_DETACHED_START=false
+value_is_true() {{ [[ "$1" == true ]]; }}
 ensure_app_support_layout() {{ mkdir -p "$1/logs"; }}
 initialize_telegram_user_config_authority() {{ :; }}
 user_surface_healthy() {{ return 0; }}
@@ -181,15 +184,24 @@ runtime_optional_surfaces_healthy() {{ return {0 if healthy else 1}; }}
 postcommit_api_finalization_ready() {{ return 0; }}
 runtime_start_claim_active() {{ return {0 if claim else 1}; }}
 detached_launch_process_group_running() {{ return 0; }}
+assign_runtime_ports() {{ api_port=10001 frontend_port=10002 playground_port=10003; }}
+runtime_port_listening() {{ return 0; }}
+express_install_experience() {{ return 0; }}
+runtime_env_true() {{ return 1; }}
 telegram_recovery_owner_missing() {{ return {0 if missing else 1}; }}
 is_stack_running() {{ exit 97; }}
-stop_stack_for_upgrade() {{ exit 98; }}
+stop_stack_for_upgrade() {{
+  [[ "$VIVENTIUM_CLI_LOCK_INHERITED_ONCE" == 1 && "$VIVENTIUM_PRESERVE_HELPER_RUNTIME_INTENT" == 1 ]] || exit 98
+  printf 'owned-stop\\n'
+}}
 capture_detached_start_log_offset() {{ :; }}
 launch_stack_detached
 ''')
     assert result.returncode == 0, result.stderr
+    assert result.stderr == ''
     assert ('Launched Viventium in the background' in result.stdout) is launch
-    assert ('repairing through the current runtime owner' in result.stdout) is launch
+    assert ('Recovery reason: telegram_owner_missing.' in result.stdout) is launch
+    assert result.stdout.splitlines().count('owned-stop') == int(launch)
 
 
 def test_lifecycle_messages_use_utc_timestamps() -> None:

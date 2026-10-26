@@ -2352,6 +2352,86 @@ def _load_bridge_state(app_support_dir: Path) -> tuple[Path, dict[str, Any]] | N
     return _load_receipt(app_support_dir, BRIDGE_STATE)
 
 
+def _bound_helper_intent(path: Path, *, repo_root: Path, app_support_dir: Path) -> dict[str, Any] | None:
+    metadata = path.lstat()
+    if (
+        not stat.S_ISREG(metadata.st_mode)
+        or metadata.st_uid != os.getuid()
+        or metadata.st_nlink != 1
+    ):
+        raise FirstUpgradeBridgeError("Helper runtime intent is unsafe")
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(payload, dict):
+        raise FirstUpgradeBridgeError("Helper runtime configuration is invalid")
+    repo_binding = payload.get("repoRoot")
+    support_binding = payload.get("appSupportDir")
+    if (
+        not isinstance(repo_binding, str)
+        or not repo_binding
+        or not Path(repo_binding).is_absolute()
+        or not isinstance(support_binding, str)
+        or not support_binding
+        or not Path(support_binding).is_absolute()
+        or lexical(Path(repo_binding)) != lexical(repo_root)
+        or lexical(Path(support_binding)) != lexical(app_support_dir)
+    ):
+        raise FirstUpgradeBridgeError("Helper runtime intent belongs to another runtime")
+    # The shipped predecessor bound its helper without the later intent record.
+    if "runtimeSupervision" not in payload:
+        return None
+    if not isinstance(payload["runtimeSupervision"], dict):
+        raise FirstUpgradeBridgeError("Helper runtime intent is invalid")
+    return payload["runtimeSupervision"]
+
+
+def verify_quiesced_helper_runtime_intent(*, repo_root: Path, app_support_dir: Path) -> dict[str, Any]:
+    # This proof is consumed only under the shell's live inherited parent lock.
+    # A current stopped intent is allowed for writer-disabled validation only
+    # when both existing checkpoints preserve its original intent and revision.
+    context = load_active_context(
+        repo_root=repo_root,
+        app_support_dir=app_support_dir,
+        required_stage="candidate_activated",
+        allow_same_source=True,
+    )
+    if context is None:
+        raise FirstUpgradeBridgeError("Protected validation has no active transaction")
+    checkpoint = _load_helper_config_checkpoint(
+        app_support_dir=context.app_support_dir, transaction=context.transaction,
+    )
+    current = _bound_helper_intent(
+        checkpoint["target"], repo_root=context.repo_root,
+        app_support_dir=context.app_support_dir,
+    )
+    saved = _bound_helper_intent(
+        checkpoint["backup"], repo_root=context.repo_root,
+        app_support_dir=context.app_support_dir,
+    )
+    originals = [
+        item for item in context.ledger.get("surfaces", [])
+        if item.get("label") == upgrade_transaction.HELPER_CONFIG_SURFACE_LABEL
+    ]
+    if len(originals) != 1:
+        raise FirstUpgradeBridgeError("Original helper runtime intent proof is unavailable")
+    original = originals[0]
+    backup = upgrade_transaction.contained(
+        Path(str(original.get("backup") or "")), context.transaction,
+        "original helper configuration checkpoint",
+    )
+    actual = upgrade_transaction.surface_manifest(backup)
+    expected = original.get("manifest") or {}
+    if any(actual.get(key) != expected.get(key) for key in ("kind", "size", "sha256")):
+        raise FirstUpgradeBridgeError("Original helper runtime intent checkpoint changed")
+    original_intent = _bound_helper_intent(
+        backup, repo_root=context.repo_root, app_support_dir=context.app_support_dir,
+    )
+    if current != saved or current != original_intent:
+        raise FirstUpgradeBridgeError("Helper runtime intent changed during protected validation")
+    if current is None or current.get("desiredState") not in {"running", "stopped"}:
+        raise FirstUpgradeBridgeError("Helper runtime intent is unverified")
+    return {"schemaVersion": BRIDGE_SCHEMA_VERSION, "status": "verified"}
+
+
 def inspect_active_quiesced_receipt(
     *,
     repo_root: Path,
@@ -2373,23 +2453,31 @@ def inspect_active_quiesced_receipt(
             "Active successor validation writer inventory is incomplete"
         )
     transaction = lexical(Path(str(payload.get("transaction") or "")))
-    try:
-        ledger = upgrade_transaction.load_ledger(transaction)
-    except upgrade_transaction.UpgradeTransactionError as error:
-        raise FirstUpgradeBridgeError(
-            "Active quiesced successor transaction proof failed"
-        ) from error
-    resolved_repo = lexical(repo_root)
+    pointer = _read_pointer(lexical(app_support_dir))
+    if pointer is None or pointer[0] != transaction:
+        raise FirstUpgradeBridgeError("Active quiesced receipt does not match the current transaction")
+    context = load_active_context(
+        repo_root=repo_root, app_support_dir=app_support_dir, allow_same_source=True,
+    )
     if (
-        ledger.get("status") != "active"
-        or lexical(Path(str(ledger.get("repo_root") or ""))) != resolved_repo
-        or lexical(Path(str(ledger.get("app_support_dir") or "")))
-        != lexical(app_support_dir)
-        or payload.get("successor") != git_text(resolved_repo, "rev-parse", "HEAD")
+        context is None
+        or context.transaction != transaction
+        or payload.get("predecessor") != context.predecessor
+        or payload.get("successor") != context.successor
+        or type(context.ledger.get("was_running")) is not bool
+        or payload.get("wasRunning") is not context.ledger.get("was_running")
     ):
         raise FirstUpgradeBridgeError(
             "Active quiesced successor receipt does not match this runtime"
         )
+    _load_helper_config_checkpoint(
+        app_support_dir=context.app_support_dir, transaction=context.transaction,
+        expected_manifest_sha256=_required_helper_config_checkpoint_sha256(payload),
+    )
+    _load_librechat_env_checkpoint(
+        repo_root=context.repo_root, transaction=context.transaction,
+        expected_manifest_sha256=_required_librechat_env_checkpoint_sha256(payload),
+    )
     return {
         "schemaVersion": BRIDGE_SCHEMA_VERSION,
         "status": "active",
@@ -2561,8 +2649,14 @@ def finalize_after_outer_commit(
     if ledger.get("status") != "committed":
         raise FirstUpgradeBridgeError("Outer upgrade transaction is not committed")
     context_repo = lexical(Path(str(ledger.get("repo_root") or "")))
-    if context_repo != lexical(repo_root):
-        raise FirstUpgradeBridgeError("Committed bridge receipt belongs to another checkout")
+    if (
+        context_repo != lexical(repo_root)
+        or lexical(Path(str(ledger.get("app_support_dir") or ""))) != lexical(app_support_dir)
+        or payload.get("successor") != git_text(context_repo, "rev-parse", "HEAD")
+        or type(ledger.get("was_running")) is not bool
+        or payload.get("wasRunning") is not ledger.get("was_running")
+    ):
+        raise FirstUpgradeBridgeError("Committed bridge receipt does not match its runtime transaction")
     librechat_env_checkpoint_sha256 = (
         _required_librechat_env_checkpoint_sha256(payload)
     )
@@ -2581,6 +2675,17 @@ def finalize_after_outer_commit(
     payload["postCommitFinalizationId"] = expected_finalization_id
 
     environment = _bridge_environment()
+    # This is a verified committed transaction's internal stop. Preserve current
+    # intent, so a newer user Stop still prevents the subsequent automatic start.
+    helper_target = upgrade_transaction.helper_config_path(lexical(app_support_dir))
+    stopped_intent = (
+        helper_target.exists()
+        and (_bound_helper_intent(
+            helper_target, repo_root=context_repo, app_support_dir=app_support_dir,
+        ) or {}).get("desiredState") == "stopped"
+    )
+    if payload.get("wasRunning") is True or stopped_intent:
+        environment["VIVENTIUM_PRESERVE_HELPER_RUNTIME_INTENT"] = "1"
     environment["VIVENTIUM_POSTCOMMIT_FINALIZATION_ID"] = (
         expected_finalization_id
     )
@@ -2842,12 +2947,13 @@ def build_parser() -> argparse.ArgumentParser:
         "finalize-session-after-commit",
         "finalize-pending-after-first-start",
         "active-quiesced",
+        "quiesced-helper-intent",
         "pending-postcommit",
     ):
         child = subparsers.add_parser(command)
         child.add_argument("--repo-root", type=Path, required=True)
         child.add_argument("--app-support-dir", type=Path, required=True)
-        if command not in {"active-quiesced", "pending-postcommit"}:
+        if command not in {"active-quiesced", "quiesced-helper-intent", "pending-postcommit"}:
             child.add_argument("--config-file", type=Path, required=True)
             child.add_argument("--runtime-dir", type=Path, required=True)
             child.add_argument("--lock-file", type=Path, required=True)
@@ -2899,6 +3005,11 @@ def main(argv: list[str] | None = None) -> int:
                         else BRIDGE_STATE
                     ),
                 )
+        elif args.command == "quiesced-helper-intent":
+            result = verify_quiesced_helper_runtime_intent(
+                repo_root=args.repo_root,
+                app_support_dir=args.app_support_dir,
+            )
         elif args.command == "active-quiesced":
             result = inspect_active_quiesced_receipt(
                 repo_root=args.repo_root,

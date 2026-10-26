@@ -12,10 +12,16 @@ own the behavior and upgrade boundary.
 | Outcome | Evidence | Result |
 | --- | --- | --- |
 | Keep available services running during a dependency outage | Helper/CLI recovery, exact ownership and supervisor restoration cases; compiled Swift decisions and real Redis TCP, Unix-socket and verified TLS command checks | 305 affected cases passed; one existing host-process inspection case skipped |
+| Preserve saved intent through upgrade and recovery | Exact prior-version shell, original and later helper formats, interrupted/failed upgrades, explicit Start, newer Stop, ownership and checkpoint cases | 368 distinct source checks passed across owning and causal repair runs |
 | Ship the helper that matches its source | Existing fallback builder produced both macOS CPU slices; source and binary hashes, artifact checks and private-path scan | PASS |
 | Select the reviewed worker source | Actual pinned-component bootstrap and strict validation; component selection, original-checkout preservation and native manifest/staging regressions | 81 checks passed |
 | Keep release checks discoverable | Existing QA owner mappings and release-selection/public-safety regressions | 107 checks passed |
 | Explain retained Telegram input without requesting duplicate work | [Telegram ingress report](../../telegram-channels/reports/2026-10-25-telegram-ingress-recovery.md) covers bot checks and its earlier source-matched user-path evidence | Scoped evidence retained |
+
+Counts above describe separate, overlapping banks and must not be added. The 368-case result
+reconciles the owning run with targeted repairs of stale test locators and binding checks;
+failed earlier raw receipts remain private. Required native CI for the exact public candidate
+is recorded on [the publication PR](https://github.com/ProjectViventium/viventium/pull/154).
 
 ## Automated Evidence
 
@@ -28,6 +34,14 @@ Google Workspace MCP now uses the existing stopped-owner repair decision, with t
 and process-group checks. Thirteen causal cases cover missing, healthy, disabled and foreign
 ownership; Docker-owned services keep their separate existing recovery.
 
+Upgrade review found that an old controller could call the successor's ordinary Stop and
+accidentally change saved intent. The existing verified handoff now preserves intent for that
+internal operation. Explicit Start records its choice once before committed recovery; later
+Stop is not reset by finalization. The original helper format remains valid without newer
+intent fields. Both binding paths must be explicit absolute strings, so a missing field cannot
+inherit the process working directory. Exact old-shell, rollback, interruption, foreign or
+stale proof, and unchanged revision/counter checks cover these boundaries.
+
 ## Findings
 
 The source update does not install or restart a user's services. Installed helper UI, login,
@@ -39,7 +53,10 @@ snapshots, raw requests, logs, screenshots and machine details are excluded from
 
 `SDR-018` in the [stable runtime cases](../../stable-dev-runtime/cases.md) owns recovery,
 intent and ownership. This source report proves its affected deterministic controls and built
-helper identity; it does not mark the full installed journey passed.
+helper identity; it does not mark the full installed journey passed. `CONT-010` and `CONT-012`
+in the [continuity cases](../../continuity-ops/cases.md) own the exact predecessor handoff and
+environment/helper preservation. This report adds isolated source proof for those controls;
+their installed acceptance gates remain open.
 
 ## Full-View Evidence Checklist
 
@@ -50,12 +67,12 @@ part of this publication. The earlier Telegram path retains the linked report's 
 
 ## User-Grade Evidence
 
-- Surface exercised: CLI fixtures, compiled helper decisions and artifact inspection; no new installed helper UI run.
+- Surface exercised: Isolated exact prior-version CLI processes, Start/Stop and recovery fixtures, compiled helper decisions and artifact inspection; no new installed helper UI run.
 - Real user path: New menu-bar helper activation and recovery were not run in this source-publication task.
 - Visible outcome: The rebuilt helper is qualified by its source and binary hashes; no new visible installed result is claimed.
 - Expanded/detail state: Installed menu and detail views were not exercised for this publication.
 - Persistence/reload result: Isolated configuration and selector bytes were preserved; user runtime reload was not run.
-- Backend/log/DB confirmation: Causal fixtures and private receipts record recovery and refusal; live user databases were left intact.
+- Backend/log/DB confirmation: Isolated upgrade cases check preserved configuration, uploads, data and rollback state; private receipts record recovery/refusal. Live user databases were left intact.
 - Final model/runtime wording check: Source selection and helper build are distinct from installed delivery, channel parity and provider readiness.
 - Substitution check: Source tests, compiled decisions and review do not replace required installed UI, persistence or wording evidence.
 

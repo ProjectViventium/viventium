@@ -2442,7 +2442,11 @@ def test_upgrade_refuses_running_stack_and_bad_baseline_before_pull_or_stop() ->
     activation = upgrade_section.index("fast_forward_current_branch_to_target")
     pre_capture = upgrade_section.index('capture_continuity_audit "pre-upgrade-')
     pre_status = upgrade_section.index('PRE_UPGRADE_CONTINUITY_STATUS="$(continuity_audit_status')
-    stop = upgrade_section.index("if ! stop_stack_for_upgrade; then")
+    # Match the pre-refresh internal stop, which preserves intent. The later
+    # ordinary stop belongs to the distinct return-to-stopped owner.
+    stop = upgrade_section.index(
+        "if ! VIVENTIUM_PRESERVE_HELPER_RUNTIME_INTENT=1 stop_stack_for_upgrade; then"
+    )
     transaction = upgrade_section.index("upgrade_transaction_begin")
     recovery_trap = upgrade_section.index(
         "trap recover_running_stack_after_failed_upgrade EXIT"
@@ -2634,7 +2638,11 @@ def test_mutating_upgrade_runs_structured_local_safety_check_before_pull_and_sto
 
     safety_check = upgrade_section.index('UPGRADE_SAFETY_JSON="$("$PYTHON_BIN"')
     activation = upgrade_section.index("fast_forward_current_branch_to_target")
-    stop = upgrade_section.index("if ! stop_stack_for_upgrade; then")
+    # Match the pre-refresh internal stop, which preserves intent. The later
+    # ordinary stop belongs to the distinct return-to-stopped owner.
+    stop = upgrade_section.index(
+        "if ! VIVENTIUM_PRESERVE_HELPER_RUNTIME_INTENT=1 stop_stack_for_upgrade; then"
+    )
     transaction = upgrade_section.index("upgrade_transaction_begin")
     stopped_checkpoint = upgrade_section.index("upgrade_transaction_snapshot_stopped_state")
     assert safety_check < transaction < stop < stopped_checkpoint < activation
@@ -5361,6 +5369,8 @@ exit 1
         json.dumps(
             {
                 "schemaVersion": 1,
+                "repoRoot": str(repo_root),
+                "appSupportDir": str(support),
                 "runtimeSupervision": {
                     "schemaVersion": 1,
                     "desiredState": "running",
