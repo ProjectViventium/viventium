@@ -1570,6 +1570,24 @@ def _parallel_work_not_ready_start_error(error: Exception) -> bool:
     )
 
 
+def _ingress_input_retained(error: Exception) -> bool:
+    """Only Core's saved input receipt proves that intake will recover this request."""
+    if not isinstance(error, httpx.HTTPStatusError) or error.response.status_code != 503:
+        return False
+    try:
+        payload = error.response.json()
+    except Exception:
+        return False
+    if not isinstance(payload, dict) or payload.get("observed") is not False:
+        return False
+    receipt = payload.get("input")
+    return (payload.get("error") == "source_order_unavailable"
+            and isinstance(receipt, dict) and receipt.get("retained") is True
+            and receipt.get("state") in {"preparing", "ready", "admitted"}
+            and re.fullmatch(r"[a-f0-9]{64}", str(receipt.get("sourceEventId") or "")) is not None
+            and bool(receipt.get("sourceMessageId")) and bool(receipt.get("conversationId")))
+
+
 def _ingress_definitely_not_retained(error: Exception) -> bool:
     """Only the pre-write source-order rejection proves no input was retained."""
     if not isinstance(error, httpx.HTTPStatusError) or error.response.status_code != 503:
@@ -1590,6 +1608,9 @@ def _start_chat_error_safe_to_retry(error: Exception) -> bool:
 
 
 def _start_chat_error_message(error: Exception) -> str:
+    if _ingress_input_retained(error):
+        return "Your message is saved. Viventium will reply when the local service is ready."
+
     if _parallel_work_not_ready_start_error(error):
         return "Parallel work is still starting. This Telegram request was not accepted; please retry in a moment."
 

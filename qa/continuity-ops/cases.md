@@ -384,6 +384,11 @@ Use stable `CONT-NNN` IDs for continuity ops cases.
   [`reports/2026-07-24-first-upgrade-mongo-bridge.md`](reports/2026-07-24-first-upgrade-mongo-bridge.md)
   and
   [`reports/2026-07-24-postcommit-mutation-inventory.md`](reports/2026-07-24-postcommit-mutation-inventory.md).
+- Source update 2026-10-25: the [source recovery publication report](../runtime-install-release/reports/2026-10-25-source-recovery-publication.md)
+  adds exact prior-version CLI proof with original and later helper formats, verified internal
+  stops, explicit Start, newer Stop/revision protection and rollback. This updates source proof
+  for `CONT-010` and `CONT-012`; installed Native/Docker, headed persistence and power-loss gates
+  above remain open.
 
 ## `CONT-011` - TTL-Aware Strict Semantic Continuity
 

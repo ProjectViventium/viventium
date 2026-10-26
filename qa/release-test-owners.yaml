@@ -45,6 +45,8 @@ release_tests:
     qa_owner: qa/release-readiness/cases.md
   tests/release/test_detached_librechat_api_watchdog.py:
     qa_owner: qa/stable-dev-runtime/cases.md
+  tests/release/test_detached_dependency_admission.py:
+    qa_owner: qa/stable-dev-runtime/cases.md
   tests/release/test_detached_librechat_supervision.py:
     qa_owner: qa/stable-dev-runtime/cases.md
   tests/release/test_dev_runtime_activation.py:
@@ -79,6 +81,10 @@ release_tests:
     qa_owner: qa/installer-resilience/cases.md
   tests/release/test_helper_runtime_intent.py:
     qa_owner: qa/stable-dev-runtime/cases.md
+  tests/release/test_helper_bundle_reopen.py:
+    qa_owner: qa/stable-dev-runtime/cases.md
+  tests/release/test_helper_dependency_attention.py:
+    qa_owner: qa/stable-dev-runtime/cases.md
   tests/release/test_health_context_workbench.py:
     qa_owner: qa/viventium-health/cases.md
   tests/release/test_install_experience_labels.py:
@@ -107,6 +113,8 @@ release_tests:
     qa_owner: qa/stable-dev-runtime/cases.md
   tests/release/test_managed_agent_migration_history.py:
     qa_owner: qa/agent-config-continuity/cases.md
+  tests/release/test_managed_redis_readiness.py:
+    qa_owner: qa/stable-dev-runtime/cases.md
   tests/release/test_memory_hardening_contract.py:
     qa_owner: qa/memory-hardening/cases.md
   tests/release/test_memory_model_eval_harness.py:

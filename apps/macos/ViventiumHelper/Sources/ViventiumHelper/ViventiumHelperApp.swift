@@ -529,6 +529,7 @@ private struct StackHealthSnapshot {
     let playgroundReady: Bool
     let requiresPlayground: Bool
     let optionalSurfacesReady: Bool
+    var allLocalServicesRunning: Bool = false
 
     var coreHealthy: Bool {
         self.apiReady && self.frontendReady && (!self.requiresPlayground || self.playgroundReady)
@@ -545,6 +546,11 @@ private struct StackHealthSnapshot {
     var preferredSurfaceIsPlaygroundOnly: Bool {
         !self.coreHealthy && self.playgroundReady
     }
+}
+
+private struct ManagedServicesReadiness {
+    var ready: Bool
+    var allLocalServicesRunning: Bool
 }
 
 private struct HealWorkflowSettings {
@@ -2394,6 +2400,11 @@ final class HelperController: ObservableObject {
                 return
             }
 
+            if snapshot.needsAttention && snapshot.allLocalServicesRunning {
+                self.stackState = .needsAttention
+                return
+            }
+
             let previous = self.runtimeSupervision
             self.runtimeSupervision.recordUnhealthy(
                 at: observedAt,
@@ -2950,7 +2961,7 @@ final class HelperController: ObservableObject {
         } else {
             playgroundReady = false
         }
-        let optionalSurfacesReady = await self.optionalSurfacesReady(
+        let optionalSurfaces = await self.optionalSurfacesReady(
             runtime: runtime,
             appSupportDir: appSupportDir
         )
@@ -2959,31 +2970,35 @@ final class HelperController: ObservableObject {
             frontendReady: frontendReady,
             playgroundReady: playgroundReady,
             requiresPlayground: runtime.requiresPlayground,
-            optionalSurfacesReady: optionalSurfacesReady && artifactRuntimeReady
+            optionalSurfacesReady: optionalSurfaces.ready && artifactRuntimeReady,
+            allLocalServicesRunning: optionalSurfaces.allLocalServicesRunning
         )
     }
 
     private nonisolated static func optionalSurfacesReady(
         runtime: RuntimePorts,
         appSupportDir: String?
-    ) async -> Bool {
+    ) async -> ManagedServicesReadiness {
         guard let appSupportDir else {
-            return true
+            return ManagedServicesReadiness(ready: true, allLocalServicesRunning: false)
         }
+        var readiness = await self.managedServicesReadiness(runtime: runtime)
         if runtime.startTelegram {
             if !self.telegramBridgeRunning(runtime: runtime, appSupportDir: appSupportDir) {
-                return false
+                readiness.ready = false
+                readiness.allLocalServicesRunning = false
             }
             if self.recentTelegramRuntimeIssue(
                 logURLs: self.telegramLogURLs(runtime: runtime, appSupportDir: appSupportDir, names: ["telegram_bot.log"])
             ) {
-                return false
+                readiness.ready = false
             }
         }
         if runtime.startTelegramCodex && !self.telegramCodexRunning(runtime: runtime, appSupportDir: appSupportDir) {
-            return false
+            readiness.ready = false
+            readiness.allLocalServicesRunning = false
         }
-        return await self.managedServicesHealthy(runtime: runtime)
+        return readiness
     }
 
     private nonisolated static func frontendURLString(host: String, port: Int) -> String {
@@ -4738,6 +4753,52 @@ private struct RuntimePorts: Equatable {
     let managedStopCheckURLs: [String]
     let nativeRuntime: Bool
     var managedHealthCheckURLs: [String]? = nil
+    var redisReadiness: RedisReadiness? = nil
+}
+
+private struct RedisReadiness: Equatable {
+    var arguments: [String]? = nil
+    var standardInput = ""
+    var expectedResponse = ""
+
+    init?(values: [String: String]) {
+        let enabled = ["USE_REDIS", "USE_REDIS_STREAMS"].contains {
+            ["1", "true", "yes", "on"].contains((values[$0] ?? "").lowercased())
+        }
+        guard enabled else { return nil }
+        var arguments = ["-w", "1"]
+        var username = values["REDIS_USERNAME"] ?? ""
+        var password = values["REDIS_PASSWORD"] ?? ""
+        let socketPath = (values["REDIS_SOCKET_PATH"] ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        if !socketPath.isEmpty {
+            guard socketPath.hasPrefix("/") else { return }
+            arguments += ["-U", "--", socketPath]
+        } else {
+            guard let endpoint = URLComponents(string: values["REDIS_URI"] ?? ""),
+                  endpoint.scheme == "redis", var host = endpoint.host, !host.isEmpty,
+                  endpoint.query == nil, endpoint.fragment == nil else { return }
+            let port = endpoint.port ?? 6379
+            guard (1...65535).contains(port) else { return }
+            if host.hasPrefix("["), host.hasSuffix("]") { host = String(host.dropFirst().dropLast()) }
+            arguments += ["-G", "1", "--", host, String(port)]
+            if let user = endpoint.user, !user.isEmpty { username = user }
+            if let secret = endpoint.password, !secret.isEmpty { password = secret }
+        }
+        self.arguments = arguments
+        if !password.isEmpty {
+            self.standardInput += Self.command(username.isEmpty ? ["AUTH", password] : ["AUTH", username, password])
+            self.expectedResponse += "+OK\r\n"
+        }
+        // QUIT closes only the probe connection after PING; no stored data changes.
+        self.standardInput += Self.command(["PING"]) + Self.command(["QUIT"])
+        self.expectedResponse += "+PONG\r\n+OK\r\n"
+        // The shared process runner fills stdin before launch; keep this probe below pipe capacity.
+        if self.standardInput.utf8.count > 4096 { self.arguments = nil }
+    }
+
+    private static func command(_ parts: [String]) -> String {
+        "*\(parts.count)\r\n" + parts.map { "$\($0.utf8.count)\r\n\($0)\r\n" }.joined()
+    }
 }
 
 private struct RuntimeEnvParser {
@@ -4762,7 +4823,8 @@ private struct RuntimeEnvParser {
             startTelegramCodex: self.boolValue(values["START_TELEGRAM_CODEX"]),
             managedStopCheckURLs: self.managedStopCheckURLs(values: values),
             nativeRuntime: runtimeProfile == "native",
-            managedHealthCheckURLs: self.managedHealthCheckURLs(values: values)
+            managedHealthCheckURLs: self.managedHealthCheckURLs(values: values),
+            redisReadiness: RedisReadiness(values: values)
         )
     }
 
@@ -4912,16 +4974,39 @@ private extension HelperController {
     }
 
     nonisolated static func managedServicesHealthy(runtime: RuntimePorts) async -> Bool {
+        (await self.managedServicesReadiness(runtime: runtime)).ready
+    }
+
+    nonisolated static func managedServicesReadiness(runtime: RuntimePorts) async -> ManagedServicesReadiness {
+        var readiness = ManagedServicesReadiness(ready: true, allLocalServicesRunning: true)
+        if let redis = runtime.redisReadiness {
+            if let arguments = redis.arguments {
+                let result = self.runSystemProcess(
+                    executableURL: URL(fileURLWithPath: "/usr/bin/nc"),
+                    arguments: arguments,
+                    standardInput: redis.standardInput,
+                    timeoutSeconds: 1.5
+                )
+                readiness.ready = result.status == 0 && result.stdout == redis.expectedResponse
+            } else {
+                readiness.ready = false
+            }
+        }
+        let localServices = Set(runtime.managedStopCheckURLs)
         for urlString in runtime.managedHealthCheckURLs ?? runtime.managedStopCheckURLs {
             guard let url = URL(string: urlString),
-                  let status = await self.firstHTTPStatus(urls: self.candidateURLs(for: url)) else { return false }
+                  let status = await self.firstHTTPStatus(urls: self.candidateURLs(for: url)) else {
+                readiness.ready = false
+                if localServices.contains(urlString) { readiness.allLocalServicesRunning = false }
+                continue
+            }
             let protocolEndpoint = url.path.hasSuffix("/mcp")
             let ready = protocolEndpoint
                 ? [200, 400, 401, 403, 405, 406, 415, 422].contains(status)
                 : (url.path.hasSuffix("/health") ? status == 200 : (200..<400).contains(status))
-            if !ready { return false }
+            if !ready { readiness.ready = false }
         }
-        return true
+        return readiness
     }
 
     nonisolated static func endpointResponding(urlString: String) async -> Bool {

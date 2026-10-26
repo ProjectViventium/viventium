@@ -61,6 +61,14 @@ internals.
 
 - **ONB-013:** Stop records one intentional stopped state that helpers and supervisors honor until
   explicit Start or Restart.
+- Upgrade and missing-process repair stops preserve the saved Run/Stop choice. Protected upgrade
+  validation uses the existing live parent lock, exact transaction, selected source revision and
+  bound checkpoints before starting a candidate with background writers disabled. It does not
+  turn a later user Stop into permission to restart. Old helper configurations without newer
+  intent fields remain valid; the protected validation exception refuses malformed or foreign
+  intent proof. An explicit Start
+  records its new choice once before committed recovery; a later Stop must survive finalization.
+  Automatic, preserved-intent and writer-disabled starts cannot renew intent to bypass Stop.
 - Broad checkout or process-pattern cleanup requires verified ownership of the selected runtime
   process group. A missing or removed group receipt cannot authorize a same-checkout sweep.
   Legacy recovery remains limited to configured service ports and owned PID files; another
@@ -106,6 +114,25 @@ see the [MongoDB FTDC documentation](https://www.mongodb.com/docs/v8.0/administr
 Recovery preserves crash evidence and verifies the existing storage identity, writable replica,
 transaction support, and live consumer reads before reporting readiness.
 Native fallback startup appends to the existing server log without clearing prior failure evidence.
+
+### Dependency attention and helper recovery
+
+A responding service and its dependencies have separate health. When an owned local service is
+still running, a dependency failure must not trigger a full stack restart. Keep available services
+running and show that attention is needed. An enabled Redis connection is checked by its command
+reply, not an open port; a successful PING does not prove that later writes will succeed.
+Each write still owns its acceptance and recovery.
+An enabled process-owned sidecar whose owner is missing still enters the existing repair path;
+the local Google Workspace MCP uses the same checkout and process-group checks. Docker-owned
+services retain their separate recovery. A live but unready owner stays an attention condition.
+
+Commands started with relative paths retain the validated checkout and process-group ownership
+checks. A helper bundle refresh pauses and restores the one validated supervisor instead of
+opening a second helper. Preserve intentional Stop and reject foreign or ambiguous ownership.
+Source tests and a rebuilt helper do not certify an installed helper, OS login, permissions or
+reboot behavior; those need their own runtime evidence.
+The [source recovery publication report](../../../qa/runtime-install-release/reports/2026-10-25-source-recovery-publication.md)
+records the affected checks, rebuilt artifact and exact limits.
 
 ### Worker component cutover
 

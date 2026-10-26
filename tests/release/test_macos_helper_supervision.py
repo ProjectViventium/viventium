@@ -286,7 +286,8 @@ def test_helper_supervision_repairs_configured_sidecars_including_scheduling() -
 
     assert 'values["START_SCHEDULING_MCP"]' in source
     assert 'self.rebasedURL(values["SCHEDULING_MCP_URL"], path: "/health")' in source
-    assert "return await self.managedServicesHealthy(runtime: runtime)" in optional_health
+    assert "var readiness = await self.managedServicesReadiness(runtime: runtime)" in optional_health
+    assert "return readiness" in optional_health
     assert (
         "if snapshot.needsAttention {\n"
         "                self.stackState = .needsAttention\n"

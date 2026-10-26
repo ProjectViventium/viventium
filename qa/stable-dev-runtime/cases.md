@@ -348,6 +348,11 @@ Supporting release regressions: `tests/release/test_helper_hash_consumers.py`, `
 - **Automated support:** `tests/release/test_runtime_reliability_recovery.py`, `test_helper_runtime_intent.py`,
   `test_macos_helper_supervision.py`, `test_macos_helper_install.py`, `test_cli_upgrade.py`,
   `test_detached_librechat_api_watchdog.py`, `test_native_stack_helpers.py`.
+- **Additional automated support:** `tests/release/test_detached_dependency_admission.py`,
+  `tests/release/test_helper_bundle_reopen.py`, `tests/release/test_helper_dependency_attention.py`,
+  `tests/release/test_managed_redis_readiness.py` cover dependency attention, exact-owner recovery,
+  supervisor restoration and command readiness. Their source-publication results are in the
+  [2026-10-25 report](../runtime-install-release/reports/2026-10-25-source-recovery-publication.md).
 - **Acceptance:** NOT RUN for this source batch. Deterministic tests do not substitute for the
   installed OS-job, hidden UI, recovery and real-channel checks.
 

@@ -580,8 +580,10 @@ def test_first_upgrade_bridge_recovers_exact_env_after_full_start_drift(
             "status": "committed",
             "repo_root": str(repo),
             "app_support_dir": str(support),
+            "was_running": True,
         },
     )
+    monkeypatch.setattr(module, "git_text", lambda *_: "b" * 40)
     lifecycle: list[str] = []
 
     def run_checked(command, *, environment, timeout):
@@ -630,7 +632,9 @@ def test_first_upgrade_bridge_recovers_exact_helper_config_after_full_start_drif
     helper_config = support / "helper-config.json"
     before = (
         b'{\n'
-        b'  "showInStatusBar": false,\n'
+        + f'  "repoRoot": {json.dumps(str(repo))},\n'.encode()
+        + f'  "appSupportDir": {json.dumps(str(support))},\n'.encode()
+        + b'  "showInStatusBar": false,\n'
         b'  "allowProtectedRepoRoot": true,\n'
         b'  "ownerFutureSetting": {"mode": "preserve"},\n'
         b'  "runtimeSupervision": {"desiredState": "running"}\n'
@@ -687,8 +691,10 @@ def test_first_upgrade_bridge_recovers_exact_helper_config_after_full_start_drif
             "status": "committed",
             "repo_root": str(repo),
             "app_support_dir": str(support),
+            "was_running": True,
         },
     )
+    monkeypatch.setattr(module, "git_text", lambda *_: "b" * 40)
     lifecycle: list[str] = []
 
     def run_checked(command, *, environment, timeout):

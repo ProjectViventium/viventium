@@ -2442,7 +2442,11 @@ def test_upgrade_refuses_running_stack_and_bad_baseline_before_pull_or_stop() ->
     activation = upgrade_section.index("fast_forward_current_branch_to_target")
     pre_capture = upgrade_section.index('capture_continuity_audit "pre-upgrade-')
     pre_status = upgrade_section.index('PRE_UPGRADE_CONTINUITY_STATUS="$(continuity_audit_status')
-    stop = upgrade_section.index("if ! stop_stack_for_upgrade; then")
+    # Match the pre-refresh internal stop, which preserves intent. The later
+    # ordinary stop belongs to the distinct return-to-stopped owner.
+    stop = upgrade_section.index(
+        "if ! VIVENTIUM_PRESERVE_HELPER_RUNTIME_INTENT=1 stop_stack_for_upgrade; then"
+    )
     transaction = upgrade_section.index("upgrade_transaction_begin")
     recovery_trap = upgrade_section.index(
         "trap recover_running_stack_after_failed_upgrade EXIT"
@@ -2634,7 +2638,11 @@ def test_mutating_upgrade_runs_structured_local_safety_check_before_pull_and_sto
 
     safety_check = upgrade_section.index('UPGRADE_SAFETY_JSON="$("$PYTHON_BIN"')
     activation = upgrade_section.index("fast_forward_current_branch_to_target")
-    stop = upgrade_section.index("if ! stop_stack_for_upgrade; then")
+    # Match the pre-refresh internal stop, which preserves intent. The later
+    # ordinary stop belongs to the distinct return-to-stopped owner.
+    stop = upgrade_section.index(
+        "if ! VIVENTIUM_PRESERVE_HELPER_RUNTIME_INTENT=1 stop_stack_for_upgrade; then"
+    )
     transaction = upgrade_section.index("upgrade_transaction_begin")
     stopped_checkpoint = upgrade_section.index("upgrade_transaction_snapshot_stopped_state")
     assert safety_check < transaction < stop < stopped_checkpoint < activation
@@ -4984,8 +4992,12 @@ def test_launch_stack_detached_waits_when_sidecar_repair_is_already_starting(
 def test_launch_stack_detached_starts_repair_when_core_healthy_and_sidecars_unhealthy(
     tmp_path: Path,
 ) -> None:
+    # Failed protocol readiness alone is dependency attention. This repair case
+    # represents an enabled local process whose existing recovery owner is gone.
     cli_source = (REPO_ROOT / "bin" / "viventium").read_text(encoding="utf-8")
-    function_def = extract_shell_function(cli_source, "launch_stack_detached")
+    function_def = "".join(extract_shell_function(cli_source, name) for name in (
+        "value_is_true", "capture_detached_start_log_offset", "launch_stack_detached",
+    ))
     fake_python = tmp_path / "python"
     write_executable(fake_python, "#!/bin/sh\nprintf '4242\\n'\n")
     app_support = tmp_path / "app-support"
@@ -5011,6 +5023,7 @@ def test_launch_stack_detached_starts_repair_when_core_healthy_and_sidecars_unhe
                     "user_surface_healthy() { return 0; }\n"
                 "runtime_optional_surfaces_healthy() { return 1; }\n"
                 "detached_launch_process_group_running() { return 1; }\n"
+                "runtime_owned_recovery_needed() { RUNTIME_RECOVERY_REASON=google_mcp_owner_missing; return 0; }\n"
                 "is_stack_running() { printf 'stack-check\\n' >&2; return 0; }\n"
                 "stop_stack_for_upgrade() { printf 'unexpected-stop\\n'; return 0; }\n"
                 "if launch_stack_detached; then\n"
@@ -5026,10 +5039,13 @@ def test_launch_stack_detached_starts_repair_when_core_healthy_and_sidecars_unhe
 
     assert completed.stdout.splitlines() == [
         "Viventium core surfaces are running, but enabled sidecars need startup. Repairing...",
+        "Recovery reason: google_mcp_owner_missing.",
         "Launched Viventium in the background (pid 4242).",
         "ok",
     ]
     assert "stack-check" not in completed.stderr
+    assert "command not found" not in completed.stderr
+    assert "unexpected-stop" not in completed.stdout
     assert "restarted" not in completed.stdout
 
 
@@ -5353,6 +5369,8 @@ exit 1
         json.dumps(
             {
                 "schemaVersion": 1,
+                "repoRoot": str(repo_root),
+                "appSupportDir": str(support),
                 "runtimeSupervision": {
                     "schemaVersion": 1,
                     "desiredState": "running",

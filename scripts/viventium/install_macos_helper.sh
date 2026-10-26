@@ -47,6 +47,8 @@ HELPER_STAGE_STATE=""
 STAGED_APP_BUNDLE=""
 PRESERVE_HELPER_CONFIG=0
 RECOVERY_BUNDLE_ONLY=0
+RECOVERY_HELPER_SUPERVISOR_PLIST=""
+RECOVERY_HELPER_SUPERVISOR_UNLOADED=0
 
 while [[ $# -gt 0 ]]; do
   case "${1:-}" in
@@ -1207,6 +1209,9 @@ rollback_install_transaction() {
       --destination-state "$HELPER_DESTINATION_STATE" \
       --stage-state "$HELPER_STAGE_STATE" || rollback_status=$?
   fi
+  if [[ "$rollback_status" == "0" && "${RECOVERY_HELPER_SUPERVISOR_UNLOADED:-0}" == "1" ]]; then
+    restore_recovery_helper_supervisor || rollback_status=$?
+  fi
   if [[ "$rollback_status" == "0" ]]; then
     echo "[viventium] Helper installation failed; restored the previously owned helper bundle. Forward recovery remains pending." >&2
   else
@@ -1255,7 +1260,7 @@ remove_launch_agent() {
 
 launch_helper_app() {
   if [[ "$LAUNCH_AFTER_INSTALL" == "1" ]]; then
-    /usr/bin/open -g "$HELPER_APP_BUNDLE"
+    reopen_recovery_helper
   fi
 }
 
@@ -1333,6 +1338,73 @@ ensure_existing_helper_running() {
   launchctl kickstart "gui/$UID/ai.viventium.helper"
 }
 
+pause_recovery_helper_supervisor() {
+  [[ "$SKIP_LAUNCHCTL" != "1" ]] || return 0
+  verify_helper_supervisor_binding || return 1
+  local loaded_job="" python_bin=""
+  if ! loaded_job="$(launchctl print "gui/$UID/ai.viventium.helper" 2>/dev/null)"; then
+    return 0
+  fi
+  python_bin="$(resolve_repo_python)"
+  RECOVERY_HELPER_SUPERVISOR_PLIST="$(printf '%s' "$loaded_job" | "$python_bin" -c '
+import sys
+paths = [line.strip().partition(" = ")[2] for line in sys.stdin if line.strip().startswith("path = ")]
+if len(paths) != 1 or paths[0] not in sys.argv[1:]:
+    raise SystemExit("[viventium] Refusing an unrecognized helper supervisor path")
+print(paths[0])
+' "$LAUNCH_AGENT_PLIST" "$APP_SUPPORT_DIR/runtime/helper-supervisor.plist")" || return 1
+  # A nonzero native result can still mean the job unloaded. Arm restoration before that action.
+  RECOVERY_HELPER_SUPERVISOR_UNLOADED=1
+  launchctl bootout "gui/$UID/ai.viventium.helper" || return
+}
+
+restore_recovery_helper_supervisor() {
+  [[ "${RECOVERY_HELPER_SUPERVISOR_UNLOADED:-0}" == "1" ]] || return 0
+  verify_helper_supervisor_binding || return 1
+  local python_bin=""
+  python_bin="$(resolve_repo_python)"
+  # An accepted bootout can finish after a nonzero return. Wait for its native completion.
+  "$python_bin" - "gui/$UID/ai.viventium.helper" <<'PYWAIT' || return 1
+import subprocess
+import sys
+import time
+
+deadline = time.monotonic() + 2.0
+while time.monotonic() < deadline:
+    try:
+        result = subprocess.run(["launchctl", "print", sys.argv[1]],
+                                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                                timeout=min(0.25, max(0.01, deadline - time.monotonic())))
+        if result.returncode != 0:
+            break
+    except subprocess.TimeoutExpired:
+        pass
+    time.sleep(0.05)
+else:
+    raise SystemExit("[viventium] Helper supervisor stop did not settle; no second owner started")
+PYWAIT
+  launchctl bootstrap "gui/$UID" "$RECOVERY_HELPER_SUPERVISOR_PLIST" || return 1
+  launchctl kickstart "gui/$UID/ai.viventium.helper" || return 1
+  RECOVERY_HELPER_SUPERVISOR_UNLOADED=0
+}
+
+reopen_recovery_helper() {
+  if [[ "${RECOVERY_HELPER_SUPERVISOR_UNLOADED:-0}" == "1" ]]; then
+    restore_recovery_helper_supervisor
+    return
+  fi
+  verify_helper_supervisor_binding || return 1
+  if [[ "$SKIP_LAUNCHCTL" != "1" ]] &&
+    launchctl print "gui/$UID/ai.viventium.helper" >/dev/null 2>&1; then
+    # KeepAlive may already have replaced the retired helper. Reuse that native owner.
+    launchctl kickstart "gui/$UID/ai.viventium.helper"
+    return
+  fi
+  if ! pgrep -fx "$HELPER_APP_BUNDLE/Contents/MacOS/$HELPER_EXECUTABLE_NAME" >/dev/null 2>&1; then
+    /usr/bin/open -g "$HELPER_APP_BUNDLE"
+  fi
+}
+
 case "$MODE" in
 ensure-running)
     ensure_existing_helper_running
@@ -1344,6 +1416,7 @@ install)
         exit 1
       }
       verify_preserved_helper_config
+      verify_helper_supervisor_binding
       local_helper_was_running=0
       if pgrep -f "$HELPER_APP_BUNDLE/Contents/MacOS/$HELPER_EXECUTABLE_NAME" >/dev/null 2>&1; then
         local_helper_was_running=1
@@ -1355,12 +1428,15 @@ install)
       sign_installed_bundle "$STAGED_APP_BUNDLE"
       refresh_staged_bundle_state
       write_helper_install_receipt
+      if [[ "$local_helper_was_running" == "1" ]]; then
+        pause_recovery_helper_supervisor
+      fi
       stop_existing_helper
       activate_staged_bundle
       qa_kill_helper_install_if_requested activation
       commit_install_transaction
       if [[ "$local_helper_was_running" == "1" ]]; then
-        /usr/bin/open -g "$HELPER_APP_BUNDLE"
+        reopen_recovery_helper
       fi
       exit 0
     fi
