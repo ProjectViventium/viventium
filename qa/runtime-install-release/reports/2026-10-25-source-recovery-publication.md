@@ -12,13 +12,13 @@ own the behavior and upgrade boundary.
 | Outcome | Evidence | Result |
 | --- | --- | --- |
 | Keep available services running during a dependency outage | Helper/CLI recovery, exact ownership and supervisor restoration cases; compiled Swift decisions and real Redis TCP, Unix-socket and verified TLS command checks | 305 affected cases passed; one existing host-process inspection case skipped |
-| Preserve saved intent through upgrade and recovery | Exact prior-version shell, original and later helper formats, interrupted/failed upgrades, explicit Start, newer Stop, ownership and checkpoint cases | 368 distinct source checks passed across owning and causal repair runs |
+| Preserve saved intent through upgrade and recovery | Exact prior-version shell, original and later helper formats, interrupted/failed upgrades, explicit Start, newer Stop, ownership and checkpoint cases | 387 distinct source checks passed across owning and causal repair runs |
 | Ship the helper that matches its source | Existing fallback builder produced both macOS CPU slices; source and binary hashes, artifact checks and private-path scan | PASS |
 | Select the reviewed worker source | Actual pinned-component bootstrap and strict validation; component selection, original-checkout preservation and native manifest/staging regressions | 81 checks passed |
 | Keep release checks discoverable | Existing QA owner mappings and release-selection/public-safety regressions | 107 checks passed |
 | Explain retained Telegram input without requesting duplicate work | [Telegram ingress report](../../telegram-channels/reports/2026-10-25-telegram-ingress-recovery.md) covers bot checks and its earlier source-matched user-path evidence | Scoped evidence retained |
 
-Counts above describe separate, overlapping banks and must not be added. The 368-case result
+Counts above describe separate, overlapping banks and must not be added. The 387-case result
 reconciles the owning run with targeted repairs of stale test locators and binding checks;
 failed earlier raw receipts remain private. Required native CI for the exact public candidate
 is recorded on [the publication PR](https://github.com/ProjectViventium/viventium/pull/154).
@@ -39,10 +39,16 @@ accidentally change saved intent. The existing verified handoff now preserves in
 internal operation. Explicit Start records its choice once before committed recovery; later
 Stop is not reset by finalization. The original helper format remains valid without newer
 intent fields. Both binding paths must be explicit absolute strings, so a missing field cannot
-inherit the process working directory. Exact old-shell, rollback, interruption, foreign or
+inherit the process working directory. Optional helper-state inspection during finalization
+cannot become a new post-commit rejection for an ordinary legacy or path-alias configuration;
+transaction, source and checkpoint checks remain required. Exact old-shell, rollback, interruption, foreign or
 stale proof, and unchanged revision/counter checks cover these boundaries.
 
 ## Findings
+
+The qualified intent paths are internal stops, protected validation and committed finalization.
+A pre-existing rollback restoration can still write Running over a later Stop; that separate
+recovery path was not rewritten or claimed fixed by this publication batch.
 
 The source update does not install or restart a user's services. Installed helper UI, login,
 reboot, permissions, notarization and a rebuilt Native payload were not tested by this publication

@@ -11,8 +11,9 @@
   refresh reuses one validated supervisor and preserves intentional Stop.
 - Upgrade and missing-process repair stops keep the saved Run/Stop choice. A verified upgrade
   handoff can validate its candidate with background writers disabled; a later user Stop still
-  prevents automatic restart. Explicit Start can resume pending upgrade recovery, and later
-  Stop requests stay authoritative. Older helper configurations remain supported.
+  prevents automatic restart. Explicit Start can resume pending upgrade recovery, and its
+  finalizer preserves later Stop requests. Older helper formats and valid path aliases remain
+  compatible with upgrade finalization.
 - Telegram can tell the sender that an input is saved when Core returns a valid retained-input
   receipt during an outage. It does not ask the user to resend accepted work or start a duplicate
   reply. Ambiguous failures and requests rejected before intake keep their separate recovery paths.

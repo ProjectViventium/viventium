@@ -3157,3 +3157,138 @@ def test_valid_legacy_helper_binding_allows_absent_later_intent(
     monkeypatch.chdir(repo if current_directory == "repo" else support)
     assert module._bound_helper_intent(helper, repo_root=repo, app_support_dir=support) is None
     assert helper.read_bytes() == before
+
+
+def _committed_helper_shape_fixture(tmp_path: Path, monkeypatch, shape: str, *, was_running: bool = False):
+    module = load_module()
+    repo, support = tmp_path / "repo", tmp_path / "support"
+    transaction = support / "upgrade-backups" / "upgrade-synthetic"
+    transaction.mkdir(parents=True)
+    (repo / "viventium_v0_4" / "LibreChat").mkdir(parents=True)
+    value = {"repoRoot": str(repo), "appSupportDir": str(support)}
+    if shape == "repo-alias":
+        alias = tmp_path / "repo-alias"
+        alias.symlink_to(repo, target_is_directory=True)
+        value["repoRoot"] = str(alias)
+    elif shape == "support-alias":
+        alias = tmp_path / "support-alias"
+        alias.symlink_to(support, target_is_directory=True)
+        value["appSupportDir"] = str(alias)
+    elif shape == "relative-repo":
+        value["repoRoot"] = "."
+        monkeypatch.chdir(repo)
+    elif shape == "relative-support":
+        value["appSupportDir"] = "."
+        monkeypatch.chdir(support)
+    elif shape != "legacy":
+        values = {"null": None, "empty-list": [], "false": False, "zero": 0,
+                  "empty-string": "", "empty-object": {},
+                  "running": {"desiredState": "running"},
+                  "stopped": {"desiredState": "stopped", "intentRevision": "e" * 32,
+                              "consecutiveLaunchAttempts": 7, "nextLaunchAttemptAt": None}}
+        value["runtimeSupervision"] = values[shape]
+    helper = support / "helper-config.json"
+    helper.write_text(json.dumps(value) + "\n")
+    helper.chmod(0o600)
+    context = module.UpgradeContext(repo_root=repo, app_support_dir=support, transaction=transaction,
+                                   predecessor="a" * 40, successor="b" * 40,
+                                   ledger={}, was_running=was_running)
+    env_checkpoint = module._checkpoint_librechat_env(context)
+    helper_checkpoint = module._checkpoint_helper_config(context)
+    payload = {"schemaVersion": module.BRIDGE_SCHEMA_VERSION, "status": "validated",
+               "receiptKind": "current-upgrade-session", "transaction": str(transaction),
+               "predecessor": "a" * 40, "successor": "b" * 40, "wasRunning": was_running,
+               "uploadsDeferredUntilOuterCommit": False,
+               "librechatEnvCheckpointSha256": module.sha256_file(env_checkpoint["manifestPath"]),
+               "helperConfigCheckpointSha256": module.sha256_file(helper_checkpoint["manifestPath"]),
+               "finalizedAfterOuterCommit": False}
+    module.write_private_json(support / module.QUIESCED_SESSION_STATE, payload, boundary=support)
+    ledger = {"status": "committed", "repo_root": str(repo), "app_support_dir": str(support),
+              "was_running": was_running}
+    monkeypatch.setattr(module.upgrade_transaction, "load_ledger", lambda *_: ledger)
+    monkeypatch.setattr(module, "git_text", lambda *_: "b" * 40)
+    arguments = {"repo_root": repo, "app_support_dir": support,
+                 "config_file": support / "config.yaml", "runtime_dir": support / "runtime",
+                 "lock_file": repo / "components.lock.json", "state_relative": module.QUIESCED_SESSION_STATE}
+    return module, helper, ledger, arguments
+
+
+@pytest.mark.parametrize("shape", [
+    "legacy", "running", "stopped", "repo-alias", "support-alias", "relative-repo", "relative-support",
+    "null", "empty-list", "false", "zero", "empty-string", "empty-object",
+])
+def test_postcommit_optional_stopped_inspection_keeps_ordinary_accepted_shapes(
+    tmp_path: Path, monkeypatch, shape: str,
+) -> None:
+    module, helper, _, arguments = _committed_helper_shape_fixture(tmp_path, monkeypatch, shape)
+    before = helper.read_bytes()
+    if shape != "stopped":
+        predicate = load_cli_test_module().extract_shell_function(
+            (REPO_ROOT / "bin" / "viventium").read_text(), "helper_runtime_intent_allows_start",
+        )
+        guard = subprocess.run(["bash", "-c", predicate + "\nhelper_runtime_intent_allows_start\n"],
+                               env={**os.environ, "APP_SUPPORT_DIR": str(helper.parent),
+                                    "REPO_ROOT": str(arguments["repo_root"]), "PYTHON_BIN": sys.executable},
+                               capture_output=True, text=True, timeout=5)
+        assert guard.returncode == 0, guard.stderr
+    actions: list[str] = []
+    def run_checked(command, *, environment, timeout):
+        actions.append(command[-1])
+        assert command[-1] == "restore-stopped"
+        if shape == "stopped":
+            assert environment["VIVENTIUM_PRESERVE_HELPER_RUNTIME_INTENT"] == "1"
+        else:
+            assert environment.get("VIVENTIUM_PRESERVE_HELPER_RUNTIME_INTENT") != "1"
+            subprocess.run([sys.executable, str(REPO_ROOT / "scripts" / "viventium" / "helper_runtime_intent.py"),
+                            "--config", str(helper), "--desired", "stopped"], check=True,
+                           capture_output=True, text=True, timeout=5)
+    monkeypatch.setattr(module, "_run_checked", run_checked)
+    result = module.finalize_after_outer_commit(**arguments)
+    assert actions == ["restore-stopped"]
+    assert result["status"] == "pending_first_start"
+    assert result["finalizedAfterOuterCommit"] is False
+    assert result["helperConfigContinuity"]["protected_fields_preserved"] is True
+    if shape == "stopped":
+        assert helper.read_bytes() == before
+    else:
+        assert json.loads(helper.read_text())["runtimeSupervision"]["desiredState"] == "stopped"
+
+
+@pytest.mark.parametrize("shape", ["repo-alias", "null", "stopped"])
+def test_postcommit_prior_running_skips_optional_strict_intent_read(
+    tmp_path: Path, monkeypatch, shape: str,
+) -> None:
+    module, helper, _, arguments = _committed_helper_shape_fixture(tmp_path, monkeypatch, shape, was_running=True)
+    before = helper.read_bytes()
+    def forbidden(*args, **kwargs):
+        raise AssertionError("Optional strict intent read is unnecessary for prior-running finalization")
+    monkeypatch.setattr(module, "_bound_helper_intent", forbidden)
+    def stop(**kwargs):
+        assert kwargs["environment"]["VIVENTIUM_PRESERVE_HELPER_RUNTIME_INTENT"] == "1"
+        raise module.FirstUpgradeBridgeError("Synthetic prior-running stop boundary")
+    monkeypatch.setattr(module, "_stop_runtime_for_continuity_recovery", stop)
+    with pytest.raises(module.FirstUpgradeBridgeError, match="Synthetic prior-running stop boundary"):
+        module.finalize_after_outer_commit(**arguments)
+    assert helper.read_bytes() == before
+
+
+@pytest.mark.parametrize("failure", ["ledger", "source", "checkpoint"])
+def test_optional_intent_refusal_does_not_hide_fatal_finalization_proof(
+    tmp_path: Path, monkeypatch, failure: str,
+) -> None:
+    module, helper, ledger, arguments = _committed_helper_shape_fixture(tmp_path, monkeypatch, "null")
+    actions: list[str] = []
+    monkeypatch.setattr(module, "_run_checked", lambda command, **_: actions.append(command[-1]))
+    if failure == "ledger":
+        ledger["status"] = "active"
+    elif failure == "source":
+        monkeypatch.setattr(module, "git_text", lambda *_: "c" * 40)
+    else:
+        def broken_checkpoint(**kwargs):
+            raise module.FirstUpgradeBridgeError("Synthetic checkpoint proof refused")
+        monkeypatch.setattr(module, "_verify_helper_config_after_full_start", broken_checkpoint)
+    with pytest.raises(module.FirstUpgradeBridgeError, match={
+        "ledger": "not committed", "source": "does not match", "checkpoint": "Synthetic checkpoint proof refused",
+    }[failure]):
+        module.finalize_after_outer_commit(**arguments)
+    assert actions == (["restore-stopped", "restore-stopped"] if failure == "checkpoint" else [])

@@ -65,7 +65,8 @@ internals.
   validation uses the existing live parent lock, exact transaction, selected source revision and
   bound checkpoints before starting a candidate with background writers disabled. It does not
   turn a later user Stop into permission to restart. Old helper configurations without newer
-  intent fields remain valid; malformed or foreign configuration stays refused. An explicit Start
+  intent fields remain valid; the protected validation exception refuses malformed or foreign
+  intent proof. An explicit Start
   records its new choice once before committed recovery; a later Stop must survive finalization.
   Automatic, preserved-intent and writer-disabled starts cannot renew intent to bypass Stop.
 - Broad checkout or process-pattern cleanup requires verified ownership of the selected runtime

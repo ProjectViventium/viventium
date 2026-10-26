@@ -2677,13 +2677,22 @@ def finalize_after_outer_commit(
     environment = _bridge_environment()
     # This is a verified committed transaction's internal stop. Preserve current
     # intent, so a newer user Stop still prevents the subsequent automatic start.
-    helper_target = upgrade_transaction.helper_config_path(lexical(app_support_dir))
-    stopped_intent = (
-        helper_target.exists()
-        and (_bound_helper_intent(
-            helper_target, repo_root=context_repo, app_support_dir=app_support_dir,
-        ) or {}).get("desiredState") == "stopped"
-    )
+    stopped_intent = False
+    if payload.get("wasRunning") is not True:
+        # This optional optimization preserves an already-bound Stop. Its
+        # stricter reader must not strand ordinary legacy/alias configurations
+        # after commit. Transaction and later continuity proof remain fatal.
+        try:
+            helper_target = upgrade_transaction.helper_config_path(lexical(app_support_dir))
+            stopped_intent = (
+                helper_target.exists()
+                and (_bound_helper_intent(
+                    helper_target, repo_root=context_repo, app_support_dir=app_support_dir,
+                ) or {}).get("desiredState") == "stopped"
+            )
+        except (FirstUpgradeBridgeError, upgrade_transaction.UpgradeTransactionError,
+                OSError, UnicodeError, json.JSONDecodeError):
+            pass
     if payload.get("wasRunning") is True or stopped_intent:
         environment["VIVENTIUM_PRESERVE_HELPER_RUNTIME_INTENT"] = "1"
     environment["VIVENTIUM_POSTCOMMIT_FINALIZATION_ID"] = (
