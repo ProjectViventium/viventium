@@ -3022,10 +3022,11 @@ actor Gate {
     func refreshState(force: Bool) { writes += 1 }
     func log(_ message: String) { writes += 1 }
     func openBrowser(path: String?) { writes += 1 }
+    func openLocalCallBrowser(runtime: RuntimePorts) { writes += 1 }
     static func startFailureGuidance(runtime: RuntimePorts, startLogURL: URL?, startLogOffset: UInt64) -> String { "" }
 ''' + cancel + r'''
     func finish() async {
-        let started = true, supervisedLaunch = true, openWhenReady = false
+        let started = true, supervisedLaunch = true, openWhenReady = false, openLocalCallWhenReady = false
         let launchReason = "synthetic-old-start", openPath: String? = nil
         let runtime = RuntimePorts(), config = Config(), startLogURL: URL? = nil, startLogOffset: UInt64 = 0
 ''' + completion + r'''

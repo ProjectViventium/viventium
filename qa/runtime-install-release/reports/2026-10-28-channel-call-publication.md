@@ -75,6 +75,7 @@ The separate source/consumer selections are recorded in Scope Run. Package build
 - Privacy: raw prompts, conversations, accounts, local paths, attachments, logs and runtime state are excluded.
 - Independent review corrected a remaining network-cause overclaim: cellular/Wi-Fi differences need DNS, route and application evidence. The helper regression also has its bidirectional QA-owner reference. The source review found no further material product defect.
 - Existing repository CI runs are recorded separately from the focused selections above. Passing source/publication checks does not establish installed or audio acceptance.
+- The first selected installer bank completed with 5,506 passed, 19 skipped and two stale helper-fixture failures. The Feelings signature check and cancelled-start Swift probe were updated for the existing optional local-call branch, preserving their assertions. All nine affected helper checks pass. Product source is unchanged by this fixture correction; final PR CI records the new candidate result.
 - Remaining acceptance: signed phone/local call and audible end-to-end behavior remain PARTIAL. No service configuration or runtime was changed by this publication task.
 
 Feature evidence:
