@@ -2731,3 +2731,53 @@ def test_build_brain_setup_rows_does_not_call_unproven_account_route_ready() -> 
 
     assert states["Direct AI Accounts"][0] == "Needs setup"
     assert "Connected Accounts" in states["Direct AI Accounts"][1]
+
+
+def test_remote_access_summary_reports_dns_problem_instead_of_only_testing_app_host(monkeypatch):
+    summary = load_install_summary_module()
+    config = {"runtime": {"network": {"remote_call_mode": "custom_domain"}}}
+    state = {"provider": "public_https_edge", "public_client_url": "https://app.example.test"}
+    monkeypatch.setattr(summary, "load_public_network_state", lambda *_args: state)
+    monkeypatch.setattr(summary, "public_hostname_reachable", lambda *_args: (_ for _ in ()).throw(
+        AssertionError("A working app host must not hide a wrong call host")))
+    for dns_status, expected in [("mismatch", "Action Required"), ("unavailable", "Unverified")]:
+        monkeypatch.setattr(summary, "observe_public_edge_dns", lambda current: {
+            **current, "public_dns": {"status": dns_status, "message": "voice.example.test needs DNS verification"}
+        })
+        status, detail = summary.remote_access_status_and_detail(
+            config, {}, None, probe_live=True, stack_should_be_live=True,
+        )
+        assert status == expected
+        assert "voice.example.test" in detail
+        assert "inactive" not in detail
+
+
+def test_remote_access_summary_unprobed_uses_saved_dns_receipt_honestly(monkeypatch):
+    summary = load_install_summary_module()
+    config = {"runtime": {"network": {"remote_call_mode": "custom_domain"}}}
+    monkeypatch.setattr(summary, "load_public_network_state", lambda *_args: {
+        "provider": "public_https_edge", "public_client_url": "https://app.example.test",
+        "public_dns": {"status": "mismatch", "message": "voice.example.test returned another IP"},
+    })
+    monkeypatch.setattr(summary, "observe_public_edge_dns", lambda *_args: (_ for _ in ()).throw(
+        AssertionError("Unprobed status must perform no DNS lookup")))
+    status, detail = summary.remote_access_status_and_detail(
+        config, {}, None, probe_live=False, stack_should_be_live=False,
+    )
+    assert status == "Action Required"
+    assert detail.startswith("Last recorded DNS check:")
+
+
+def test_remote_dns_next_step_does_not_request_restarting_healthy_services(monkeypatch):
+    summary = load_install_summary_module()
+    config = {"runtime": {"network": {"remote_call_mode": "custom_domain"}}}
+    monkeypatch.setattr(summary, "load_public_network_state", lambda *_args: {
+        "public_client_url": "https://app.example.test",
+        "public_dns": {"status": "mismatch", "message": "voice.example.test returned another IP"},
+    })
+    monkeypatch.setattr(summary, "stack_expected_live", lambda *_args: True)
+    steps = summary.build_next_steps(config, {})
+    dns_steps = [step for step in steps if "DNS" in step]
+    assert len(dns_steps) == 1
+    assert "does not require a restart" in dns_steps[0]
+    assert not any("could not start" in step for step in steps)

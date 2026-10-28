@@ -88,6 +88,11 @@ to child services. These file projections do not provide process environment iso
 xPerfect strips `WPR_OPENAI_API_KEY` from native workers, even if an operator allowlist names it.
 Core's native-worker allowlist must match xPerfect's projection contract.
 
+For native file results, Core declares its private application-support directory through the
+existing `GLASSHIVE_PROTECTED_SOURCE_ROOTS` setting. xPerfect applies that exclusion to explicitly
+selected host-file output; ordinary readable user files retain the configured native access rules.
+This declaration does not grant extra access or change the existing authorized upload path.
+
 Direct exposes only real configured tools. Native computer or shell work uses authorized MCP tools
 or the existing worker handoff. Shared context references do not imply free provider context or a
 transferable prompt cache. Retain protocol, tool, reasoning and message identifiers across turns.

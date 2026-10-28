@@ -19,6 +19,7 @@ DELIVERY_DISPOSITION_KEYS = frozenset(
     {"version", "audio", "required", "valid", "source"}
 )
 DELIVERY_DISPOSITION_VALID_SOURCES = frozenset({"model", "legacy_marker"})
+VOICE_INPUT_MODES = ("voice_note", "voice", "voice_call")
 
 # === VIVENTIUM START ===
 # Feature: Robust boolean coercion for preference values.
@@ -40,6 +41,7 @@ def should_send_voice_reply(
     always_voice: bool,
     voice_enabled: bool,
     text: Optional[str],
+    reply_voice_with_voice: bool = True,
 ) -> bool:
     # === VIVENTIUM START ===
     # Voice replies require both audio-output routing and generated text.
@@ -47,6 +49,7 @@ def should_send_voice_reply(
         voice_note_detected=voice_note_detected,
         always_voice=always_voice,
         voice_enabled=voice_enabled,
+        reply_voice_with_voice=reply_voice_with_voice,
     ):
         return False
     # === VIVENTIUM END ===
@@ -205,12 +208,14 @@ def should_request_audio_reply(
     voice_note_detected: bool,
     always_voice: bool,
     voice_enabled: bool,
+    reply_voice_with_voice: bool = True,
 ) -> bool:
     voice_enabled = _coerce_bool(voice_enabled, True)
-    always_voice = _coerce_bool(always_voice, False)
+    always_voice = _coerce_bool(always_voice, True)
+    reply_voice_with_voice = _coerce_bool(reply_voice_with_voice, True)
     if not voice_enabled:
         return False
-    return bool(voice_note_detected or always_voice)
+    return bool(always_voice or (voice_note_detected and reply_voice_with_voice))
 
 
 def should_request_voice_mode(

@@ -112,8 +112,10 @@ See `config.env.example` for all available options.
 
 - ✅ **Text Chat**: Send messages via Telegram, receive responses from Viventium
 - ✅ **Voice Notes**: Transcribe voice messages and send to Viventium
-- ✅ **Voice Replies**: Uses the linked user's saved modern Speaking route for voice notes and
-  Smart voice for text replies; the Main Agent can keep read-first artifacts text-only
+- ✅ **Voice Replies**: Uses the linked user's saved modern Speaking route. Master Switch allows
+  reply audio; Always Include Voice Reply makes all replies and proactive messages eligible. With it
+  off, Reply Voice with Voice makes voice input eligible. All three default on; the Main Agent can
+  still keep a reply text-only.
 - ✅ **One-Click Browser Calls**: `/call` returns the configured public HTTPS modern-playground
   link after the canonical agent passes Agents `USE` and resource `VIEW`. The link's fragment holds
   a one-time launch bearer that the browser strips and exchanges same-origin for exact-session
@@ -140,8 +142,19 @@ This bot uses **LibreChat Agents**, meaning:
 - Consistent behavior across Telegram and LibreChat
 - No LiveKit dependency for text chat
 - Voice output preferences are routed before generation, but Telegram remains a LibreChat text-mode
-  surface (`voiceMode=false`). A voice note or Smart voice for text turn can add one audio
-  attachment after the answer is generated; disabled voice replies remain text-only.
+  surface (`voiceMode=false`). Master Switch gates all optional audio. Always Include Voice Reply
+  makes all replies eligible; when it is off, Reply Voice with Voice makes voice input eligible.
+  Existing saved choices remain; missing preferences default on. Source-bound follow-ups retain
+  their original typed input mode. Global voice changes honor `ADMIN_LIST` when configured; without
+  that list, global preferences retain the bot's existing shared-control behavior. Per-chat group
+  preferences do not overwrite the linked user's private scheduler preferences.
+- Telegram display removes only declared synthesis controls and accepted Cartesia aliases through
+  the existing sanitizer, even when audio is disabled or the model skips it. Unknown bracket text,
+  code, Markdown links, URLs and escaped literals remain intact. Raw synthesis text keeps its normal
+  provider controls.
+- Source-bound worker results retain their exact chat/topic for both text-only and attachment
+  delivery. A closed or deleted topic follows the existing delivery-failure path; it never falls
+  back to General. Callback Speaking-route lookup runs only when audio is actually eligible.
 - Registered shared surface prompts let the Main Agent emit standalone `{SKIP_VOICE}` when optional
   audio would be wasteful and `{MSG_BREAK}` between complete conversational beats. Runtime consumes
   those controls, persists one clean logical answer, and never guesses intent from keywords.

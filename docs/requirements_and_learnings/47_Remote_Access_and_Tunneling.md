@@ -324,6 +324,34 @@ Router lease note:
   interface addresses and an explicitly separate managed LiveKit API endpoint retain their
   existing behavior. This guard does not infer the address of a hosted media service.
 
+Public DNS observation:
+
+- Startup, mapping refresh and status reuse the existing public-edge state to record an IPv4 DNS
+  observation for each surface served by this local edge. A healthy app hostname does not stand in
+  for the separate Playground, LiveKit or worker-link hostname.
+- The observation names each host, its returned IPv4 addresses and the expected public IPv4.
+  `public_edge_dns_mismatch` means the observed addresses differ; `public_edge_dns_unavailable`
+  means the lookup could not establish an answer. Neither is proof of an off-network call result.
+- This check is bounded to two seconds for the complete hostname set. Matching observations may be
+  reused for at most 60 seconds, with the current host set, public address and assigned LAN addresses
+  unchanged. Negative or unavailable observations are rechecked on the next status request.
+- A deliberate local DNS answer matching this machine's assigned LAN address is recorded as
+  `local_override`; it is not incorrectly treated as a stale public address. External provider
+  targets and other remote-access modes are outside this local direct-edge comparison. An
+  intentional public proxy needs separate reachability proof; an IP difference alone does not prove
+  that proxy is unavailable. IPv6 and real media acceptance remain separate checks.
+- DNS observations are diagnostic state, not lifecycle authority. They never stop Caddy, clear
+  published URLs, replace owned router mappings, change DNS records, or block local startup. Status
+  reports the DNS problem separately from `runtime_healthy`; correcting DNS needs no service restart.
+  The compatibility `healthy` value and status exit code continue to mean local runtime health, so
+  launcher/progress consumers do not mislabel DNS drift as a missing tunnel. Saving a status
+  observation is best-effort and nonblocking while startup or refresh holds the lifecycle lock;
+  an unwritable state directory never turns a readable healthy runtime into a status failure.
+  Stronger existing WAN/media-address errors retain their original recovery rules.
+- No DNS lookup is added to call creation, speech turns, Queen execution or worker handoff. Existing
+  status output names an action-required mismatch or an unverified lookup, without claiming that
+  this Mac has proved cellular reachability.
+
 Hostname guidance:
 
 - The recommended stable layout is unique subdomains per surface, for example:

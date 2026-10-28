@@ -733,6 +733,15 @@ def public_hostname_reachable(url: str, timeout_seconds: float = 3.0) -> bool:
         return False
 
 
+def observe_public_edge_dns(state: dict[str, Any]) -> dict[str, Any]:
+    # Keep local-only status independent of the POSIX remote-edge lifecycle module.
+    if state.get("provider") != "public_https_edge":
+        return state
+    from remote_call_tunnel import observe_public_edge_dns as observe
+
+    return observe(state)
+
+
 def remote_access_status_and_detail(
     config: dict[str, Any],
     runtime_env: dict[str, str],
@@ -749,6 +758,14 @@ def remote_access_status_and_detail(
     last_error = str(public_state.get("last_error") or "").strip()
     if last_error:
         return "Action Required", f"{remote_access_label(remote_call_mode)} inactive: {last_error}"
+
+    if probe_live and stack_should_be_live:
+        public_state = observe_public_edge_dns(public_state)
+    dns = public_state.get("public_dns") or {}
+    if dns.get("status") in {"mismatch", "unavailable"}:
+        label = "Action Required" if dns["status"] == "mismatch" else "Unverified"
+        when = "" if probe_live and stack_should_be_live else "Last recorded DNS check: "
+        return label, when + str(dns.get("message") or "Public DNS needs verification.")
 
     public_client_url = str(
         public_state.get("public_client_url") or runtime_env.get("VIVENTIUM_PUBLIC_CLIENT_URL") or ""
@@ -2230,6 +2247,11 @@ def build_next_steps(
         next_steps.append(
             "Remote access could not start on this run. Fix the blocker shown in "
             f"[cyan]bin/viventium status[/cyan] and then rerun [cyan]bin/viventium start[/cyan]. ({remote_error})"
+        )
+    elif (public_state.get("public_dns") or {}).get("status") in {"mismatch", "unavailable"}:
+        next_steps.append(
+            "Verify the public DNS records shown by [cyan]bin/viventium status[/cyan]. "
+            "Local services and router mappings remain available; fixing DNS does not require a restart."
         )
     elif public_client_url:
         next_steps.append(

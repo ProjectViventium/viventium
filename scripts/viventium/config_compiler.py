@@ -5962,6 +5962,7 @@ def render_runtime_env(
             if explicit_artifact_base_url:
                 env["GLASSHIVE_ARTIFACT_BASE_URL"] = explicit_artifact_base_url
         env["WPR_LIBRECHAT_UPLOADS_ROOT"] = str(canonical_uploads_root)
+        env["GLASSHIVE_PROTECTED_SOURCE_ROOTS"] = str(runtime_app_support_dir)
         bootstrap_source_roots = [str(canonical_uploads_root)]
         if not glasshive_enterprise["enabled"]:
             bootstrap_source_roots.append(str(Path(env["WPR_DB_PATH"]).parent / "managed-files"))

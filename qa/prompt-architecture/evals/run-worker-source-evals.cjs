@@ -77,6 +77,30 @@ function verifyNativeRun(record, route, instructions) {
   return { ...route, instructionsSha256: sha(instructions), runIdHash: sha(record.run_id), workerIdHash: sha(record.worker_id), state: record.state };
 }
 
+function verifiedWorkerResponse(response, native, route, instructions) {
+  const observedRoute = verifyNativeRun(native, route, instructions);
+  if (!response || response.error || response.errorClass || response.fallbackUsed) {
+    throw new Error(response?.errorClass || response?.error || "worker_source_response_unavailable");
+  }
+  const insight = typeof response.insight === "string" ? response.insight : "";
+  if (insight.trim()) return { observedRoute, responseForJudge: insight };
+  // executeCortex suppresses the control marker. Recover only the exact bound native marker;
+  // the semantic judge still decides whether silence satisfies this case's unchanged rubric.
+  const { isNoResponseTag } = requireLC("@librechat/api");
+  if (isNoResponseTag(native.output_text)) {
+    return { observedRoute, responseForJudge: native.output_text };
+  }
+  try {
+    const carrier = JSON.parse(native.output_text);
+    if (carrier && !Array.isArray(carrier) && Object.keys(carrier).length === 3 &&
+        carrier.type === "assistant_response" && carrier.tool_name === null &&
+        isNoResponseTag(carrier.content)) {
+      return { observedRoute, responseForJudge: carrier.content };
+    }
+  } catch { /* A noncanonical native output cannot prove intentional silence. */ }
+  throw new Error("worker_source_response_unavailable");
+}
+
 async function run(args, bank, cases, qaAuth) {
   if (!qaAuth?.ok || !qaAuth.userId || !qaAuth.token || !process.env.CONFIG_PATH || !process.env.MONGO_URI) throw new Error("isolated_qa_runtime_required");
   const harness = require("./run-exact-model-evals.cjs");
@@ -132,16 +156,16 @@ async function run(args, bank, cases, qaAuth) {
       results.push(row); checkpoint();
       try {
         const response = await executeCortex({ agent, messages, runId, conversationId, req, res: createBackgroundRes(), contextMode: "minimal", mainContextBinding: "isolated", completedResultPolicy: "internal", insightMode: "user_facing", nativeTools: route.nativeTools, executionTimeoutMs: args.timeoutMs });
-        if (response.error || !response.insight || response.fallbackUsed) throw new Error(response.errorClass || response.error || "worker_source_response_unavailable");
         const native = harness.queryGlassHiveProviderRun(process.env, runId, { ownerId: qaAuth.userId, conversationId, agentId, nativeAuthority: true });
-        row.observedRoute = verifyNativeRun(native, route, instructions);
+        const verified = verifiedWorkerResponse(response, native, route, instructions);
+        row.observedRoute = verified.observedRoute;
         row.observedRequestIdentityHash = row.requestIdentityHash; // Query above requires every exact owner/session/message binding.
         row.nativeAudit = harness.readGlassHiveRunToolAudit(native);
         if (!row.nativeAudit?.stdoutHash) throw new Error("native_worker_tool_audit_missing");
         const stdoutPath = path.join(path.dirname(native.state_dir), "home/.glasshive-runs", native.run_id, "stdout.log");
         const events = fs.readFileSync(stdoutPath, "utf8").split(/\r?\n/).flatMap((line) => { try { return [JSON.parse(line)]; } catch { return []; } });
         row.nativeCalls = harness.nativeToolAuditItems(events);
-        row.responseForJudge = response.insight;
+        row.responseForJudge = verified.responseForJudge;
         row.postCaseEvidenceForJudge = harness.scrubForPublic(JSON.stringify({ scope: "worker source replay", access: route.access, nativeTools: route.nativeTools, nativeAudit: row.nativeAudit, nativeCalls: row.nativeCalls }));
         row.status = "completed";
       } catch (error) { row.status = "failed"; row.error = String(error.message || error); }
@@ -158,4 +182,4 @@ async function run(args, bank, cases, qaAuth) {
   } finally { await mongoose.disconnect(); }
 }
 
-module.exports = { run, configuredWorkerRoute, readWorkerSource, sourceInstructions, verifyNativeRun };
+module.exports = { run, configuredWorkerRoute, readWorkerSource, sourceInstructions, verifyNativeRun, verifiedWorkerResponse };

@@ -164,17 +164,18 @@ def test_create_buttons_uses_status_map_without_get_status(monkeypatch):
 
     monkeypatch.setattr(telegram_config, "get_status", _fail_get_status)
     buttons = telegram_config.create_buttons(
-        ["LONG_TEXT", "ALWAYS_VOICE_RESPONSE"],
+        ["LONG_TEXT", "FILE_UPLOAD_MESS", "ALWAYS_VOICE_RESPONSE"],
         plugins_status=True,
         chatid="user-1",
         Suffix="_PREFERENCES",
-        status_map={"LONG_TEXT": True, "ALWAYS_VOICE_RESPONSE": False},
+        status_map={"LONG_TEXT": True, "FILE_UPLOAD_MESS": False, "ALWAYS_VOICE_RESPONSE": False},
     )
 
     flattened = [btn for row in buttons for btn in row]
     labels = [btn.text for btn in flattened]
-    assert any(label.startswith("✅ ") for label in labels)
-    assert any(label.startswith("☑️ ") for label in labels)
+    assert "✅ Long text merge" in labels
+    assert "☑️ File upload message" in labels
+    assert "⬜ Always Include Voice Reply · OFF" in labels
 
 
 def test_update_first_buttons_message_adds_call_button_when_available(monkeypatch):
@@ -265,7 +266,7 @@ def test_voice_preference_sync_is_backgrounded_in_running_event_loop(monkeypatch
 
     asyncio.run(_run())
 
-    assert calls == [("user-1", True, True)]
+    assert calls == [("user-1", True, True, True)]
 
 
 def test_get_telegram_call_url_uses_convo_key_but_sends_real_telegram_user_id(monkeypatch):
@@ -422,3 +423,219 @@ def test_cached_legacy_call_bearer_is_removed_instead_of_reused():
 
     assert telegram_config.get_cached_telegram_call_url("123456789") == ""
     assert telegram_config._CALL_URL_CACHE == {}
+
+
+VOICE_KEYS = ("VOICE_RESPONSES_ENABLED", "REPLY_VOICE_WITH_VOICE", "ALWAYS_VOICE_RESPONSE")
+
+
+def _voice_config(monkeypatch, tmp_path, mode, *, existing=None):
+    import json
+    monkeypatch.setattr(telegram_config, "CONFIG_DIR", str(tmp_path))
+    monkeypatch.setattr(telegram_config, "ADMIN_LIST", None)
+    storage_key = "global" if mode == "global" else "123:123"
+    path = tmp_path / f"{storage_key}.json"
+    values = {**{key: True for key in VOICE_KEYS}, "CLIENT_TIMEZONE": "", "LONG_TEXT": True}
+    path.write_text(json.dumps(values if existing is None else existing), encoding="utf-8")
+    cfg = telegram_config.UserConfig(mode=mode, preferences=values)
+    return cfg, storage_key, path
+
+
+@pytest.mark.parametrize("mode", ["global", "multiusers"])
+@pytest.mark.parametrize("key", VOICE_KEYS)
+@pytest.mark.parametrize("operation", ["set", "toggle"])
+def test_voice_preference_changes_persist_and_sync_authenticated_requester(
+    monkeypatch, tmp_path, mode, key, operation,
+):
+    import json
+    cfg, storage_key, path = _voice_config(monkeypatch, tmp_path, mode)
+    synced, saved = [], []
+    original_save = telegram_config.save_user_config
+    def save(user_id, values):
+        saved.append(user_id)
+        original_save(user_id, values)
+    monkeypatch.setattr(telegram_config, "save_user_config", save)
+    monkeypatch.setattr(telegram_config, "schedule_voice_preferences_sync", lambda *args: synced.append(args))
+    if operation == "set":
+        cfg.set_config("123:123", key, False, telegram_user_id=123)
+    else:
+        assert cfg.toggle_config("123:123", key, telegram_user_id=123) is False
+    assert saved == [storage_key]
+    assert synced == [(
+        "123", key != "ALWAYS_VOICE_RESPONSE", key != "VOICE_RESPONSES_ENABLED",
+        key != "REPLY_VOICE_WITH_VOICE",
+    )]
+    assert json.loads(path.read_text())[key] is False
+    reloaded = telegram_config.UserConfig(mode=mode, preferences=cfg.preferences)
+    assert reloaded.get_config("123:123", key) is False
+
+
+@pytest.mark.parametrize("mode", ["global", "multiusers"])
+def test_voice_preferences_preserve_explicit_legacy_false_and_missing_new_default(
+    monkeypatch, tmp_path, mode,
+):
+    import json
+    legacy = {"VOICE_RESPONSES_ENABLED": False, "ALWAYS_VOICE_RESPONSE": False,
+        "CLIENT_TIMEZONE": "", "LONG_TEXT": True, "UNRELATED_SETTING": {"keep": "exact"}}
+    cfg, _, path = _voice_config(monkeypatch, tmp_path, mode, existing=legacy)
+    original_bytes = path.read_bytes()
+    assert cfg.get_config("123:123", "VOICE_RESPONSES_ENABLED") is False
+    assert cfg.get_config("123:123", "ALWAYS_VOICE_RESPONSE") is False
+    assert cfg.get_config("123:123", "REPLY_VOICE_WITH_VOICE") is True
+    assert path.read_bytes() == original_bytes
+    monkeypatch.setattr(telegram_config, "schedule_voice_preferences_sync", lambda *args: None)
+    cfg.toggle_config("123:123", "REPLY_VOICE_WITH_VOICE", telegram_user_id=123)
+    persisted = json.loads(path.read_text())
+    assert persisted["UNRELATED_SETTING"] == legacy["UNRELATED_SETTING"]
+    assert persisted["VOICE_RESPONSES_ENABLED"] is False
+    assert persisted["ALWAYS_VOICE_RESPONSE"] is False
+    assert persisted["REPLY_VOICE_WITH_VOICE"] is False
+
+
+@pytest.mark.parametrize("mode", ["global", "multiusers"])
+def test_voice_sync_does_not_guess_owner_and_idempotent_explicit_set_can_refresh_core(
+    monkeypatch, tmp_path, mode,
+):
+    cfg, _, path = _voice_config(monkeypatch, tmp_path, mode)
+    synced = []
+    monkeypatch.setattr(telegram_config, "schedule_voice_preferences_sync", lambda *args: synced.append(args))
+    cfg.set_config("123:123", "ALWAYS_VOICE_RESPONSE", False)
+    cfg.set_config("123:123", "LONG_TEXT", False, telegram_user_id=123)
+    assert synced == []
+    before = path.read_bytes()
+    cfg.set_config("123:123", "ALWAYS_VOICE_RESPONSE", False, telegram_user_id=123)
+    assert synced == [("123", False, True, True)]
+    assert path.read_bytes() == before
+
+
+def test_voice_sync_wire_retains_legacy_fields_and_adds_new_default(monkeypatch):
+    calls = []
+    monkeypatch.setenv("VIVENTIUM_LIBRECHAT_ORIGIN", "http://127.0.0.1:3180")
+    monkeypatch.setenv("VIVENTIUM_TELEGRAM_SECRET", "synthetic-bridge-secret")
+    class Response:
+        status_code = 200
+    def post(url, **kwargs):
+        calls.append((url, kwargs["json"]))
+        return Response()
+    monkeypatch.setattr(telegram_config.requests, "post", post)
+    telegram_config.sync_voice_preferences("123", False, True)
+    assert calls == [("http://127.0.0.1:3180/api/viventium/telegram/preferences", {
+        "telegramUserId": "123", "alwaysVoiceResponse": False,
+        "voiceResponsesEnabled": True, "replyVoiceWithVoice": True,
+    })]
+
+
+def test_voice_public_defaults_and_preferences_order(monkeypatch, tmp_path):
+    import ast
+    source = ast.parse(Path(telegram_config.__file__).read_text())
+    assignment = next(node for node in source.body if isinstance(node, ast.Assign)
+        and any(isinstance(target, ast.Name) and target.id == "PREFERENCES" for target in node.targets))
+    for key in VOICE_KEYS:
+        monkeypatch.delenv(key, raising=False)
+    namespace = {"os": telegram_config.os, "_get_bool_env": telegram_config._get_bool_env,
+        "VIVENTIUM_TELEGRAM_DEFAULT_TIMEZONE": ""}
+    exec(compile(ast.Module(body=[assignment], type_ignores=[]), "<product-preferences>", "exec"), namespace)
+    assert all(namespace["PREFERENCES"][key] is True for key in VOICE_KEYS)
+    cfg, _, _ = _voice_config(monkeypatch, tmp_path, "global")
+    monkeypatch.setattr(telegram_config, "Users", cfg)
+    monkeypatch.setattr(telegram_config, "PREFERENCES", cfg.preferences)
+    rows = telegram_config.update_menu_buttons(cfg.preferences, "_PREFERENCES", "123:123")
+    assert [row[0].text for row in rows[:3]] == [
+        "✅ Master Switch · ON", "✅ Reply Voice with Voice · ON", "✅ Always Include Voice Reply · ON",
+    ]
+    assert all(len(row) == 1 for row in rows[:3])
+    help_text = telegram_config.update_info_message()
+    assert "Always Include Voice Reply includes all replies and proactive messages" in help_text
+    assert "the model can still skip audio" in help_text
+    assert "Always Include Voice Reply is off" in help_text
+
+
+def test_voice_sync_preserves_toggle_order_without_blocking_other_owners(monkeypatch):
+    import threading
+    completed = []
+    first_started, release_first = threading.Event(), threading.Event()
+    def sync(owner, always, master, reply):
+        if owner == "123" and not master:
+            first_started.set()
+            assert release_first.wait(2)
+        completed.append((owner, master))
+    monkeypatch.setattr(telegram_config, "sync_voice_preferences", sync)
+    async def run():
+        first = telegram_config.schedule_voice_preferences_sync("123", False, False, True)
+        second = telegram_config.schedule_voice_preferences_sync("123", False, True, True)
+        independent = telegram_config.schedule_voice_preferences_sync("456", True, True, True)
+        try:
+            assert await asyncio.to_thread(first_started.wait, 2)
+            await independent
+            assert ("123", True) not in completed
+        finally:
+            release_first.set()
+        await asyncio.gather(first, second)
+        await asyncio.sleep(0)
+    asyncio.run(run())
+    assert [value for owner, value in completed if owner == "123"] == [False, True]
+    assert telegram_config._VOICE_PREFERENCE_SYNC_TASKS == {}
+
+
+@pytest.mark.parametrize("group_key", ["-505:123", "-505:7:123", "505:123", "123:7:123"])
+def test_group_or_topic_voice_settings_do_not_replace_private_core_preferences(monkeypatch, tmp_path, group_key):
+    cfg, _, private_path = _voice_config(monkeypatch, tmp_path, "multiusers")
+    synced = []
+    monkeypatch.setattr(telegram_config, "schedule_voice_preferences_sync", lambda *args: synced.append(args))
+    before = private_path.read_bytes()
+    cfg.toggle_config(group_key, "REPLY_VOICE_WITH_VOICE", telegram_user_id=123)
+    assert cfg.get_config(group_key, "REPLY_VOICE_WITH_VOICE") is False
+    assert cfg.get_config("123:123", "REPLY_VOICE_WITH_VOICE") is True
+    assert private_path.read_bytes() == before
+    assert synced == []
+
+
+@pytest.mark.parametrize("key", VOICE_KEYS)
+@pytest.mark.parametrize("operation", ["set", "toggle"])
+def test_global_voice_changes_require_configured_administrator_before_any_write(
+    monkeypatch, tmp_path, key, operation,
+):
+    cfg, _, path = _voice_config(monkeypatch, tmp_path, "global")
+    monkeypatch.setattr(telegram_config, "ADMIN_LIST", ["123"])
+    synced = []
+    monkeypatch.setattr(telegram_config, "schedule_voice_preferences_sync", lambda *args: synced.append(args))
+    before = path.read_bytes()
+    for requester in (None, "999"):
+        with pytest.raises(PermissionError, match="configured administrator"):
+            if operation == "set":
+                cfg.set_config("123:123", key, False, telegram_user_id=requester)
+            else:
+                cfg.toggle_config("123:123", key, telegram_user_id=requester)
+    assert path.read_bytes() == before
+    assert cfg.get_config("123:123", key) is True
+    assert synced == []
+    if operation == "set":
+        cfg.set_config("123:123", key, False, telegram_user_id=123)
+    else:
+        cfg.toggle_config("123:123", key, telegram_user_id=123)
+    assert cfg.get_config("123:123", key) is False
+    assert synced[0][0] == "123"
+
+
+def test_unrestricted_global_voice_configuration_keeps_existing_shared_control(monkeypatch, tmp_path):
+    cfg, _, _ = _voice_config(monkeypatch, tmp_path, "global")
+    synced = []
+    monkeypatch.setattr(telegram_config, "schedule_voice_preferences_sync", lambda *args: synced.append(args))
+    assert telegram_config.ADMIN_LIST is None
+    cfg.toggle_config("999:999", "VOICE_RESPONSES_ENABLED", telegram_user_id=999)
+    assert cfg.get_config("999:999", "VOICE_RESPONSES_ENABLED") is False
+    assert synced == [("999", True, False, True)]
+
+
+@pytest.mark.parametrize("key", VOICE_KEYS)
+@pytest.mark.parametrize("enabled", [True, False])
+@pytest.mark.parametrize("status_source", ["snapshot", "saved"])
+def test_voice_toggle_label_has_explicit_state_and_empty_off_icon(monkeypatch, key, enabled, status_source):
+    import types
+    monkeypatch.setattr(telegram_config, "Users", types.SimpleNamespace(get_config=lambda *_args: enabled))
+    options = {"status_map": {key: enabled}} if status_source == "snapshot" else {}
+    rows = telegram_config.create_buttons([key], plugins_status=True, chatid="123:123",
+        Suffix="_PREFERENCES", **options)
+    button = rows[0][0]
+    label = telegram_config.PREFERENCE_DISPLAY_NAMES[key]
+    assert button.text == (f"✅ {label} · ON" if enabled else f"⬜ {label} · OFF")
+    assert button.callback_data == f"{key}_PREFERENCES"

@@ -5,7 +5,17 @@
 Validate that Telegram voice-note replies reuse the linked user's saved modern voice Speaking route
 and do not drift from the browser voice selector.
 
-## Latest scoped result
+## Current preference contract
+
+- **Master Switch** permits optional audio for Telegram replies.
+- **Reply Voice with Voice** permits spoken-input replies when Always Include is OFF.
+- **Always Include Voice Reply** permits all replies, including text and independent proactive messages; it is broader than the spoken-input switch.
+- All product defaults are ON; preserve explicit saved choices. Model skip and required audio
+  validation remain authoritative. No voice switch changes the Main model or enables call mode.
+- `TGVOICE-011` owns the full preference/default/sync/source-origin matrix. Dated results own
+  current acceptance; older passing text-audio checks do not prove the new control or live STT.
+
+## Earlier scoped result
 
 The [2026-10-03 Voice and Telegram acceptance](../modern-playground-voice/reports/2026-10-03-voice-and-telegram-acceptance.md)
 keeps `TGVOICE-008` PARTIAL: the selected hosted recognition route rejected credentials, and its
@@ -283,3 +293,5 @@ Verification:
 - Passed: `voice-gateway/.venv/bin/python -m pytest tests/test_sse.py tests/test_worker_ref_audio_validation.py -q`
 - Passed: `voice-gateway/.venv/bin/python -m pytest tests -q` (`221 passed`, one existing `audioop` deprecation warning)
 - Passed: LibreChat `surfacePrompts` and Telegram route Jest tests.
+
+Latest controls evidence: [2026-10-27 three voice controls](reports/2026-10-27-three-voice-controls.md). Foreground controls and persistence pass; delayed/call-origin user acceptance remains partial.

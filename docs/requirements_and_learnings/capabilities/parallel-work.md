@@ -216,7 +216,7 @@ from a new objective without a generated task brief or another routing layer.
 ## Owners and QA
 
 - Runtime: [Parallel Work runtime](../../architecture/parallel-work-runtime.md)
-- Mission authority: `viventium_v0_4/GlassHive/`
+- Mission authority: the pinned `viventium_v0_4/xPerfect/` component.
 - Main and Active Work projection: `viventium_v0_4/LibreChat/`
 - QA: `qa/parallel-orchestrator/`
 

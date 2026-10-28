@@ -1427,3 +1427,13 @@ async def test_explicit_library_settings_saved_voice_without_bot_import(monkeypa
     assert seen[0][1]['voice_id']=='Eve' and seen[0][1]['text']=='Hello.'
     assert diagnostics['actual_provider']=='xai' and not diagnostics['fallback_used']
     assert diagnostics['attempts'][0]['variant']=='Eve'
+
+
+def test_display_reuses_unchanged_tts_alias_and_url_grammar_without_loading_engine():
+    from telegram_tts import CARTESIA_NONVERBAL_ALIASES, SPEECH_URL_RE
+    assert tts_module._CARTESIA_NONVERBAL_ALIASES is CARTESIA_NONVERBAL_ALIASES
+    assert tts_module._URL_RE is SPEECH_URL_RE
+    assert SPEECH_URL_RE.pattern == r"\bhttps?://\S+|\bwww\.\S+"
+    assert len(CARTESIA_NONVERBAL_ALIASES) == 10
+    for alias, normalized in CARTESIA_NONVERBAL_ALIASES.items():
+        assert tts_module._normalize_cartesia_nonverbal_tokens(f"A [{alias}] B") == f"A [{normalized}] B"

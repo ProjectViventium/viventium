@@ -3446,6 +3446,7 @@ def test_render_runtime_env_emits_glasshive_launch_env_only_when_enabled(tmp_pat
         config_compiler.build_agent_assignments(default_host_config),
     )
     assert default_host_env["GLASSHIVE_HOST_WORKERS_ENABLED"] == "true"
+    assert default_host_env["GLASSHIVE_PROTECTED_SOURCE_ROOTS"] == str(app_support_root)
     assert default_host_env["WPR_HOST_WORKSPACE_ROOT"] == "~/viventium"
     assert default_host_env["GLASSHIVE_DEFAULT_WORKER_PROFILE"] == "codex-cli"
     assert default_host_env["GLASSHIVE_DEFAULT_EXECUTION_MODE"] == "host"
@@ -12440,6 +12441,7 @@ def test_xperfect_scheduled_wake_native_uses_machine_secret_and_local_profile_on
     monkeypatch.setattr(native_runtime, 'runtime_secrets', lambda _support: {'CREDS_KEY': 'ab' * 32})
     monkeypatch.setattr(native_runtime, 'load_native_runtime_env', lambda _path: {})
     disabled = native_runtime.native_glasshive_transport_environment(tmp_path, tmp_path)
+    assert disabled['GLASSHIVE_PROTECTED_SOURCE_ROOTS'] == str(tmp_path)
     assert 'WPR_WEBHOOK_ALLOW_LOCAL_HTTP' not in disabled
     monkeypatch.setattr(native_runtime, 'load_native_runtime_env', lambda _path: {
         'VIVENTIUM_XPERFECT_SCHEDULED_WAKES_ENABLED': 'true'})

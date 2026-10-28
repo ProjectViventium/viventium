@@ -2335,6 +2335,20 @@ The authored Main message commits before its final delivery projection. Writes t
 session run in sequence, including silent decisions. Only the final replayable database projection
 uses the existing native transaction retry. Each attempt uses fresh row copies and revalidates the
 accepted terminal result. Existing after-commit publication runs only after a successful commit.
+A live Main synthesis does not become abandoned merely because it runs longer than the stale-claim
+window. Keep its existing active flush or author claim. After transport loss or restart, read the
+first accepted native result under its exact owner, conversation, agent, stream and message scope
+before another dispatch. Retain the first invocation identity before dispatch; changing Feelings,
+context, wall-clock time or retry count must not replace an accepted request. Recovery reuses the
+same prepare, file, disposition, persistence and delivery owners. A saved result is evidence, not
+new permission to publish: existing Stop, restore-hold, accepted-result and delivery-authority
+fences still govern it. A queue or message continuation does not erase an earlier result merely
+because another run starts. This recovery does not automatically revive historical deadletters.
+Do not create a new model request to recover a completed answer or relax immutable idempotency
+conflicts. A first dispatch adds no recovery lookup.
+Recovered files keep the validated native emitter message ID even when the original invocation
+receipt is missing. Do not substitute the parent message ID or fabricate a full invocation identity.
+
 A retry keeps the same authored message; it does not regenerate Main. Superseded results and fixed
 errors retain their existing rejection behavior. The existing warning records only bounded stage
 and error code, with no input text or private identifiers.

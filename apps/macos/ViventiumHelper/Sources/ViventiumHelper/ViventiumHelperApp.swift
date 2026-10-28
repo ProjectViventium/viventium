@@ -643,6 +643,7 @@ final class HelperController: ObservableObject {
     @Published private var stackLaunchFailureGuidance: String?
     @Published private(set) var workflowActionInProgress: Bool = false
     @Published private(set) var openURLString: String = "http://localhost:3190"
+    @Published private(set) var localCallEnabled: Bool = false
     @Published private(set) var launchAtLoginEnabled: Bool = false
     @Published private(set) var showInStatusBarEnabled: Bool = true
 
@@ -1021,6 +1022,36 @@ final class HelperController: ObservableObject {
                 self.startStack(openWhenReady: true)
             }
         }
+    }
+
+    func openLocalCall() {
+        guard let config else { return }
+        let runtime = self.envParser.readRuntime(appSupportDir: config.appSupportDir)
+        guard Self.localCallURL(runtime: runtime) != nil else { return }
+        switch self.stackState {
+        case .running, .needsAttention:
+            self.openLocalCallBrowser(runtime: runtime)
+        case .starting, .stopping:
+            return
+        case .stopped, .unavailable:
+            self.startStack(openWhenReady: true, openLocalCallWhenReady: true)
+        }
+    }
+
+    private func openLocalCallBrowser(runtime: RuntimePorts) {
+        guard let url = Self.localCallURL(runtime: runtime) else { return }
+        NSWorkspace.shared.open(url)
+    }
+
+    private nonisolated static func localCallURL(runtime: RuntimePorts) -> URL? {
+        guard runtime.voiceEnabled && !runtime.nativeRuntime else { return nil }
+        var components = URLComponents()
+        components.scheme = "http"
+        components.host = "localhost"
+        components.port = runtime.frontendPort
+        components.path = "/c/new"
+        components.queryItems = [URLQueryItem(name: "viventiumCall", value: "1")]
+        return components.url
     }
 
     func openFeelings() {
@@ -1779,6 +1810,7 @@ final class HelperController: ObservableObject {
     private func startStack(
         openWhenReady: Bool,
         openPath: String? = nil,
+        openLocalCallWhenReady: Bool = false,
         launchReason: String = "manual",
         recordsDesiredRunning: Bool = true,
         supervisedLaunch: Bool = false
@@ -1917,7 +1949,11 @@ final class HelperController: ObservableObject {
                 let readyLabel = supervisedLaunch ? "Stack healthy" : "User interface ready"
                 self.log(started ? "\(readyLabel) after \(launchReason)" : "Stack did not become healthy after \(launchReason)")
                 if started && openWhenReady {
-                    self.openBrowser(path: openPath)
+                    if openLocalCallWhenReady {
+                        self.openLocalCallBrowser(runtime: runtime)
+                    } else {
+                        self.openBrowser(path: openPath)
+                    }
                 } else if !started {
                     let guidance = Self.startFailureGuidance(
                         runtime: runtime,
@@ -2072,10 +2108,9 @@ final class HelperController: ObservableObject {
             return
         }
         let runtime = self.envParser.readRuntime(appSupportDir: config.appSupportDir)
-        let host = runtime.nativeRuntime
-            ? "127.0.0.1"
-            : (LocalNetworkAddressResolver.currentHost() ?? "localhost")
+        let host = runtime.nativeRuntime ? "127.0.0.1" : "localhost"
         self.openURLString = Self.frontendURLString(host: host, port: runtime.frontendPort)
+        self.localCallEnabled = runtime.voiceEnabled && !runtime.nativeRuntime
         self.refreshLaunchAtLoginState(force: force)
         self.refreshWorkflowStatus(config: config)
 
@@ -4754,6 +4789,7 @@ private struct RuntimePorts: Equatable {
     let nativeRuntime: Bool
     var managedHealthCheckURLs: [String]? = nil
     var redisReadiness: RedisReadiness? = nil
+    var voiceEnabled: Bool = false
 }
 
 private struct RedisReadiness: Equatable {
@@ -4824,7 +4860,8 @@ private struct RuntimeEnvParser {
             managedStopCheckURLs: self.managedStopCheckURLs(values: values),
             nativeRuntime: runtimeProfile == "native",
             managedHealthCheckURLs: self.managedHealthCheckURLs(values: values),
-            redisReadiness: RedisReadiness(values: values)
+            redisReadiness: RedisReadiness(values: values),
+            voiceEnabled: self.boolValue(values["VIVENTIUM_VOICE_ENABLED"])
         )
     }
 
@@ -5272,6 +5309,9 @@ struct ViventiumHelperApp: App {
         ) {
             Button("Open") {
                 self.controller.openViventium()
+            }
+            if self.controller.localCallEnabled {
+                Button("Call on this Mac…") { self.controller.openLocalCall() }
             }
             Button("Open Feelings") {
                 self.controller.openFeelings()

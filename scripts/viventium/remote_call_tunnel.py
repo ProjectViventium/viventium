@@ -25,6 +25,8 @@ from typing import Any
 
 TRYCLOUDFLARE_URL_RE = re.compile(r"https://[a-z0-9-]+\.trycloudflare\.com", re.IGNORECASE)
 DEFAULT_HEALTH_TIMEOUT_SECONDS = 4.0
+PUBLIC_EDGE_DNS_TIMEOUT_SECONDS = 2.0
+PUBLIC_EDGE_DNS_CACHE_SECONDS = 60
 DEFAULT_REMOTE_CALL_TUNNEL_TIMEOUT_SECONDS = 150
 DEFAULT_TAILSCALE_PUBLIC_PORTS = {
     "client": 443,
@@ -452,7 +454,112 @@ def iter_surfaces(state: dict[str, Any]):
             yield key, surface
 
 
-def state_is_healthy(state: dict[str, Any]) -> bool:
+def resolve_public_ipv4_hosts(hostnames: list[str]) -> dict[str, dict[str, Any]]:
+    # Bound the system resolver as a whole: getaddrinfo itself has no portable timeout.
+    # One short-lived stdlib child checks the configured hosts; no extra service is required.
+    program = """import json, socket, sys
+result = {}
+for host in json.loads(sys.argv[1]):
+    try:
+        result[host] = {"addresses": sorted({row[4][0] for row in socket.getaddrinfo(host, None, socket.AF_INET, socket.SOCK_STREAM)})}
+    except OSError:
+        result[host] = {"addresses": [], "error": "lookup_unavailable"}
+print(json.dumps(result))
+"""
+    unavailable = {host: {"addresses": [], "error": "lookup_unavailable"} for host in hostnames}
+    try:
+        result = subprocess.run(
+            [sys.executable, "-I", "-c", program, json.dumps(hostnames)],
+            capture_output=True, text=True, timeout=PUBLIC_EDGE_DNS_TIMEOUT_SECONDS,
+        )
+        if result.returncode != 0 or len(result.stdout) > 65536:
+            return unavailable
+        parsed = json.loads(result.stdout)
+        return parsed if isinstance(parsed, dict) else unavailable
+    except (OSError, ValueError, subprocess.SubprocessError):
+        return unavailable
+
+
+def observe_public_edge_dns(
+    state: dict[str, Any], *, force: bool = False, assigned_ipv4s: set[str] | None = None,
+) -> dict[str, Any]:
+    if state.get("provider") != "public_https_edge" or state.get("last_error") or state.get("last_error_code"):
+        return state
+    public_ip = str(state.get("public_ip") or "").strip()
+    try:
+        if ipaddress.ip_address(public_ip).version != 4:
+            return state
+    except ValueError:
+        return state
+    hosts: dict[str, list[str]] = {}
+    for name, surface in iter_surfaces(state):
+        target, public = parse_url(surface.get("target")), parse_url(surface.get("public_url"))
+        if target and target.hostname in {"localhost", "127.0.0.1", "::1"} and public and public.hostname:
+            hosts.setdefault(public.hostname, []).append(name)
+    if not hosts:
+        return state
+    local_addresses = assigned_local_ipv4s() if assigned_ipv4s is None else assigned_ipv4s
+    local_ips = sorted(ip for ip in local_addresses if is_usable_local_ipv4(ip))
+    previous = state.get("public_dns")
+    previous = previous if isinstance(previous, dict) else {}
+    now = time.time()
+    try:
+        cache_age = now - float(previous.get("checked_at_unix") or 0)
+    except (TypeError, ValueError):
+        cache_age = PUBLIC_EDGE_DNS_CACHE_SECONDS
+    if (
+        not force and previous.get("status") in {"match", "local_override"}
+        and previous.get("expected_public_ipv4") == public_ip
+        and previous.get("accepted_local_ipv4s") == local_ips
+        and previous.get("host_surfaces") == hosts
+        and 0 <= cache_age < PUBLIC_EDGE_DNS_CACHE_SECONDS
+    ):
+        return state
+    answers = resolve_public_ipv4_hosts(list(hosts))
+    observations = []
+    accepted = {public_ip, *local_ips}
+    for hostname, surfaces in hosts.items():
+        answer = answers.get(hostname)
+        raw_addresses = answer.get("addresses") if isinstance(answer, dict) else []
+        addresses = []
+        for value in raw_addresses if isinstance(raw_addresses, list) else []:
+            try:
+                address = ipaddress.ip_address(value)
+                if address.version == 4:
+                    addresses.append(str(address))
+            except (ValueError, TypeError):
+                continue
+        addresses = sorted(set(addresses))
+        status = (
+            "unavailable" if not addresses else "mismatch" if not set(addresses) <= accepted
+            else "local_override" if set(addresses) & set(local_ips) else "match"
+        )
+        observations.append({"hostname": hostname, "surfaces": surfaces, "addresses": addresses, "status": status})
+    bad = [item for item in observations if item["status"] in {"mismatch", "unavailable"}]
+    status = "mismatch" if any(item["status"] == "mismatch" for item in bad) else "unavailable" if bad else (
+        "local_override" if any(item["status"] == "local_override" for item in observations) else "match"
+    )
+    message = ""
+    if bad:
+        details = "; ".join(f'{item["hostname"]}: {", ".join(item["addresses"]) or "no IPv4 answer"}' for item in bad)
+        message = (
+            (f"Public DNS IPv4 differs from the configured direct edge ({details}). " if status == "mismatch" else
+             f"Public DNS IPv4 could not be verified ({details}). ") +
+            f"Expected {public_ip} or this machine's assigned LAN address. Verify the DNS records; "
+            "an intentional external proxy needs its own reachability proof. Local services and router mappings were kept."
+        )
+    return {**state, "public_dns": {
+        "status": status, "code": "public_edge_dns_mismatch" if status == "mismatch" else (
+            "public_edge_dns_unavailable" if status == "unavailable" else ""
+        ), "message": message, "checked_at_unix": now,
+        "checked_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+        "expected_public_ipv4": public_ip, "accepted_local_ipv4s": local_ips,
+        "host_surfaces": hosts, "hosts": observations, "scope": "system_resolver_ipv4",
+        "off_network_reachability": "not_probed",
+    }}
+
+
+def state_is_healthy(state: dict[str, Any], *, assigned_ipv4s: set[str] | None = None) -> bool:
     if state.get("last_error") or state.get("last_error_code"):
         return False
     provider = str(state.get("provider") or "").strip()
@@ -480,7 +587,7 @@ def state_is_healthy(state: dict[str, Any]) -> bool:
         except PublicEdgeWanError:
             return False
         return pid_is_running(caddy.get("pid")) and (
-            not saved_lan_ip or saved_lan_ip in assigned_local_ipv4s()
+            not saved_lan_ip or saved_lan_ip in (assigned_local_ipv4s() if assigned_ipv4s is None else assigned_ipv4s)
         )
 
     return False
@@ -2092,6 +2199,8 @@ def cmd_start(args: argparse.Namespace) -> int:
                 stop_state(existing)
                 existing = {}
         if state_is_healthy(existing):
+            existing = observe_public_edge_dns(existing, force=True)
+            save_state(state_path, existing)
             print(json.dumps(existing))
             return 0
 
@@ -2116,6 +2225,7 @@ def cmd_start(args: argparse.Namespace) -> int:
             save_state(state_path, failure)
             raise
 
+        state = observe_public_edge_dns(state, force=True)
         save_state(state_path, state)
         print(json.dumps(state))
         return 0
@@ -2143,10 +2253,40 @@ def cmd_stop(args: argparse.Namespace) -> int:
 
 
 def cmd_status(args: argparse.Namespace) -> int:
-    state = load_state(Path(args.state_file))
-    state["healthy"] = state_is_healthy(state)
-    print(json.dumps(state))
-    return 0 if state.get("healthy") else 1
+    state_path = Path(args.state_file)
+    state = load_state(state_path)
+    assigned = None
+    if state.get("provider") == "public_https_edge" and not state.get("last_error") and not state.get("last_error_code"):
+        assigned = assigned_local_ipv4s()
+    observed = observe_public_edge_dns(state, assigned_ipv4s=assigned)
+    if observed != state:
+        # Status must stay readable while start/refresh owns the lifecycle lock. The
+        # observation is optional metadata; do not wait, overwrite newer state or fail
+        # the runtime-health result merely because its directory cannot be written.
+        lock_handle = None
+        locked = False
+        try:
+            lock_path = state_path.with_suffix(".lock")
+            lock_path.parent.mkdir(parents=True, exist_ok=True)
+            lock_handle = lock_path.open("a+", encoding="utf-8")
+            fcntl.flock(lock_handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+            locked = True
+            if load_state(state_path) == state:
+                save_state(state_path, observed)
+        except OSError:
+            pass
+        finally:
+            if lock_handle is not None:
+                if locked:
+                    fcntl.flock(lock_handle.fileno(), fcntl.LOCK_UN)
+                lock_handle.close()
+    observed = dict(observed)
+    observed["runtime_healthy"] = state_is_healthy(observed, assigned_ipv4s=assigned)
+    # Existing launcher/progress consumers use this exit code for the local edge.
+    # DNS diagnostics remain separate and are worded by install_summary.
+    observed["healthy"] = observed["runtime_healthy"]
+    print(json.dumps(observed))
+    return 0 if observed["healthy"] else 1
 
 
 def cmd_refresh_mappings(args: argparse.Namespace) -> int:
@@ -2164,6 +2304,7 @@ def cmd_refresh_mappings(args: argparse.Namespace) -> int:
         except PublicEdgeWanError as exc:
             save_state(state_path, public_edge_wan_error_state(state, exc))
             raise
+        refreshed_state = observe_public_edge_dns(refreshed_state, force=True)
         save_state(state_path, refreshed_state)
         print(json.dumps(refreshed_state))
         if refreshed_state.get("last_error"):

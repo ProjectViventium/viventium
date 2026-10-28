@@ -153,6 +153,21 @@ not select the main Viventium Telegram bridge's model.
   a durable Telegram delivery row. The bot may use in-turn polling as a fast path, but late worker
   results must still be claimed from the delivery ledger and sent automatically in the same
   Telegram chat after the original poll window ends or after a bot restart.
+- Authenticated input and preparation are retained through the existing Message and ingress
+  ledger before awaiting the ordering dependency. An ordering outage must leave the exact source
+  recoverable. A known ordering failure releases only that request's explicitly owned preparing
+  claim through the existing defer operation; a failed release keeps the original unavailable
+  result and lease. Unknown transport outcomes keep their current guards. Preparation recovery
+  still needs current ordering authority before Main admission. Only an explicit retained receipt
+  permits a saved, waiting notice. Source-only commands do not create an input preparation record.
+- Recovering inputs prepare and retain their sources independently. Before Main admission, an
+  earlier recoverable, unprepared source in the same owner, chat, thread, conversation, generation
+  and source scope defers a ready input through its existing pending receipt and lease release.
+  Expired preparation leases and retryable unprepared failures still count; terminal failures,
+  cancelled and completed inputs do not. Ready continuations recheck this fence. A newer retryable
+  preparation also remains unresolved for an earlier continuation. Once sources are ready, native
+  logical-turn authoring and delivery coverage retain every source in source order, regardless of
+  recovery claim order. No timed preparation wait grants admission.
 - Prepared Telegram input must persist its source-message identity, conversation generation,
   preparation state, claim/lease and recovery fields through the real ingress schema. Active
   preparation has no expiry; terminal and legacy rows retain the existing expiry requirement.
@@ -169,11 +184,11 @@ not select the main Viventium Telegram bridge's model.
   primary through the existing guarded status transaction; rejected related claims are untouched.
   Recovery then closes its verified unadmitted siblings, without admitting the refused turn or
   blocking later inputs. Other owner, lease and admitted-source guards keep their own errors.
-- Replay of a prepared input must retain its original owner-bound parent when the selected tip is
-  that same input or its interrupted provisional response. Later corrections retain their current
-  continuation parent. A saved legacy self-parent or missing provisional parent may be projected
-  through its verified retained original anchor without rewriting stored history; foreign, deleted,
-  missing or untrusted anchors remain refused.
+- Replay of a prepared input keeps its current persisted owner-bound parent. The original intake
+  parent hint cannot rewind a valid source chain after another input has used it as native parent
+  evidence. A saved legacy self-parent or genuinely missing provisional parent may recover through
+  the existing verified source and complete owned ancestry. Foreign, deleted, cyclic, missing or
+  untrusted recovery anchors remain refused. Actual source changes keep the native revocation fence.
 - Telegram must deliver LibreChat message attachments back to the Telegram user.
   The durable callback attachment carrier retains the existing native-file union: an
   available file keeps its verified message ID and download URL; an unavailable file
@@ -186,8 +201,8 @@ not select the main Viventium Telegram bridge's model.
   before storing a normal File attachment. Existing selected files may be published; reading or
   referring to a workspace file does not select it for export. Selected files become Telegram
   documents through the existing authorized download and document sender. A native tool render is
-  local to the harness and is not channel delivery. The model persists its own requested output in
-  the admitted workspace or managed `TMPDIR` when needed and selects it in the final answer;
+  local to the harness and is not channel delivery. The model selects its requested output in
+  the final answer; the native publisher owns the mechanical byte capture, without another inference;
   viewed images, screenshots, and discussed uploads remain context unless selected for delivery.
   Distinct filenames may
   contain identical bytes. The configured Core limits and existing Telegram document limit apply
@@ -196,9 +211,14 @@ not select the main Viventium Telegram bridge's model.
   with no fabricated File or download. Replay retains saved attachments and does not regenerate
   output. Byte-verified real-surface acceptance remains required for delivery claims.
   The selected source may be in the admitted workspace or that worker's managed `TMPDIR`.
-  Arbitrary host folders do not become export roots. Explicit selection retains existing authorized
-  input-file returns; automatic discovery keeps its stricter operational-folder exclusions.
-  Existing traversal, private-name, symlink and hard-link checks apply to selected sources.
+  An already Full-access host harness can also explicitly select an authorized ordinary local file;
+  xPerfect snapshots its exact bytes through the shared publisher instead of depending on a model
+  copy step. This applies to existing files, resends and every supported file type. It does not
+  expand restricted or Docker access, publish unselected references, or expose private runtime,
+  credential or shared upload storage. The host declares its private support root through
+  `GLASSHIVE_PROTECTED_SOURCE_ROOTS`; native source and snapshot guards remain authoritative.
+  Automatic discovery keeps its stricter operational-folder exclusions. Traversal, private-name,
+  symlink, hard-link and source-change checks apply to selected sources.
   Rejected selections retain a basename and typed unavailable reason, even when no file succeeds.
   Core's configured file count, per-file size and aggregate size bounds apply before import.
   A completed agent transfer retains its verified selected-file carrier, including the original
@@ -257,7 +277,7 @@ not select the main Viventium Telegram bridge's model.
 
 ## Smart Messaging Delivery Controls
 
-Problem being solved: `Smart voice for text` should not turn read-first artifacts such as drafted
+Problem being solved: optional voice replies should not turn read-first artifacts such as drafted
 emails, code, tables, or exact copy into long, wasteful audio, while conversational replies should
 still feel warm and speakable. Telegram delivery should also be able to express a small number of
 natural conversational beats without forcing every answer into one robotic bubble or breaking one
@@ -304,10 +324,54 @@ cannot make a read-first part audible. The existing delivery ledger, claim, sour
 and presentation acknowledgement stay authoritative; normal text still delivers if audio
 metadata is invalid. Promoting a forced reply onto an empty parent preserves the same ranges.
 
-`Smart voice for text` is the user-facing preference label for the existing
-`ALWAYS_VOICE_RESPONSE` setting. Voice-note input still follows the ordinary voice-reply toggle;
-`{SKIP_VOICE}` only suppresses an otherwise optional output attachment selected for the current
-answer.
+### Telegram voice preferences
+
+The existing Preferences menu exposes three switches, all ON by default:
+
+| Label | Stored field | Effect |
+| --- | --- | --- |
+| Master Switch | `VOICE_RESPONSES_ENABLED` | OFF disables every optional Telegram reply audio attachment. |
+| Reply Voice with Voice | `REPLY_VOICE_WITH_VOICE` | Makes replies to voice and video notes eligible for audio when the master is ON. |
+| Always Include Voice Reply | `ALWAYS_VOICE_RESPONSE` | Makes every reply eligible for audio when the master is ON, including text and independent proactive messages. |
+
+Always Include Voice Reply is the broader option: when ON, it also covers voice input even if
+Reply Voice with Voice is OFF. When Always Include is OFF, only spoken-input replies with Reply
+Voice with Voice ON are eligible. Existing explicit saved values for the two legacy
+fields remain unchanged; missing fields use the current defaults. Personal overrides stay in
+private preferences, never in product code or public examples. Keep legacy API keys compatible.
+The former Smart voice for text control keeps `ALWAYS_VOICE_RESPONSE` under the name Always Include
+Voice Reply; Reply Voice with Voice is a new control.
+
+These switches permit audio; they do not force the model to speak. `{SKIP_VOICE}`, model-owned
+structured decisions and exact audio ranges still control an eligible answer. A skip keeps the
+complete text reply. Invalid required audio metadata, intentional silence, transport failure and
+failed text delivery retain their existing suppression rules. User master OFF always wins.
+Recognized speech controls stay out of Telegram display text even when audio is disabled or skipped.
+Use the existing display sanitizer for both previews and final text; preserve raw speech controls
+for the existing TTS renderer. Display removes only declared synthesis controls and accepted
+Cartesia aliases. Unknown bracket text, Markdown links, URLs, escaped literals and code remain
+intact. This display rule does not claim that Core has cleaned older canonical history.
+
+Global and multiuser preference changes persist once and use the existing asynchronous Core sync
+with the authenticated Telegram requester. The `global` storage key is not a user identity.
+Configured administrator permissions govern global voice changes. Multiuser group/topic settings
+remain local to that chat and do not replace the user's private-chat settings in Core.
+Foreground and late replies use their own original typed input mode through the existing stream
+and durable source metadata, including after restart. Never borrow the newest chat input's mode.
+Existing typed spoken origins, including an authorized call-origin worker result delivered to
+Telegram, use the same spoken-input rule. Independent scheduled or proactive messages are text-origin.
+An existing exact stream may supply a known legacy origin. If neither the stream nor durable
+source metadata supplies it, use text policy and do not claim a retained spoken origin. No separate
+preference store, intent classifier, model call or voice pipeline is needed.
+
+Source-bound worker results keep their original topic for text and attachments. A closed or
+deleted topic is a delivery failure, not permission to send the result to General. Resolve the
+saved Speaking route only when the final policy and model decision permit synthesis; text-only,
+skipped and invalid results need no voice-route request.
+
+Core and Telegram must be activated and rolled back as a compatible pair when changing the
+durable callback contract. Older strict Telegram validators reject the added `inputMode` field;
+do not roll back Telegram alone while the newer Core is still producing those deliveries.
 
 The canonical grammar is versioned and shared by the LibreChat/JavaScript persistence boundary and
 the Python messaging adapter. Other conversational channel adapters must consume the same grammar,
@@ -442,10 +506,11 @@ Prompt-layer ownership and the runtime-vs-prompt boundary are also recorded in
   - `VOICE_RESPONSES_ENABLED=false` disables Telegram audio replies.
   - Telegram always remains a text-mode LibreChat surface. A voice note sends
     `voiceMode=false`, `viventiumSurface=telegram`, and `viventiumInputMode=voice_note`; it should
-    receive an audio reply when voice replies are enabled.
+    receive an audio reply when Master Switch is ON, either Reply Voice with Voice or Always
+    Include Voice Reply is ON, and the model permits audio for that answer.
   - `ALWAYS_VOICE_RESPONSE=true` sends `voiceMode=false`, `viventiumSurface=telegram`, and
     `viventiumInputMode=text` for text messages; it only adds Telegram audio delivery after the
-    text-mode main answer is generated.
+    text-mode main answer is generated, subject to Master Switch and the model's audio decision.
   - `input_mode` remains structural: only actual voice-note input is sent as `voice_note`; text
     messages with always-voice output still use `input_mode=text`.
   - When a Telegram text-mode turn will also synthesize audio, the bot sends

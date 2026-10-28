@@ -41,17 +41,17 @@ except ModuleNotFoundError:
 # === VIVENTIUM START ===
 # Feature: Markdown → Telegram HTML conversion (replaces fragile MarkdownV2).
 try:
-    from utils.telegram_html import markdown_to_html, strip_html_tags
+    from utils.telegram_html import _LINK_RE as _MARKDOWN_LINK_RE, markdown_to_html, strip_html_tags
 except ModuleNotFoundError:
-    from TelegramVivBot.utils.telegram_html import markdown_to_html, strip_html_tags
+    from TelegramVivBot.utils.telegram_html import _LINK_RE as _MARKDOWN_LINK_RE, markdown_to_html, strip_html_tags
 try:
     from utils.telegram_chunks import split_telegram_html
 except ModuleNotFoundError:
     from TelegramVivBot.utils.telegram_chunks import split_telegram_html
 try:
-    from utils.voice import normalize_delivery_disposition, extract_ranged_audio_text, extract_followup_audio_text, resolve_delivery_audio_gate
+    from utils.voice import VOICE_INPUT_MODES, normalize_delivery_disposition, normalize_voice_preference, extract_ranged_audio_text, extract_followup_audio_text, resolve_delivery_audio_gate
 except ModuleNotFoundError:
-    from TelegramVivBot.utils.voice import normalize_delivery_disposition, extract_ranged_audio_text, extract_followup_audio_text, resolve_delivery_audio_gate
+    from TelegramVivBot.utils.voice import VOICE_INPUT_MODES, normalize_delivery_disposition, normalize_voice_preference, extract_ranged_audio_text, extract_followup_audio_text, resolve_delivery_audio_gate
 try:
     from utils.orchestration import OrchestrationClient, WorkItem, default_callback_store_path
 except ModuleNotFoundError:
@@ -433,6 +433,36 @@ from delivery_controls import (
     strip_delivery_controls_for_preview,
     strip_incomplete_control_suffix,
 )
+from telegram_tts import CARTESIA_NONVERBAL_ALIASES, SPEECH_URL_RE
+
+
+def _load_voice_display_bracket_markers() -> frozenset[str]:
+    catalog_root = _SHARED_PATH / "voice"
+    registry = json.loads((catalog_root / "tts_provider_capabilities.json").read_text())
+    tokens = set()
+    for provider in registry["providers"].values():
+        inline = provider.get("inline_controls", {})
+        if inline.get("supported") is not True:
+            continue
+        tokens.update(inline.get("exact_tokens", []))
+        if inline.get("dialect_contract"):
+            dialect = json.loads((catalog_root / inline["dialect_contract"]).read_text())
+            tokens.update(dialect.get("nonverbal_markers", []))
+            tokens.update(dialect.get("speech_tags", {}).get("inline", []))
+    return frozenset(CARTESIA_NONVERBAL_ALIASES) | frozenset(
+        token.strip()[1:-1].strip().lower() for token in tokens
+        if isinstance(token, str) and token.strip().startswith("[") and token.strip().endswith("]")
+    )
+
+
+_VOICE_DISPLAY_BRACKET_MARKERS = _load_voice_display_bracket_markers()
+_VOICE_DISPLAY_PROTECTED_RE = re.compile(
+    "|".join(f"(?:{pattern})" for pattern in (
+        _MARKDOWN_CODE_SPAN_RE.pattern, _MARKDOWN_LINK_RE.pattern,
+        SPEECH_URL_RE.pattern, r"\\[\\\[\]]",
+    )),
+    re.MULTILINE,
+)
 
 try:
     from no_response import NO_RESPONSE_TAG, is_no_response_only, strip_trailing_nta
@@ -576,7 +606,10 @@ def _strip_tool_transcript_lines(text: str) -> str:
 def strip_voice_control_tags_for_display(text: str) -> str:
     if not text:
         return ""
-    return _apply_outside_markdown_code(text, _strip_voice_control_tags_from_prose).strip()
+    return _apply_outside_markdown_code(
+        text, _strip_voice_control_tags_from_prose,
+        protected_pattern=_VOICE_DISPLAY_PROTECTED_RE,
+    ).strip()
 
 
 def _strip_voice_control_tags_from_prose(text: str) -> str:
@@ -615,32 +648,21 @@ def apply_structured_delivery_controls(text: str, delivery_controls: Any) -> str
 
 
 def _strip_voice_bracket_marker(match: re.Match[str]) -> str:
-    marker = match.group(1).strip()
-    if not marker:
-        return match.group(0)
-    if marker != marker.lower():
-        return match.group(0)
-    if any(char.isdigit() for char in marker):
-        return match.group(0)
-    words = [word for word in marker.split() if word]
-    if len(words) > 3:
-        return match.group(0)
-    alpha_count = sum(1 for char in marker if char.isalpha())
-    if alpha_count < 3 or alpha_count > 24:
-        return match.group(0)
-    return ""
+    return "" if match.group(1).strip().lower() in _VOICE_DISPLAY_BRACKET_MARKERS else match.group(0)
 
 
 def sanitize_telegram_display_text(text: str) -> str:
     return strip_voice_control_tags_for_display(sanitize_telegram_text(text))
 
 
-def _apply_outside_markdown_code(text: str, transform: Callable[[str], str]) -> str:
+def _apply_outside_markdown_code(
+    text: str, transform: Callable[[str], str], *, protected_pattern=_MARKDOWN_CODE_SPAN_RE,
+) -> str:
     if not text:
         return ""
     parts: list[str] = []
     last_index = 0
-    for match in _MARKDOWN_CODE_SPAN_RE.finditer(text):
+    for match in protected_pattern.finditer(text):
         parts.append(transform(text[last_index:match.start()]))
         parts.append(match.group(0))
         last_index = match.end()
@@ -2327,7 +2349,7 @@ class LibreChatBridge:
             "cortexClaim",
         }
         if (not isinstance(payload, dict) or not required_keys <= set(payload)
-                or not set(payload) <= required_keys | {"deliveryControls"}):
+                or not set(payload) <= required_keys | {"deliveryControls", "inputMode"}):
             return None
         claim = cls._validate_cortex_authority(
             payload.get("cortexClaim"),
@@ -2362,6 +2384,7 @@ class LibreChatBridge:
             or not isinstance(logical_revision, int)
             or isinstance(logical_revision, bool)
             or logical_revision < 1
+            or ("inputMode" in payload and payload["inputMode"] not in ("text", *VOICE_INPUT_MODES))
         ):
             return None
         return {**payload, "cortexClaim": claim}
@@ -2528,7 +2551,7 @@ class LibreChatBridge:
             telegram_user_id=exact["telegramUserId"],
             telegram_username=(previous_identity_copy or {}).get("telegram_username", ""),
             voice_mode=(previous_identity_copy or {}).get("voice_mode") == "1",
-            input_mode=(previous_identity_copy or {}).get("input_mode", ""),
+            input_mode=exact.get("inputMode", (previous_identity_copy or {}).get("input_mode", "")),
             voice_route=(previous_identity_copy or {}).get("voice_route"),
             telegram_message_id=exact["telegramMessageId"],
             telegram_message_thread_id=exact["telegramMessageThreadId"],
@@ -3006,17 +3029,18 @@ class LibreChatBridge:
                 before_side_effect=renew_before_next_side_effect,
                 native_file_identity=(str(delivery.get("userId") or ""),
                     str(delivery.get("callbackMessageId") or "")),
+                telegram_user_id=str(delivery.get("telegramUserId") or ""),
+                message_thread_id=(
+                    int(delivery["telegramMessageThreadId"])
+                    if str(delivery.get("telegramMessageThreadId") or "").isdigit()
+                    and int(delivery["telegramMessageThreadId"]) > 0 else None
+                ),
+                **({"input_mode": delivery["inputMode"]} if "inputMode" in delivery else {}),
                 **({"delivery_controls": delivery["deliveryControls"]}
                     if "deliveryControls" in delivery else {}),
                 **({
                     "attachments": delivery["attachments"],
                     "on_message_ids": retain_message_ids,
-                    "telegram_user_id": str(delivery.get("telegramUserId") or ""),
-                    "message_thread_id": (
-                        int(delivery["telegramMessageThreadId"])
-                        if str(delivery.get("telegramMessageThreadId") or "").isdigit()
-                        and int(delivery["telegramMessageThreadId"]) > 0 else None
-                    ),
                 } if delivery.get("attachments") else {}),
             )
         )
@@ -3557,6 +3581,8 @@ class LibreChatBridge:
             stream_id=stream_id,
             return_receipt=True,
             before_side_effect=ensure_current_before_transport,
+            **({"input_mode": cortex_delivery["inputMode"]}
+                if cortex_delivery and "inputMode" in cortex_delivery else {}),
             **({"delivery_controls": delivery_controls} if delivery_controls is not None else {}),
         )
         message_ids = (
@@ -3644,6 +3670,8 @@ class LibreChatBridge:
     ) -> bool:
         if delivery_controls is None and cortex_delivery:
             delivery_controls = cortex_delivery.get("deliveryControls")
+        origin_options = ({"input_mode": cortex_delivery["inputMode"]}
+            if cortex_delivery and "inputMode" in cortex_delivery else {})
         async def _emit() -> bool:
             if enforce_order_fence:
                 return await self._send_poll_delivery(
@@ -3657,6 +3685,7 @@ class LibreChatBridge:
             if not cortex_delivery:
                 return bool(
                     await self._send_followup_text(chat_id, text, stream_id=stream_id,
+                        **origin_options,
                         **({"delivery_controls": delivery_controls} if delivery_controls is not None else {}))
                 )
             receipt = await self._send_followup_text(
@@ -3664,6 +3693,7 @@ class LibreChatBridge:
                 text,
                 stream_id=stream_id,
                 return_receipt=True,
+                **origin_options,
                 **({"delivery_controls": delivery_controls} if delivery_controls is not None else {}),
             )
             message_ids = (
@@ -3960,6 +3990,7 @@ class LibreChatBridge:
         preference_convo_id: Optional[str] = None,
         raw_message: Optional[str] = None,
         stream_id: Optional[str] = None,
+        input_mode: Optional[str] = None,
         return_receipt: bool = False,
         before_side_effect: Optional[Callable[[], Awaitable[bool]]] = None,
         message_thread_id: Optional[int] = None,
@@ -3990,21 +4021,15 @@ class LibreChatBridge:
         # Feature: Proactive follow-up voice parity.
         # Purpose: Apply existing voice preference gate + TTS for callback delivery.
         voice_audio: Optional[bytes] = None
+        identity = self._stream_identity.get(stream_id or "", {})
+        preference_owner_id = telegram_user_id or str(identity.get("telegram_user_id") or "")
+        if message_thread_id is None:
+            thread = str(identity.get("telegram_message_thread_id") or "")
+            message_thread_id = int(thread) if thread.isdigit() and int(thread) > 0 else None
         convo_id = preference_convo_id or str(target_chat_id)
-        voice_route = self._stream_voice_route(stream_id)
-        speech_route_unavailable = False
-        if not voice_route and telegram_user_id:
-            try:
-                voice_route = await self.get_voice_route(
-                    telegram_user_id=telegram_user_id, telegram_chat_id=str(target_chat_id),
-                    telegram_message_thread_id=message_thread_id,
-                )
-            except Exception as error:
-                speech_route_unavailable = True
-                logger.warning("Callback Speaking route unavailable: class=%s", type(error).__name__)
-        elif not voice_route:
-            # Legacy callers lack incoming ownership; retain their scoped cached route.
-            voice_route = self.get_cached_voice_route(str(target_chat_id))
+        if preference_owner_id:
+            topic = f":{message_thread_id}" if message_thread_id else ""
+            convo_id = f"{target_chat_id}{topic}:{preference_owner_id}"
         voice_text = (
             raw_message
             if isinstance(raw_message, str) and raw_message.strip()
@@ -4048,21 +4073,42 @@ class LibreChatBridge:
 
                 always_voice = Users.get_config(convo_id, "ALWAYS_VOICE_RESPONSE")
                 voice_responses_enabled = Users.get_config(convo_id, "VOICE_RESPONSES_ENABLED")
+                try:
+                    reply_voice_with_voice = Users.get_config(convo_id, "REPLY_VOICE_WITH_VOICE")
+                except (KeyError, ValueError):
+                    reply_voice_with_voice = True
+                origin_mode = input_mode if input_mode is not None else self._stream_input_mode(stream_id)
                 should_send_voice = should_send_voice_reply(
-                    voice_note_detected=False,
+                    voice_note_detected=origin_mode in VOICE_INPUT_MODES,
                     always_voice=always_voice,
                     voice_enabled=voice_responses_enabled,
                     text=voice_text,
+                    reply_voice_with_voice=reply_voice_with_voice,
                 )
                 model_skip_effective = bool(legacy_skip and should_send_voice)
                 if not callback_audio_allowed:
                     should_send_voice = False
-                if should_send_voice and not speech_route_unavailable:
-                    voice_audio = await synthesize_speech(
-                        voice_text,
-                        convo_id,
-                        voice_route=voice_route,
-                    )
+                if should_send_voice:
+                    voice_route = self._stream_voice_route(stream_id)
+                    speech_route_unavailable = False
+                    if not voice_route and telegram_user_id:
+                        try:
+                            voice_route = await self.get_voice_route(
+                                telegram_user_id=telegram_user_id, telegram_chat_id=str(target_chat_id),
+                                telegram_message_thread_id=message_thread_id,
+                            )
+                        except Exception as error:
+                            speech_route_unavailable = True
+                            logger.warning("Callback Speaking route unavailable: class=%s", type(error).__name__)
+                    elif not voice_route:
+                        # Legacy callers lack incoming ownership; retain their scoped cached route.
+                        voice_route = self.get_cached_voice_route(str(target_chat_id))
+                    if not speech_route_unavailable:
+                        voice_audio = await synthesize_speech(
+                            voice_text,
+                            convo_id,
+                            voice_route=voice_route,
+                        )
             except Exception as exc:
                 logger.warning("Failed proactive voice synthesis, falling back to text: %s", exc)
         logger.info(
@@ -4819,12 +4865,17 @@ class LibreChatBridge:
         pref_convo_id = preference_convo_id or telegram_chat_id
         try:
             from config import Users  # local import to avoid circular dependency
-            payload["alwaysVoiceResponse"] = bool(
-                Users.get_config(pref_convo_id, "ALWAYS_VOICE_RESPONSE")
+            payload["alwaysVoiceResponse"] = normalize_voice_preference(
+                Users.get_config(pref_convo_id, "ALWAYS_VOICE_RESPONSE"), True,
             )
-            payload["voiceResponsesEnabled"] = bool(
-                Users.get_config(pref_convo_id, "VOICE_RESPONSES_ENABLED")
+            payload["voiceResponsesEnabled"] = normalize_voice_preference(
+                Users.get_config(pref_convo_id, "VOICE_RESPONSES_ENABLED"), True,
             )
+            try:
+                reply_voice_with_voice = Users.get_config(pref_convo_id, "REPLY_VOICE_WITH_VOICE")
+            except (KeyError, ValueError):
+                reply_voice_with_voice = True
+            payload["replyVoiceWithVoice"] = normalize_voice_preference(reply_voice_with_voice, True)
         except Exception:
             # Keep chat path resilient; scheduler will use defaults when unavailable.
             pass
@@ -6531,6 +6582,7 @@ class LibreChatBridge:
         text: str,
         *,
         stream_id: Optional[str] = None,
+        input_mode: Optional[str] = None,
         return_receipt: bool = False,
         before_side_effect: Optional[Callable[[], Awaitable[bool]]] = None,
         message_thread_id: Optional[int] = None,
@@ -6571,6 +6623,7 @@ class LibreChatBridge:
             preference_convo_id=str(chat_id),
             raw_message=text,
             stream_id=stream_id,
+            input_mode=input_mode,
             return_receipt=return_receipt,
             before_side_effect=before_side_effect,
             message_thread_id=message_thread_id,

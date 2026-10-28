@@ -171,6 +171,45 @@ def test_should_send_voice_reply_always_voice():
     )
 
 
+@pytest.mark.parametrize(
+    "master,reply_voice,always_voice,voice_expected,text_expected",
+    [
+        (False, False, False, False, False),
+        (False, False, True, False, False),
+        (False, True, False, False, False),
+        (False, True, True, False, False),
+        (True, False, False, False, False),
+        (True, False, True, True, True),
+        (True, True, False, True, False),
+        (True, True, True, True, True),
+    ],
+)
+@pytest.mark.parametrize("voice_note", [False, True])
+def test_three_voice_controls_follow_master_and_always_precedence(
+    master, reply_voice, always_voice, voice_expected, text_expected, voice_note,
+):
+    values = dict(
+        voice_note_detected=voice_note, voice_enabled=master,
+        reply_voice_with_voice=reply_voice, always_voice=always_voice,
+    )
+    expected = voice_expected if voice_note else text_expected
+    assert should_request_audio_reply(**values) is expected
+    assert should_send_voice_reply(**values, text="A useful answer.") is expected
+    assert should_send_voice_reply(**values, text=" ") is False
+
+
+@pytest.mark.parametrize("voice_note", [False, True])
+def test_missing_voice_controls_default_enabled_without_overriding_saved_false(voice_note):
+    assert should_request_audio_reply(
+        voice_note_detected=voice_note, always_voice=None, voice_enabled=None,
+        reply_voice_with_voice=None,
+    ) is True
+    assert should_request_audio_reply(
+        voice_note_detected=voice_note, always_voice="false", voice_enabled=True,
+        reply_voice_with_voice="false",
+    ) is False
+
+
 def test_delivery_audio_gate_legacy_marker_outranks_structured_eligibility():
     assert resolve_delivery_audio_gate(
         legacy_skip_requested=True,

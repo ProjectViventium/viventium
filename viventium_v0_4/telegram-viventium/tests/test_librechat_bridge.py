@@ -4333,6 +4333,9 @@ async def test_start_chat_non_200_preserves_http_status_for_classification(monke
 @pytest.mark.asyncio
 async def test_start_chat_parses_voice_route_from_response(monkeypatch):
     bridge = _make_bridge()
+    monkeypatch.setitem(sys.modules, "config", types.SimpleNamespace(Users=types.SimpleNamespace(
+        get_config=lambda _key, field: {"ALWAYS_VOICE_RESPONSE": False,
+            "VOICE_RESPONSES_ENABLED": True, "REPLY_VOICE_WITH_VOICE": False}[field])))
 
     class _FakeResponse:
         status_code = 200
@@ -4362,6 +4365,9 @@ async def test_start_chat_parses_voice_route_from_response(monkeypatch):
         async def post(self, _url, json=None, headers=None):
             assert json["voiceMode"] is False
             assert json["telegramAudioRequested"] is True
+            assert json["alwaysVoiceResponse"] is False
+            assert json["voiceResponsesEnabled"] is True
+            assert json["replyVoiceWithVoice"] is False
             assert headers["X-VIVENTIUM-TELEGRAM-SECRET"] == "test-secret"
             return _FakeResponse()
 
@@ -9094,3 +9100,307 @@ async def test_cortex_cycle_keeps_valid_delivery_after_item_transport_failure(mo
     assert await bridge._dispatch_cortex_delivery_cycle() == 2
     assert sent == [first["text"], second["text"]]
     assert statuses == [(first["streamId"], "delivery_unknown")]
+
+
+def _voice_controls_callback(monkeypatch, preferences):
+    from TelegramVivBot.utils.voice import should_send_voice_reply
+    synthesized, delivered, lookups = [], [], []
+    def get_config(key, field):
+        lookups.append(key)
+        return preferences[field]
+    async def synthesize(text, _convo_id, **_kwargs):
+        synthesized.append(text)
+        return b"synthetic-audio"
+    async def callback(_chat, text, **kwargs):
+        before = kwargs.get("before_side_effect")
+        if before:
+            await before()
+        delivered.append((text, kwargs.get("voice_audio")))
+        return ["9001"]
+    voice = types.ModuleType("utils.voice")
+    voice.should_send_voice_reply = should_send_voice_reply
+    tts = types.ModuleType("utils.tts")
+    tts.synthesize_speech = synthesize
+    monkeypatch.setitem(sys.modules, "utils.voice", voice)
+    monkeypatch.setitem(sys.modules, "utils.tts", tts)
+    monkeypatch.setitem(sys.modules, "config", types.SimpleNamespace(
+        Users=types.SimpleNamespace(get_config=get_config)))
+    bridge = _make_bridge()
+    bridge.set_on_message_callback(callback)
+    return bridge, synthesized, delivered, lookups
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("master,reply_voice,always,voice_expected,text_expected", [
+    (False, False, False, False, False), (False, False, True, False, False),
+    (False, True, False, False, False), (False, True, True, False, False),
+    (True, False, False, False, False), (True, False, True, True, True),
+    (True, True, False, True, False), (True, True, True, True, True),
+])
+@pytest.mark.parametrize("input_mode", ["voice_note", "voice", "voice_call", "text"])
+async def test_callback_uses_three_control_policy_with_exact_input_origin(
+    monkeypatch, master, reply_voice, always, voice_expected, text_expected, input_mode,
+):
+    bridge, spoken, delivered, _ = _voice_controls_callback(monkeypatch, {
+        "VOICE_RESPONSES_ENABLED": master, "REPLY_VOICE_WITH_VOICE": reply_voice,
+        "ALWAYS_VOICE_RESPONSE": always,
+    })
+    assert await bridge._send_followup_text("505", "Useful answer.", input_mode=input_mode)
+    expected = voice_expected if input_mode in ("voice_note", "voice", "voice_call") else text_expected
+    assert spoken == (["Useful answer."] if expected else [])
+    assert bool(delivered[0][1]) is expected
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("origin", ["stream", "durable", "explicit-text"])
+async def test_callback_voice_origin_survives_newer_input_or_missing_stream(monkeypatch, origin):
+    bridge, spoken, _, lookups = _voice_controls_callback(monkeypatch, {
+        "VOICE_RESPONSES_ENABLED": True, "REPLY_VOICE_WITH_VOICE": True,
+        "ALWAYS_VOICE_RESPONSE": False,
+    })
+    if origin != "durable":
+        bridge._set_stream_identity(stream_id="original", telegram_chat_id="505",
+            telegram_user_id="123", telegram_username="", input_mode="voice_note",
+            telegram_message_thread_id="7")
+        bridge._set_stream_identity(stream_id="newer", telegram_chat_id="505",
+            telegram_user_id="999", telegram_username="", input_mode="text")
+    kwargs = ({"input_mode": "voice_note", "telegram_user_id": "123", "message_thread_id": 7}
+        if origin == "durable" else {"stream_id": "original"})
+    if origin == "explicit-text":
+        kwargs["input_mode"] = "text"
+    async def route(**_kwargs):
+        return {"tts": {"provider": "xai", "variant": "Eve"}}
+    monkeypatch.setattr(bridge, "get_voice_route", route)
+    assert await bridge._send_followup_text("505", "Useful voice result.", **kwargs)
+    assert spoken == ([] if origin == "explicit-text" else ["Useful voice result."])
+    assert set(lookups) == {"505:7:123"}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("control", ["legacy", "structured", "required-invalid", "bad-ranges", "quiet"])
+async def test_voice_origin_does_not_override_model_skip_or_invalid_contract(monkeypatch, control):
+    import hashlib
+    bridge, spoken, delivered, _ = _voice_controls_callback(monkeypatch, {
+        "VOICE_RESPONSES_ENABLED": True, "REPLY_VOICE_WITH_VOICE": True,
+        "ALWAYS_VOICE_RESPONSE": False,
+    })
+    text = "Complete readable answer."
+    controls = None
+    if control == "legacy":
+        text += "\n{SKIP_VOICE}"
+    elif control == "structured":
+        controls = {"deliveryDisposition": {"version": 1, "audio": "skip",
+            "required": True, "valid": True, "source": "model"}}
+    elif control == "required-invalid":
+        controls = {"deliveryDisposition": None}
+    elif control == "bad-ranges":
+        controls = {"audioContent": [], "sourceTextSha256": hashlib.sha256(text.encode()).hexdigest()}
+    else:
+        text = "{NTA}"
+    result = await bridge._send_followup_text("505", text, input_mode="voice_note", delivery_controls=controls)
+    assert spoken == []
+    assert bool(result) is (control != "quiet")
+    if control == "quiet":
+        assert not delivered
+    else:
+        assert delivered[0][1] is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("source_current", [True, False])
+@pytest.mark.parametrize("input_mode", ["voice_note", "voice", "voice_call", None])
+async def test_durable_cortex_voice_origin_uses_owned_mode_after_bot_restart(monkeypatch, source_current, input_mode):
+    bridge, spoken, delivered, lookups = _voice_controls_callback(monkeypatch, {
+        "VOICE_RESPONSES_ENABLED": True, "REPLY_VOICE_WITH_VOICE": True,
+        "ALWAYS_VOICE_RESPONSE": False,
+    })
+    delivery = _durable_cortex_telegram_delivery()
+    if input_mode is not None:
+        delivery["inputMode"] = input_mode
+    async def current(**_kwargs): return source_current
+    async def authorize(item): return {**item["cortexClaim"], "presentationLeaseToken": "lease-7"}
+    async def acknowledge(*_args, **_kwargs): return "recorded"
+    async def mark(*_args, **_kwargs): return True
+    monkeypatch.setattr(bridge, "source_order_is_current", current)
+    monkeypatch.setattr(bridge, "_authorize_cortex_delivery", authorize)
+    monkeypatch.setattr(bridge, "ack_delivery_status", acknowledge)
+    monkeypatch.setattr(bridge, "_mark_cortex_delivery_status", mark)
+    assert bridge._stream_identity == {}
+    assert await bridge._deliver_cortex_delivery(delivery) is source_current
+    voice_expected = source_current and input_mode is not None
+    assert spoken == ([delivery["text"]] if voice_expected else [])
+    if source_current:
+        assert len(delivered) == 1
+        assert delivered[0][1] == (b"synthetic-audio" if voice_expected else None)
+        assert set(lookups) == {f"{delivery['telegramChatId']}:77:{delivery['telegramUserId']}"}
+    else:
+        assert delivered == [] and lookups == []
+
+
+@pytest.mark.asyncio
+async def test_glasshive_permitted_transport_carries_durable_voice_origin(monkeypatch):
+    bridge, spoken, delivered, lookups = _voice_controls_callback(monkeypatch, {
+        "VOICE_RESPONSES_ENABLED": True, "REPLY_VOICE_WITH_VOICE": True,
+        "ALWAYS_VOICE_RESPONSE": False,
+    })
+    renewed = []
+    topics = []
+    callback = bridge.on_message_callback
+    async def capture_topic(*args, **kwargs):
+        topics.append(kwargs.get("message_thread_id"))
+        return await callback(*args, **kwargs)
+    bridge.set_on_message_callback(capture_topic)
+    async def renew(item, permit):
+        renewed.append(item["deliveryId"])
+        return permit
+    async def route(**_kwargs): return {"tts": {"provider": "xai", "variant": "Eve"}}
+    monkeypatch.setattr(bridge, "_renew_glasshive_delivery", renew)
+    monkeypatch.setattr(bridge, "get_voice_route", route)
+    delivery = {"deliveryId": "voice-result", "telegramUserId": "123",
+        "telegramMessageThreadId": "7", "inputMode": "voice_note"}
+    result, _ = await bridge._send_glasshive_with_permit(delivery, "505", "Completed voice work.", {"permitId": "owned"})
+    assert result["sent"] is True
+    assert renewed == ["voice-result"]
+    assert spoken == ["Completed voice work."]
+    assert delivered[0][1] == b"synthetic-audio"
+    assert set(lookups) == {"505:7:123"}
+    assert topics == [7]
+
+
+@pytest.mark.asyncio
+async def test_voice_callback_keeps_text_when_tts_is_unavailable(monkeypatch):
+    bridge, spoken, delivered, _ = _voice_controls_callback(monkeypatch, {
+        "VOICE_RESPONSES_ENABLED": True, "REPLY_VOICE_WITH_VOICE": True,
+        "ALWAYS_VOICE_RESPONSE": False,
+    })
+    async def unavailable(*_args, **_kwargs):
+        raise TimeoutError("synthetic TTS unavailable")
+    sys.modules["utils.tts"].synthesize_speech = unavailable
+    assert await bridge._send_followup_text("505", "Useful text remains.", input_mode="voice_note")
+    assert spoken == []
+    assert delivered == [("Useful text remains.", None)]
+
+
+@pytest.mark.asyncio
+async def test_legacy_callback_missing_new_preference_still_replies_to_voice(monkeypatch):
+    bridge, spoken, _, _ = _voice_controls_callback(monkeypatch, {
+        "VOICE_RESPONSES_ENABLED": True, "ALWAYS_VOICE_RESPONSE": False,
+    })
+    assert await bridge._send_followup_text("505", "Legacy voice reply.", input_mode="voice_note")
+    assert spoken == ["Legacy voice reply."]
+
+
+@pytest.mark.asyncio
+async def test_late_callback_reads_current_master_at_delivery_not_launch(monkeypatch):
+    preferences = {"VOICE_RESPONSES_ENABLED": True, "REPLY_VOICE_WITH_VOICE": True,
+        "ALWAYS_VOICE_RESPONSE": False}
+    bridge, spoken, delivered, _ = _voice_controls_callback(monkeypatch, preferences)
+    bridge._set_stream_identity(stream_id="original", telegram_chat_id="505",
+        telegram_user_id="123", telegram_username="", input_mode="voice_note")
+    preferences["VOICE_RESPONSES_ENABLED"] = False
+    assert await bridge._send_followup_text("505", "Completed later.", stream_id="original")
+    assert spoken == []
+    assert delivered == [("Completed later.", None)]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("decision", ["master-off", "legacy-skip", "structured-skip", "required-invalid", "range-invalid", "eligible"])
+async def test_callback_speaking_route_is_looked_up_only_after_audio_gates(monkeypatch, decision):
+    import hashlib
+    bridge, spoken, delivered, _ = _voice_controls_callback(monkeypatch, {
+        "VOICE_RESPONSES_ENABLED": decision != "master-off", "REPLY_VOICE_WITH_VOICE": True,
+        "ALWAYS_VOICE_RESPONSE": False,
+    })
+    routes = []
+    async def route(**kwargs):
+        routes.append(kwargs)
+        return {"tts": {"provider": "xai", "variant": "Eve"}}
+    monkeypatch.setattr(bridge, "get_voice_route", route)
+    raw = "A useful [chuckle] answer for [your name]. Read [docs](https://example.test/guide)."
+    controls = None
+    if decision == "legacy-skip":
+        raw += "\n{SKIP_VOICE}"
+    elif decision == "structured-skip":
+        controls = {"deliveryDisposition": {"version": 1, "audio": "skip",
+            "required": True, "valid": True, "source": "model"}}
+    elif decision == "required-invalid":
+        controls = {"deliveryDisposition": None}
+    elif decision == "range-invalid":
+        controls = {"audioContent": [], "sourceTextSha256": hashlib.sha256(raw.encode()).hexdigest()}
+    assert await bridge._send_followup_text("505", raw, input_mode="voice_note",
+        telegram_user_id="123", message_thread_id=7, delivery_controls=controls)
+    assert routes == ([{"telegram_user_id": "123", "telegram_chat_id": "505",
+        "telegram_message_thread_id": 7}] if decision == "eligible" else [])
+    assert spoken == ([raw] if decision == "eligible" else [])
+    assert "[chuckle]" not in delivered[0][0]
+    assert "[your name]" in delivered[0][0]
+    assert '<a href="https://example.test/guide">docs</a>' in delivered[0][0]
+
+
+@pytest.mark.parametrize("text", [
+    "Dear [your name], please review.",
+    "Use [draft] for the initial version.",
+    "Read [docs](https://example.test/guide).",
+    "Read [pause](https://example.test/guide).",
+    "Read [/soft](https://example.test/guide).",
+    r"Show \[chuckle] literally.",
+    r"Show \[/soft] literally.",
+    "Open https://example.test/[pause] next.",
+    "Open www.example.test/[chuckle] next.",
+    "Keep [DRAFT] and [USA].",
+    "Keep `[chuckle]` as literal code.",
+])
+def test_voice_display_preserves_unknown_brackets_links_urls_and_escaped_literals(text):
+    assert sanitize_telegram_display_text(text) == text
+    assert render_telegram_markdown(text, strip_voice_markup=True) == render_telegram_markdown(text)
+
+
+def test_voice_display_removes_every_declared_inline_control_and_accepted_alias():
+    catalogs = ROOT.parent / "shared" / "voice"
+    registry = json.loads((catalogs / "tts_provider_capabilities.json").read_text())
+    tokens = set()
+    for provider in registry["providers"].values():
+        inline = provider.get("inline_controls", {})
+        if not inline.get("supported"):
+            continue
+        tokens.update(inline.get("exact_tokens", []))
+        if inline.get("dialect_contract"):
+            dialect = json.loads((catalogs / inline["dialect_contract"]).read_text())
+            tokens.update(dialect.get("nonverbal_markers", []))
+            tokens.update(dialect.get("speech_tags", {}).get("inline", []))
+    tokens.update(f"[{alias}]" for alias in ("soft laugh", "gentle laugh", "quiet laugh",
+        "nervous laugh", "awkward laugh", "light laugh"))
+    assert len(tokens) >= 22
+    for token in tokens:
+        assert sanitize_telegram_display_text(f"Lead {token} tail.") == "Lead tail."
+
+
+def test_voice_display_obeys_backslash_escape_pair_boundaries():
+    assert sanitize_telegram_display_text(r"\[chuckle]") == r"\[chuckle]"
+    assert sanitize_telegram_display_text(r"\\[chuckle]") == "\\\\"
+    assert sanitize_telegram_display_text(r"\\\[chuckle]") == r"\\\[chuckle]"
+
+
+def test_voice_display_recognition_does_not_start_config_clients_or_tts_engine():
+    import subprocess
+    script = r'''
+import builtins, sys
+from pathlib import Path
+sys.path.insert(0, str(Path('TelegramVivBot').resolve()))
+import httpx
+def forbidden_client(*args, **kwargs):
+    raise AssertionError('Display must not start a network client')
+httpx.Client = httpx.AsyncClient = forbidden_client
+original_import = builtins.__import__
+def guarded_import(name, *args, **kwargs):
+    if name in {'config', 'utils.tts', 'TelegramVivBot.utils.tts'} or name.startswith('_viventium_telegram_speech_'):
+        raise AssertionError('Display must not load bot settings or the TTS engine')
+    return original_import(name, *args, **kwargs)
+builtins.__import__ = guarded_import
+from TelegramVivBot.utils.librechat_bridge import sanitize_telegram_display_text
+assert sanitize_telegram_display_text('Warm [chuckle] hello [your name].') == 'Warm hello [your name].'
+assert 'config' not in sys.modules and 'utils.tts' not in sys.modules
+'''
+    result = subprocess.run([sys.executable, "-c", script], cwd=ROOT,
+        capture_output=True, text=True, timeout=10)
+    assert result.returncode == 0, result.stderr

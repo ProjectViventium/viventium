@@ -463,9 +463,10 @@ PREFERENCES = {
     # === VIVENTIUM START ===
     # Feature: Allow users to disable/enable voice replies entirely.
     "VOICE_RESPONSES_ENABLED": _get_bool_env('VOICE_RESPONSES_ENABLED', True),
+    "REPLY_VOICE_WITH_VOICE": _get_bool_env('REPLY_VOICE_WITH_VOICE', True),
     # === VIVENTIUM END ===
-    # Default: False (only voice when user sends voice)
-    "ALWAYS_VOICE_RESPONSE": _get_bool_env('ALWAYS_VOICE_RESPONSE', False),
+    # Legacy key retained for optional text and independent follow-up audio.
+    "ALWAYS_VOICE_RESPONSE": _get_bool_env('ALWAYS_VOICE_RESPONSE', True),
     # === VIVENTIUM START ===
     # LibreChat bridge metadata (stored per chat)
     "LIBRECHAT_CONVERSATION_ID": "",  # Legacy read-only migration input.
@@ -476,6 +477,10 @@ PREFERENCES = {
     "CLIENT_TIMEZONE": VIVENTIUM_TELEGRAM_DEFAULT_TIMEZONE,
     # === VIVENTIUM END ===
 }
+
+VOICE_PREFERENCE_KEYS = (
+    "VOICE_RESPONSES_ENABLED", "REPLY_VOICE_WITH_VOICE", "ALWAYS_VOICE_RESPONSE"
+)
 
 # REMOVED: Language selection - Using English-only UI for simplicity
 
@@ -588,6 +593,7 @@ def update_user_config(user_id, key, value):
 # === VIVENTIUM START ===
 # Feature: Sync Telegram voice preferences to LibreChat for scheduler voice parity.
 _CALL_URL_CACHE = {}
+_VOICE_PREFERENCE_SYNC_TASKS = {}
 
 
 def _should_cache_call_url(call_url):
@@ -607,7 +613,7 @@ def _should_cache_call_url(call_url):
     hostname = (parsed.hostname or "").strip().lower()
     return hostname in {"localhost", "127.0.0.1", "::1"}
 
-def sync_voice_preferences(user_id, always_voice, voice_enabled):
+def sync_voice_preferences(user_id, always_voice, voice_enabled, reply_voice_with_voice=True):
     if not user_id or str(user_id) == "global":
         return
     base_url = (
@@ -626,8 +632,9 @@ def sync_voice_preferences(user_id, always_voice, voice_enabled):
 
     payload = {
         "telegramUserId": str(user_id),
-        "alwaysVoiceResponse": bool(_coerce_bool(always_voice, False)),
+        "alwaysVoiceResponse": bool(_coerce_bool(always_voice, True)),
         "voiceResponsesEnabled": bool(_coerce_bool(voice_enabled, True)),
+        "replyVoiceWithVoice": bool(_coerce_bool(reply_voice_with_voice, True)),
     }
     headers = {"X-VIVENTIUM-TELEGRAM-SECRET": secret}
     url = f"{base_url}/api/viventium/telegram/preferences"
@@ -643,20 +650,35 @@ def sync_voice_preferences(user_id, always_voice, voice_enabled):
         logging.getLogger(__name__).warning("Voice preference sync error: %s", e)
 
 
-def schedule_voice_preferences_sync(user_id, always_voice, voice_enabled):
+def schedule_voice_preferences_sync(user_id, always_voice, voice_enabled, reply_voice_with_voice=True):
     try:
         loop = asyncio.get_running_loop()
     except RuntimeError:
-        sync_voice_preferences(user_id, always_voice, voice_enabled)
+        sync_voice_preferences(user_id, always_voice, voice_enabled, reply_voice_with_voice)
         return None
-    return loop.create_task(
-        asyncio.to_thread(
+    key = (loop, str(user_id))
+    previous = _VOICE_PREFERENCE_SYNC_TASKS.get(key)
+
+    async def send_in_order():
+        if previous is not None:
+            await asyncio.gather(previous, return_exceptions=True)
+        await asyncio.to_thread(
             sync_voice_preferences,
             user_id,
             always_voice,
             voice_enabled,
+            reply_voice_with_voice,
         )
-    )
+
+    task = loop.create_task(send_in_order())
+    _VOICE_PREFERENCE_SYNC_TASKS[key] = task
+
+    def forget(finished):
+        if _VOICE_PREFERENCE_SYNC_TASKS.get(key) is finished:
+            _VOICE_PREFERENCE_SYNC_TASKS.pop(key, None)
+
+    task.add_done_callback(forget)
+    return task
 
 
 def _extract_telegram_user_id(conversation_key):
@@ -1025,7 +1047,28 @@ class UserConfig:
             self.user_init(user_id)
             return self.users[self.user_id][parameter_name]
 
-    def set_config(self, user_id = None, parameter_name = None, value = None):
+    def _sync_voice_preferences(self, parameter_name, telegram_user_id):
+        if parameter_name not in VOICE_PREFERENCE_KEYS or not telegram_user_id or str(telegram_user_id) == "global":
+            return
+        storage_key = "global" if self.mode == "global" else self.user_id
+        owner = str(telegram_user_id)
+        if self.mode == "multiusers" and str(storage_key) not in (owner, f"{owner}:{owner}"):
+            return
+        values = self.users[storage_key].data
+        schedule_voice_preferences_sync(
+            str(telegram_user_id),
+            values.get("ALWAYS_VOICE_RESPONSE", True),
+            values.get("VOICE_RESPONSES_ENABLED", True),
+            values.get("REPLY_VOICE_WITH_VOICE", True),
+        )
+
+    def _authorize_voice_preference(self, parameter_name, telegram_user_id):
+        if (self.mode == "global" and parameter_name in VOICE_PREFERENCE_KEYS
+                and ADMIN_LIST and str(telegram_user_id or "") not in ADMIN_LIST):
+            raise PermissionError("Only a configured administrator can change global voice preferences.")
+
+    def set_config(self, user_id = None, parameter_name = None, value = None, *, telegram_user_id=None):
+        self._authorize_voice_preference(parameter_name, telegram_user_id)
         # CRITICAL: Handle new preferences that might not be in parameter_name_list yet
         # This provides backward compatibility when new preferences are added
         if parameter_name not in self.parameter_name_list:
@@ -1037,28 +1080,20 @@ class UserConfig:
         if self.mode == "global":
             current = self.users["global"].data.get(parameter_name)
             if current == value:
+                self._sync_voice_preferences(parameter_name, telegram_user_id)
                 return
             self.users["global"][parameter_name] = value
             self._persist_user_config("global")
+            self._sync_voice_preferences(parameter_name, telegram_user_id)
         if self.mode == "multiusers":
             self.user_init(user_id)
             current = self.users[self.user_id].data.get(parameter_name)
             if current == value:
+                self._sync_voice_preferences(parameter_name, telegram_user_id)
                 return
             self.users[self.user_id][parameter_name] = value
             self._persist_user_config(self.user_id)
-            # === VIVENTIUM START ===
-            # Feature: Keep LibreChat scheduler voice preferences in sync with Telegram settings.
-            if self.user_id != "global" and parameter_name in (
-                "ALWAYS_VOICE_RESPONSE",
-                "VOICE_RESPONSES_ENABLED",
-            ):
-                schedule_voice_preferences_sync(
-                    self.user_id,
-                    self.users[self.user_id].data.get("ALWAYS_VOICE_RESPONSE"),
-                    self.users[self.user_id].data.get("VOICE_RESPONSES_ENABLED"),
-                )
-            # === VIVENTIUM END ===
+            self._sync_voice_preferences(parameter_name, telegram_user_id)
 
     def set_librechat_conversation_state(self, user_id, state):
         """One durable state write, with legacy fields derived for supported rollback."""
@@ -1078,7 +1113,8 @@ class UserConfig:
             values.update(previous)
             raise
 
-    def toggle_config(self, user_id = None, parameter_name = None):
+    def toggle_config(self, user_id = None, parameter_name = None, *, telegram_user_id=None):
+        self._authorize_voice_preference(parameter_name, telegram_user_id)
         if parameter_name not in self.parameter_name_list:
             if parameter_name in self.preferences:
                 self.parameter_name_list.append(parameter_name)
@@ -1096,6 +1132,7 @@ class UserConfig:
             new_value = not current_bool
             self.users["global"][parameter_name] = new_value
             self._persist_user_config("global")
+            self._sync_voice_preferences(parameter_name, telegram_user_id)
             return new_value
         if self.mode == "multiusers":
             self.user_init(user_id)
@@ -1107,18 +1144,7 @@ class UserConfig:
             new_value = not current_bool
             self.users[self.user_id][parameter_name] = new_value
             self._persist_user_config(self.user_id)
-            # === VIVENTIUM START ===
-            # Feature: Keep LibreChat scheduler voice preferences in sync with Telegram settings.
-            if self.user_id != "global" and parameter_name in (
-                "ALWAYS_VOICE_RESPONSE",
-                "VOICE_RESPONSES_ENABLED",
-            ):
-                schedule_voice_preferences_sync(
-                    self.user_id,
-                    self.users[self.user_id].data.get("ALWAYS_VOICE_RESPONSE"),
-                    self.users[self.user_id].data.get("VOICE_RESPONSES_ENABLED"),
-                )
-            # === VIVENTIUM END ===
+            self._sync_voice_preferences(parameter_name, telegram_user_id)
             return new_value
         raise ValueError(f"Unsupported mode: {self.mode}")
 
@@ -1339,6 +1365,9 @@ def update_info_message(user_id = None):
     # REMOVED: api_key and api_url - Not used with LiveKit Bridge, Viventium handles all API calls
     return "".join([
         f"**🧠 Cognitive System:** `Viventium`\n\n",  # Viventium is the cognitive system
+        "Master Switch allows reply audio. Always Include Voice Reply includes all replies and proactive messages; "
+        "the model can still skip audio. Reply Voice with Voice applies when "
+        "Always Include Voice Reply is off.\n\n",
         # REMOVED: API_KEY display - Not used with LiveKit Bridge, Viventium handles API keys
         # REMOVED: BASE URL display - Not used with LiveKit Bridge, Viventium handles endpoints
         f"**🛜 WEB HOOK:** `{WEB_HOOK}`\n\n" if WEB_HOOK else "",
@@ -1422,10 +1451,19 @@ PREFERENCE_DISPLAY_NAMES = {
     "FILE_UPLOAD_MESS": "File upload message",
     # === VIVENTIUM START ===
     # Feature: Explicit voice reply toggle in Preferences.
-    "VOICE_RESPONSES_ENABLED": "Voice replies",
+    "VOICE_RESPONSES_ENABLED": "Master Switch",
+    "REPLY_VOICE_WITH_VOICE": "Reply Voice with Voice",
     # === VIVENTIUM END ===
-    "ALWAYS_VOICE_RESPONSE": "Smart voice for text",
+    "ALWAYS_VOICE_RESPONSE": "Always Include Voice Reply",
 }
+
+
+def _preference_button_text(key, label, prefix):
+    if key not in VOICE_PREFERENCE_KEYS:
+        return f"{prefix}{label}"
+    enabled = prefix == "✅ "
+    return f"{'✅' if enabled else '⬜'} {label} · {'ON' if enabled else 'OFF'}"
+
 
 def create_buttons(strings, plugins_status=False, lang="en", button_text=None, Suffix="", chatid=None, status_map=None):
     # SIMPLIFIED: Removed i18n - Using English-only display names
@@ -1456,7 +1494,7 @@ def create_buttons(strings, plugins_status=False, lang="en", button_text=None, S
                 prefix = "✅ " if enabled else "☑️ "
             else:
                 prefix = get_status(chatid, k)
-            button = InlineKeyboardButton(f"{prefix}{button_text[k]}", callback_data=k + Suffix)
+            button = InlineKeyboardButton(_preference_button_text(k, button_text[k], prefix), callback_data=k + Suffix)
         else:
             display_text = button_text.get(k, k)  # Use display name or key
             button = InlineKeyboardButton(display_text, callback_data=v + Suffix)
@@ -1482,7 +1520,7 @@ def create_buttons(strings, plugins_status=False, lang="en", button_text=None, S
                 prefix = "✅ " if enabled else "☑️ "
             else:
                 prefix = get_status(chatid, k)
-            button = InlineKeyboardButton(f"{prefix}{button_text[k]}", callback_data=k + Suffix)
+            button = InlineKeyboardButton(_preference_button_text(k, button_text[k], prefix), callback_data=k + Suffix)
         else:
             display_text = button_text.get(k, k)  # Use display name or key
             button = InlineKeyboardButton(display_text, callback_data=v + Suffix)
@@ -1539,8 +1577,8 @@ def update_menu_buttons(setting, _strings, chatid):
             status_map = {k: user_data.get(k, setting.get(k, False)) for k in toggle_keys}
         except Exception:
             status_map = None
-    buttons = create_buttons(
-        toggle_keys,
+    voice_keys = [key for key in VOICE_PREFERENCE_KEYS if key in toggle_keys]
+    button_options = dict(
         plugins_status=True,
         lang="en",
         button_text=None,
@@ -1548,6 +1586,8 @@ def update_menu_buttons(setting, _strings, chatid):
         Suffix=_strings,
         status_map=status_map,
     )
+    buttons = create_buttons(voice_keys, **button_options)
+    buttons.extend(create_buttons([key for key in toggle_keys if key not in voice_keys], **button_options))
     buttons.append(
         [
             InlineKeyboardButton("⬅️ Back", callback_data="BACK"),
