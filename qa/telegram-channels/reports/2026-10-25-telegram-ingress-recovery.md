@@ -72,3 +72,69 @@ do not certify installation of the new publication commit.
 Only synthetic observations, scoped conclusions and counts are published. Raw messages, account
 and chat identifiers, credentials, screenshots, machine paths and operational logs remain private.
 The report and changed source were included in the public-safety review.
+
+The following retained evidence covers the separate intake and ordered-recovery candidate. It does
+not replace the adapter publication recheck above or certify this new publication checkout.
+
+## Retained intake and ordered-recovery evidence — 2026-10-25
+
+QA: blast-radius. Result: **SCOPED PASS** on the loaded local candidate.
+This covers Telegram intake, ordered recovery and confirmed consumers. It makes no public release,
+Voice function, timer, or general readiness claim.
+
+### Change and owning cases
+
+The [Telegram requirements](../../../docs/requirements_and_learnings/03_Telegram_Bridge.md) and
+[owning journeys](../cases.yaml) require durable, ordered input and truthful recovery without
+replaying accepted actions. This report covers `ingress-outage-and-idle-typing` and the affected
+rapid-correction portion of `telegram-main-parity`.
+
+- Existing Message storage and ingress registration now precede the ordering dependency wait.
+  Invalid preparation is refused before storage; source-only commands create no fake input.
+- The exact monotonic ordering command has a native five-second deadline. A known recoverable
+  retained receipt permits a saved-message notice. Unknown outcomes and terminal duplicates do
+  not invite duplicate execution. The existing owner releases unused preparation leases for retry.
+- Recovery prepares earlier retained inputs before admission and preserves the accepted source
+  parent chain. Unbound native cancellation protects exact job identity from late startup metadata.
+  Native source, effect, revision, permission and delivery fences remain active.
+
+### Actual evidence
+
+| Contract | Expected and observed result | Result |
+| --- | --- | --- |
+| Foreground reply | Real Telegram Web delivered the correct short arithmetic answer; native completion and transport acknowledgement agree. | PASS |
+| Rapid correction | Three fresh messages produced one useful answer with the final two-bullet, at-home and screen-free constraints. It persisted after real reload. | PASS |
+| Actual dependency outage | The existing Redis container was paused with its socket open. All three exact inputs and preparation were durable before the native ordering wait failed in about five seconds. The latest input showed the saved-message notice. | PASS |
+| Deferred preparation | The live timeline captured all three preparing rows with zero lease, existing retry delay and unchanged failure-attempt count before the same container resumed. No input entered Main during the outage. | PASS |
+| Ordered recovery | Existing recovery prepared the earlier sources, admitted the final source and published one native answer with explicit ordered ownership of all three. No earlier personal goal was replayed. | PASS |
+| Source identity | Accepted source and parent hashes remained valid through publication and subsequent earlier-source continuations. Real source-edit controls still revoke changed authority. | PASS |
+| Durable settlement | All three inputs completed with zero lease and no failure code after the original admitted lease. The exact Telegram delivery was committed; the ACK outbox was empty. | PASS |
+| Visible result and persistence | The saved notice was followed by two useful bullets. Both remained after real Telegram reload. The bot header was idle, with no error or system spam. | PASS |
+| Loaded artifact and process continuity | Running Core and the captured bot matched the frozen sources and rebuilt API. Core, bot, helper and the existing voice-gateway process kept their identities during the final pause/recovery window. | PASS for this local window |
+
+An earlier rapid run exposed a cancellation identity race. The first actual outage run then exposed
+an earlier-source parent re-anchor that correctly triggered native revocation. Both failed runs and
+original records remain preserved. Fresh runs after the repairs passed; no historical row was patched.
+Exact source IDs, process identities, hashes, screenshots and raw receipts remain private.
+
+### Automated checks and limits
+
+The final stream and source-owner selection passed 322 checks across memory, an owned temporary
+Redis, source recovery, native response, serialization and Main context. This replaces the earlier
+269-check cancellation selection. The typed input lifecycle passed 59 checks, replacing its earlier
+51-check selection. The saved-notice selection passed 20 Python checks.
+
+The final recovery and parent selections passed 53 unique public route checks plus one private
+case using actual native parent methods. The Mongo preparation/query selection passed 46 checks.
+These are separate selections, with no combined total. The earlier intake selection passed 195
+checks before the later consumer repairs; its route overlap with the final selections is unknown.
+Repeated and overlapping checks are not added.
+
+The complete 195-test route bank exhausted the Jest heap and is **NOT PASSED**. Focused affected
+checks ran in bounded batches. Three broader Python recovery fixtures failed identically against
+old bytes and are not reported passed. Runtime-helper and cache-config proofs belong to their own
+evidence and are not included in these counts.
+
+No full-project sweep, public release, commit, push or component-pin update was run. Private
+screenshots, raw source receipts, personal identifiers, logs and exact hashes remain outside this
+public report.

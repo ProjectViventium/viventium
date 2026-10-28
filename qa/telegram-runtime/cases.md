@@ -55,14 +55,18 @@
   or hide active work. A persisted native Stop remains valid parent evidence through its existing
   `finish_reason=incomplete` marker; its retained partial answer and interruption context survive
   reuse and replay. Once finalized, an ordinary assistant can be selected normally. Keep the raw
-  latest leaf available to worker callbacks so they can detect an active Main reply.
+  latest leaf available to worker callbacks so they can detect an active Main reply. A late ready
+  input continuation preserves its current persisted parent when a later native answer already
+  depends on that source; original intake metadata must not rewind the valid parent chain.
 - **Forbidden result:** Capture mutable draft text as immutable parent evidence, then reject the
   new reply when that draft naturally finishes; weaken genuine source-edit/deletion protection;
   discard a confirmed Stop merely because it retains `unfinished=true`; or globally filter active
   Main out of callback ownership checks.
 - **Evidence to capture:** Actual old/new parent digest and writer timeline, causal selector
   checks, completed/user/legacy controls, affected Telegram and scheduler routes, callback
-  active-Main controls, loaded source identity and a fresh real Telegram reply.
+  active-Main controls, loaded source identity and a fresh real Telegram reply. For outage recovery,
+  also capture three retained sources, the winning answer's direct-parent digest, a late earlier
+  continuation, unchanged source IDs, and successful native publication after that continuation.
 - **Last run:** PARTIAL, 2026-10-23. Source checks passed locally: 46 selected checks cover stable selection,
   the actual native Stop writer and persisted partial, interruption context, replay, Telegram,
   scheduler, protected Main carrier and callback consumers. The first 30-check filter was rejected

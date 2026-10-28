@@ -2551,6 +2551,7 @@ def test_native_harness_uses_packaged_bodies_and_compiled_route_without_host_cre
     monkeypatch.setattr(runtime, "load_native_runtime_env", load_runtime_env)
     monkeypatch.setenv("ANTHROPIC_API_KEY", "host-secret-must-not-leak")
     env = runtime.native_glasshive_environment(root, support)
+    assert env["GLASSHIVE_PROTECTED_SOURCE_ROOTS"] == str(support)
     assert env["VIVENTIUM_PROMPT_BUNDLE_PATH"] == str(root / "runtime/defaults/prompt-bundle.json")
     assert env["WPR_CODEX_BIN"] == str(bodies["codex-cli"])
     assert env["WPR_CLAUDE_CODE_BIN"] == str(bodies["claude-code"])
@@ -4192,12 +4193,7 @@ def test_native_helper_decodes_native_mode_uses_semantic_health_and_hides_source
 
 def test_native_helper_opens_the_exact_loopback_authority_accepted_by_proxy() -> None:
     source = HELPER_SWIFT.read_text(encoding="utf-8")
-    assert (
-        'let host = runtime.nativeRuntime\n'
-        '            ? "127.0.0.1"\n'
-        '            : (LocalNetworkAddressResolver.currentHost() ?? "localhost")'
-        in source
-    )
+    assert 'let host = runtime.nativeRuntime ? "127.0.0.1" : "localhost"' in source
 
 
 @pytest.mark.parametrize("relative", ["state", "runtime", "logs", "data", "data/mongodb", "backups"])

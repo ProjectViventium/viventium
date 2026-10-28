@@ -22,7 +22,7 @@ if str(_SHARED_PATH) not in sys.path:
     sys.path.insert(0, str(_SHARED_PATH))
 
 from delivery_controls import parse_delivery_controls
-from telegram_tts import resolve_api_whisper_config, audio_speech_endpoint
+from telegram_tts import CARTESIA_NONVERBAL_ALIASES, SPEECH_URL_RE, resolve_api_whisper_config, audio_speech_endpoint
 from telegram_audio import finalize_wav_chunks, TelegramAudioError
 
 
@@ -283,7 +283,7 @@ _CITATION_CLEANUP_RE = re.compile(
 _BRACKET_CITATION_RE = re.compile(r"\[(\d{1,3})\](?=\s|[.,;:!?)]|$)")
 # === VIVENTIUM START ===
 # Feature: Voice-safe cleanup (URLs, emails, plans, tool directives).
-_URL_RE = re.compile(r"\bhttps?://\S+|\bwww\.\S+")
+_URL_RE = SPEECH_URL_RE
 _EMAIL_RE = re.compile(r"\b[\w.+-]+@[\w.-]+\.[A-Za-z]{2,}\b")
 _BARE_DOMAIN_RE = re.compile(
     r"\b(?:[A-Za-z0-9-]+\.)+(?:com|org|net|edu|gov|info|biz)"
@@ -375,18 +375,7 @@ _CARTESIA_EMOTION_EVENT_RE = re.compile(
 )
 _CARTESIA_LAUGHTER_RE = re.compile(r"\[laughter\]", re.IGNORECASE)
 _CARTESIA_BRACKET_TOKEN_RE = re.compile(r"\[([^\]]+)\]")
-_CARTESIA_NONVERBAL_ALIASES = {
-    "laugh": "laughter",
-    "laughter": "laughter",
-    "giggle": "laughter",
-    "chuckle": "laughter",
-    "soft laugh": "laughter",
-    "gentle laugh": "laughter",
-    "quiet laugh": "laughter",
-    "nervous laugh": "laughter",
-    "awkward laugh": "laughter",
-    "light laugh": "laughter",
-}
+_CARTESIA_NONVERBAL_ALIASES = CARTESIA_NONVERBAL_ALIASES
 
 
 class WavMergeError(ValueError):

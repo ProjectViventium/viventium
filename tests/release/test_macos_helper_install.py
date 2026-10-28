@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import plistlib
+import re
 import shlex
 import shutil
 import socket
@@ -2529,7 +2530,10 @@ def test_helper_uses_easy_install_required_surface_health_contract() -> None:
     assert 'let sandpackPort = Int(values["SANDPACK_BUNDLER_LISTEN_PORT"] ?? "") ?? 3191' in source
     assert 'values["SANDPACK_BUNDLER_URL"] != nil' in source
     assert "let apiReady = nativeReady && apiSurfaceReady" in source
-    assert "optionalSurfacesReady: optionalSurfaces.ready && artifactRuntimeReady" in source
+    # The artifact gate is the contract; a local variable's name is not.
+    assert re.search(
+        r"optionalSurfacesReady:\s*[\w.]+\s*&&\s*artifactRuntimeReady\b", source
+    )
     assert "if runtime.requiresPlayground" in source
 def test_prebuilt_helper_source_digest_marker_matches_current_sources() -> None:
     helper_dir = HELPER_PACKAGE.parent
@@ -3018,10 +3022,11 @@ actor Gate {
     func refreshState(force: Bool) { writes += 1 }
     func log(_ message: String) { writes += 1 }
     func openBrowser(path: String?) { writes += 1 }
+    func openLocalCallBrowser(runtime: RuntimePorts) { writes += 1 }
     static func startFailureGuidance(runtime: RuntimePorts, startLogURL: URL?, startLogOffset: UInt64) -> String { "" }
 ''' + cancel + r'''
     func finish() async {
-        let started = true, supervisedLaunch = true, openWhenReady = false
+        let started = true, supervisedLaunch = true, openWhenReady = false, openLocalCallWhenReady = false
         let launchReason = "synthetic-old-start", openPath: String? = nil
         let runtime = RuntimePorts(), config = Config(), startLogURL: URL? = nil, startLogOffset: UInt64 = 0
 ''' + completion + r'''

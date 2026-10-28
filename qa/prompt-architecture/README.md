@@ -97,6 +97,13 @@ the declared tools/access mode, exact instruction bytes, owner/session/message-b
 a native-call audit, and semantic judgment. Tools-disabled replay does not prove tool execution;
 neither replay proves mission workspace setup or actual app/file operations.
 
+An intentionally silent worker reply is not a transport failure. After verifying the completed
+native run, exact route, source and owner/session/request identity, worker-source replay may recover
+strict `{NTA}` from its bound native text or typed assistant-response carrier when `executeCortex`
+has suppressed its insight. Errors, fallback, unproved empty output, arbitrary JSON and mixed
+visible text do not qualify. The recovered reply still needs semantic grading: silence can be
+correct or incorrect for the case. A completed replay without that grading remains unjudged.
+
 A private old/proposed bank may declare `executionTarget.sourceSnapshot` with a private path and
 SHA-256. The snapshot retains the exact source text, its hashes, and composed frames; mismatched
 snapshot or source bytes stop before model execution. Reuse the same case inputs on both versions.

@@ -17,6 +17,33 @@ Use stable `TGVOICE-NNN` IDs for telegram voice replies cases.
 | `TGVOICE-007` | The Main Agent may create a small number of natural Telegram bubbles with `{MSG_BREAK}` while preserving one logical answer. | A conversational reply can arrive as two or three complete beats without fragment bombardment, duplicate history, duplicate audio, or artifact splitting. | Streaming preview, main turn, proactive callback, persistence, Telegram transport, Prompt Workbench | shared grammar, split-token streaming test, bot/callback/persistence tests, exact-model prompt bank | PARTIAL 2026-07-22: real two-bubble delivery, one final audio, one clean stored turn, reopen, and automation pass; proactive and attachment-plus-split paths remain partial |
 | `TGVOICE-008` | Saved Listening selection and whole-note speech follow the shared Telegram Voice contract. | Selected recognition stays exact; no-speech stops Main/TTS while captions survive; brief, quiet and paused speech keeps the complete note. | Preferences, Telegram voice/video notes, STT, Main | listening ingress, speech presence, silence, selected-STT and exact-SDK settings checks | PARTIAL 2026-10-03: selected hosted recognition rejected credentials; exact whole-note recovery remains unrun. Deterministic and finite acoustic proof is supporting evidence ([report](../modern-playground-voice/reports/2026-10-03-voice-and-telegram-acceptance.md)) |
 | `TGVOICE-009` | Automatic saved-memory status is logs only, never conversational text or speech. | Memory works silently while Main and worker answers retain text/audio delivery. | Telegram Main reply, proactive callback, FINAL/follow-up poll, cursor restart and redacted logs | `tests/test_librechat_bridge.py`, bot stream-preview and callback/TTS checks | PARTIAL 2026-10-09: 341 bridge checks pass; current native Telegram text/audio and quiet unchanged receipt pass; playback was not assessed |
+| `TGVOICE-011` | Three Telegram voice preferences preserve user permission and model judgment. | Always Include permits all replies; otherwise Reply Voice permits spoken-input replies. Master OFF blocks both, and late replies retain the same source policy. | Preferences, foreground reply, durable callback, Core mapping, installed runtime | all-flag matrix, defaults/legacy values, global/multiuser sync, native Telegram voice input and playback, restart | PARTIAL 2026-10-27: controls, defaults, restart persistence, real voice/text/skip and final loaded audio pass; delayed/call-origin user paths remain open ([report](reports/2026-10-27-three-voice-controls.md)) |
+
+## `TGVOICE-011` - Three voice preferences
+
+- Requirement: audio eligibility is `Master AND (Always Include OR (spoken input AND Reply Voice))`.
+  Always Include permits every reply origin; when it is OFF, Reply Voice with Voice permits
+  voice/video-note and other existing typed spoken origins. All product defaults are ON.
+  Explicit saved values remain intact.
+- Cases: cover all eight switch combinations with both input types, blank results and model skip;
+  bool coercion, missing legacy/new values, global and multiuser writes, actual owner sync;
+  group/topic settings that cannot replace private Core preferences; text-only, structured skip,
+  invalid required metadata and exact eligible ranges.
+- User path: inspect the three labels and their help in Telegram Preferences; select values;
+  reopen and restart. Check local saved values and Core's mapping. Send a real short voice note,
+  receive and listen to the response, then check text-only and master-disabled outcomes.
+- Late replies: the original voice-note input mode and requesting owner/topic survive ordinary
+  worker completion, reconnect and retained callback. A newer text input cannot change them.
+  An independent proactive message uses text-input policy. A known legacy origin may come from
+  its exact stream. If the stream and durable source metadata cannot supply the origin, use text
+  policy and do not claim retained spoken input.
+- Expected: Always Include overrides the narrower spoken-input switch; Master OFF and model skip
+  still win. A sync failure does not falsely claim Core has the new values.
+  Settings changes cause no model call. Existing text, history and delivery receipts stay intact.
+- Evidence: exact policy matrix, supported saved changes and reload, authenticated sync receipt,
+  source-bound callback metadata, current installed candidate, visible controls and delivered
+  audio with payload/receipt correlation. Keep account, prompts, media and raw logs private.
+- Last run: PARTIAL 2026-10-27. Controls, defaults, restart persistence and real foreground voice/text/skip delivery PASS on the final loaded candidate; delayed/call-origin user paths remain open. [Report](reports/2026-10-27-three-voice-controls.md).
 
 ## `TGVOICE-001` - Core User Flow
 
@@ -167,7 +194,7 @@ Use stable `TGVOICE-NNN` IDs for telegram voice replies cases.
 - Requirement: `docs/requirements_and_learnings/03_Telegram_Bridge.md`
 - Risk covered: the optional text-audio preference creates long, wasteful audio for emails, code,
   tables, and other read-first artifacts, or a control leaks into display/history.
-- Preconditions: `Voice replies` and `Smart voice for text` are enabled; synthetic public-safe
+- Preconditions: `Master Switch` and `Always Include Voice Reply` are ON; synthetic public-safe
   prompts and runtime evidence are available.
 - Steps:
   1. Ask for a copy-ready synthetic email without naming the control.

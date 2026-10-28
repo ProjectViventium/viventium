@@ -1,5 +1,75 @@
 # Telegram Document Attachments QA Report
 
+## 2026-10-27 — selected local file recovery (blast-radius)
+
+**Scoped local acceptance: PASS.** This is the outbound `TGDOC-011` consumer, not the full
+`TGDOC-010` Worker/provider/channel matrix.
+
+A native harness created a valid file and selected it from an ordinary OS temporary folder.
+xPerfect rejected that folder before taking a file snapshot. Core and Telegram correctly kept
+that typed unavailable result. Asking for OS access would not have corrected this publication rule.
+The clear existing staging instruction had already failed on consecutive scheduled turns.
+
+The shared publisher now snapshots an explicitly selected ordinary local file when the host harness
+already has Full access and native tools. It reuses the immutable output, signed carrier and normal
+Core/Telegram importer. No model call, format router, extra file cache or channel-specific fallback
+was added. Restricted execution, implicit discovery and protected sources remain fenced. Hosts
+explicitly declare their private support root. Review also closed external-upload and case-alias
+bypasses, while allowing ordinary files beside a database.
+
+Evidence retained privately:
+
+- The exact original bytes fail on the preserved source and succeed on the candidate; the source
+  file stays unchanged. Old/new image, PDF, CSV, custom and empty-file cases cover selection,
+  distinct names, resend, immutable replay, private roots, links, non-regular files and races.
+- 286 native checks, 85 Core file-consumer checks, 35 Telegram attachment checks and four host
+  environment checks pass. Twelve existing artifact-preview HTML assertions fail identically on
+  the preserved source; this repair does not claim that preview bank passes.
+- The supported local compiler/start path loaded the frozen source and protected-root declaration.
+  The verifier retained its signer isolation. Other separately owned native instances stayed alive.
+- A real Telegram request recovered the original image and returned a checksum CSV. Core retained
+  the original image hash; the photo opened in Telegram. The CSV downloaded through Telegram Web
+  and matched Core byte for byte. One committed receipt covers the answer, photo and document;
+  both attachments remain after reload.
+- That live model used the existing managed temporary-folder path. The new outside-folder fallback
+  has exact-file causal and canonical API/carrier proof; the live check proves the downstream real
+  delivery path. These are distinct evidence claims.
+- Opus reviewed the evidence and proposed contract. Independent source review found no remaining
+  material issue after the isolation corrections. Models, prompts and user preferences were unchanged.
+
+This result does not certify audio quality, latency, every provider or long-term endurance.
+
+
+## 2026-10-26 scoped outbound recovery recheck
+
+QA mode: **blast-radius**. This is a narrow `TGDOC-011` outbound consumer recheck, not a pass
+for the full `TGDOC-010` worker/provider/restart matrix.
+
+- The real local Telegram path accepted a request, continued the same durable worker after a
+  correction, and sent three different generated images as three separate photos. Each opened in
+  Telegram Web and the album survived reload. Stored files had distinct bytes and hashes; the
+  outbound receipt contained one text message and three photos, with no retry.
+- The investigation found a cold-session capacity refusal before Main admission and a separate
+  long-response recovery defect: a stale-claim sweep could take a live Main claim, then retries
+  changed native identity under the same idempotency key.
+- The repair reuses the existing native queue, active claim, saved-result lookup and normal
+  prepare/persist/file/delivery pipeline. It adds no model call or lookup to the first dispatch.
+  Historical deadletters stay untouched. Queue and message continuations keep earlier results.
+- Automated evidence: native capacity, exact result identity, owner/scope isolation, hold/Stop,
+  lost-reply recovery, live-claim retention and the actual stream consumer. Replay preserves one
+  file set, one speech-disposition range and usage without exposing reasoning.
+- Final candidate activation and post-load Telegram checks: **PASS** for this scoped path.
+  The reviewed native endpoint returned the original accepted result without execution. Core
+  loaded the matching compiled candidate; a real Telegram follow-up received one saved reply.
+  The delivered album remained available, and historical exhausted records were unchanged.
+  Opus completed the causal reviews; its final reduced-delta run hit the account limit. A fresh
+  independent reviewer closed the remaining file-binding finding; both owning Core banks and
+  the native lookup bank passed.
+- Raw conversations, IDs, hashes, screenshots and machine paths remain private. No Voice latency,
+  endurance, all-provider or full cross-surface parity claim follows from this check.
+
+## Historical report — 2026-04-16
+
 Date: 2026-04-16
 
 ## Summary

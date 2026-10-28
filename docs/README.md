@@ -69,6 +69,13 @@ their exact loss, consumer, and safety gates pass. Runtime implementation detail
 Capability routing does not certify completion. Candidate-bound QA reports own execution results;
 unresolved owner, surface, seam, and planned acceptance mappings remain open until reviewed.
 
+Recent scoped progress is recorded in the [three Telegram voice controls](../qa/telegram-voice-replies/reports/2026-10-27-three-voice-controls.md),
+[standing-invitation fidelity](../qa/main-scheduling-continuity/reports/2026-10-27-standing-invitation-fidelity.md)
+and [phone/local call entry](../qa/voice/reports/2026-10-27-phone-and-local-call-entry.md) reports.
+The [channel/call publication review](../qa/runtime-install-release/reports/2026-10-28-channel-call-publication.md)
+records candidate checks and retained evidence. Signed/audible-call and other unrun acceptance gates
+remain explicit; these reports do not change the approved architecture or configured defaults.
+
 The [Direct Queen action-handoff report](../qa/voice/reports/2026-10-17-direct-queen-action-handoff.md)
 records the later Voice configuration repair, real action workers, Stop, file delivery and user
 acceptance. Its High-effort and preparation-off observations are historical; later fast-Queen

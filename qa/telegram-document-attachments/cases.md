@@ -253,6 +253,15 @@ Use stable `TGDOC-NNN` IDs for telegram document attachments cases.
 
 ## `TGDOC-011` - Main-Generated Outbound Files And Media
 
+The shared native publisher must also cover explicitly selected ordinary local files when the
+host harness already has Full access. Include an existing image and a non-image document outside
+the workspace, a directory alias such as the OS temporary folder, a resend, and replay after the
+source changes or disappears. Verify exact document bytes and one durable Telegram receipt.
+Keep unselected references, restricted execution, private/control and shared upload storage,
+case aliases of protected files, final symlinks, hardlinks, non-regular files and changing sources
+in the negative bank. Reuse `test_native_selected_host_files.py` and the canonical file-carrier
+tests; the adapter must not add a second publisher or infer authority from a filename or file type.
+
 - Requirement: [Telegram Attachments](../../docs/requirements_and_learnings/03_Telegram_Bridge.md#telegram-attachments).
 - Risk covered: Main renders a real file locally but the Telegram user receives only text or an
   unusable path; format-specific transport branches drop otherwise supported outputs.

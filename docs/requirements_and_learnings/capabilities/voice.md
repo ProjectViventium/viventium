@@ -460,7 +460,22 @@ The signed browser engagement proxy keeps its 8.5-second upstream deadline and b
 active through the complete response-body read and response construction. Receiving headers does
 not end either guard; a stalled body retains the existing timeout or unavailable classification.
 
+Call launch bootstrap, canonical session hydration, browser state/keepalive, and call state,
+voice-settings and task-action proxies keep their existing request deadlines active through the
+complete response-body read. Existing parent cancellation stays attached until that read settles.
+Headers alone do not complete a request. A stalled keepalive releases its in-flight guard on timeout,
+so the next existing keepalive can recover. Completed authorization rejections remain final;
+ordinary malformed-body fallbacks, signed authority, launch idempotency and retry budgets stay
+unchanged. These guards add no request or fixed wait to healthy calls.
+
 ## Call entry from Telegram
+
+Web Call readiness checks the configured internal Playground service and its exact runtime/build
+identity. The browser launch URL remains a separate choice: public callers receive the configured
+public origin; same-computer callers retain the local origin. A serving host's inability to reach
+its own public address must not reject a healthy local runtime. Conversely, a healthy public page
+must not hide an unavailable, unhealthy or wrong-build configured runtime. Do not add public DNS or
+public loopback checks to each call or voice turn.
 
 - Telegram `/call` mints one browser-facing link through the same call-session service as the web
   call button. The link uses the configured public playground origin and carries a single-use
@@ -468,13 +483,29 @@ not end either guard; a stalled body retains the existing timeout or unavailable
 - The link bootstraps only where the public HTTPS edge is reachable. A device on the serving Wi-Fi
   reaches the public hostname only when the router provides NAT loopback or an equivalent split-DNS
   or mesh route; that precondition is owned by
-  [remote access](../47_Remote_Access_and_Tunneling.md), not by call code, and a same-network
-  timeout with off-network success is never an application regression.
+  [remote access](../47_Remote_Access_and_Tunneling.md). A same-network timeout with off-network
+  success requires route, DNS and application evidence before assigning a cause; that comparison
+  alone does not prove either a router fault or an application regression.
 - Remote-access status may claim only what this Mac observed: reachable from this network, local
   hairpin unavailable, or not probed. Off-network reachability is proven by a real off-network
   client, never inferred.
 - Durable journey: `qa/voice/cases.yaml` `telegram-call-public-edge`. Telegram QA links to it and
   does not duplicate it.
+
+### Local call entry
+
+The macOS helper's **Open** and **Call on this Mac…** entries use the same loopback web-app
+origin supported by the managed listener. Call opens the existing chat and focuses its ordinary
+Call control; the normal account sign-in may be needed when no browser session exists. The user starts recording with that control's normal click or
+Enter action. A URL hint may select or focus a control; it is not authority to create a call,
+open a call popup or start a microphone automatically. This preserves the existing signed launch,
+conversation ownership, first-use microphone consent and normal manual Call behavior without a
+second authentication framework or media pipeline. The helper entry is shown only when that runtime serves
+the existing Voice web surface. This is a browser-based local shortcut, not native browser-free
+audio. Local network access and local Listening/Speaking providers remain independent choices.
+
+The owning acceptance journey is `qa/voice/cases.yaml` `local-call-entry`. A local health response
+or a focused button does not establish a connected call, heard reply or phone reachability.
 
 ## Listen-Only
 

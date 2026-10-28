@@ -7,6 +7,14 @@ sourceInventories:
   - qa/main-continuity/cases.md
   - qa/scheduling-cortex/cases.md
 journeys:
+  - id: standing-invitation-fidelity
+    requirements: [CC-001, CC-004, CC-022, CC-024, CC-025, CC-035, CC-061, CC-062, CC-063]
+    userAction: Author a broad standing invitation, then compare its old and proposed scheduled prompt on the exact configured model with the same frozen conversation, memory and Feeling context. Cover spontaneous creativity, companionship without a task, an explicit busy boundary, recent unanswered contact, a long quiet gap and a stale prior nudge. Then run the saved candidate through ordinary Main and inspect the selected channel.
+    surfaces: [Workbench, Scheduler, native provider, Telegram]
+    expectedResult: Preserve the invitation without added task-only gates or mandatory outreach. A fitting creative or conversational initiative is valid without new external facts; recent context and explicit newer boundaries can favor silence. Do not repeat a stale agenda, claim unperformed actions, pressure the user or narrate Feeling mechanics.
+    degradedAndRecovery: Completed intentional silence is distinct from empty unproved output, provider failure and delivery failure. Preserve actual outcomes; never rerun until speech or treat an unjudged replay as passed. A single delivered message does not establish long-term contact frequency or prove the old prompt caused every silent run.
+    persistenceAndCleanup: Save through the owning prompt interface and reload its exact source. Preserve the original invitation privately and leave models, tools, cadence, destinations, other schedules and history unchanged unless separately authorized.
+    evidence: [private verbatim invitation and prompt preimage, same-input old/proposed exact-route receipts, separate semantic review, saved-to-native prompt equality, current memory and Feeling lineage, canonical result, selected-channel receipt, visible output or silent disposition, persistence/reload]
   - id: natural-continuity
     requirements: [CC-001, CC-053]
     userAction: Enable a synthetic schedule and let Main receive natural opportunities across separate and mixed Feeling states.

@@ -3995,23 +3995,30 @@ async def _getViventiumResponse(
 
     # Telegram remains a text-mode surface. Voice preferences control optional audio delivery only;
     # LiveKit voice-call mode/prompt routing stays false for Telegram turns.
-    always_voice = False
+    always_voice = True
+    reply_voice_with_voice = True
     voice_responses_enabled = True
     try:
         always_voice = Users.get_config(convo_id, "ALWAYS_VOICE_RESPONSE")
     except Exception:
-        pass  # Default to False if preference is unset/unavailable.
+        pass  # Default to True if preference is unset/unavailable.
+    try:
+        reply_voice_with_voice = Users.get_config(convo_id, "REPLY_VOICE_WITH_VOICE")
+    except Exception:
+        pass
     try:
         voice_responses_enabled = Users.get_config(convo_id, "VOICE_RESPONSES_ENABLED")
     except Exception:
         pass  # Default to True if preference is unset/unavailable.
-    always_voice_active = normalize_voice_preference(always_voice, False)
+    always_voice_active = normalize_voice_preference(always_voice, True)
+    reply_voice_active = normalize_voice_preference(reply_voice_with_voice, True)
     voice_responses_active = normalize_voice_preference(voice_responses_enabled, True)
 
     telegram_audio_requested = should_request_audio_reply(
         voice_note_detected=voice_note_detected,
         always_voice=always_voice_active,
         voice_enabled=voice_responses_active,
+        reply_voice_with_voice=reply_voice_active,
     )
     voice_mode = False
     input_mode = "voice_note" if voice_note_detected else "text"
@@ -4023,6 +4030,7 @@ async def _getViventiumResponse(
         extra=(
             f"voice={int(voice_mode)} audio_requested={int(telegram_audio_requested)} "
             f"input_voice={int(bool(voice_note_detected))} always_voice={int(always_voice_active)} "
+            f"reply_voice={int(reply_voice_active)} "
             f"files={len(files) if files else 0}"
         ),
     )
@@ -4034,6 +4042,7 @@ async def _getViventiumResponse(
         extra=(
             f"voice={int(voice_mode)} audio_requested={int(telegram_audio_requested)} "
             f"input_voice={int(bool(voice_note_detected))} always_voice={int(always_voice_active)} "
+            f"reply_voice={int(reply_voice_active)} "
             f"files={len(files) if files else 0}"
         ),
     )
@@ -4067,10 +4076,11 @@ async def _getViventiumResponse(
         # Fix: Always render HTML for text display, even when input was a voice note.
         # Voice-note input should NOT degrade text readability.
         # TTS synthesis has its own sanitization path (prepare_tts_text in tts.py).
+        # Display cleanup does not depend on permission to attach audio.
         return (
             render_telegram_markdown(
                 text,
-                strip_voice_markup=telegram_audio_requested,
+                strip_voice_markup=True,
                 streaming_preview=streaming_preview,
                 covered_file_grants=(frozenset() if streaming_preview else
                                      _verified_attachment_grants(lc_attachments, native_file_identity)),
@@ -4998,6 +5008,7 @@ async def _getViventiumResponse(
         always_voice=always_voice_active,
         voice_enabled=voice_responses_active,
         text=tmpresult,
+        reply_voice_with_voice=reply_voice_active,
     )
     model_skip_requested = bool(delivery_plan.skip_voice)
     delivery_audio_allowed, disposition_decision = resolve_delivery_audio_gate(
@@ -5036,7 +5047,7 @@ async def _getViventiumResponse(
     if delivery_audio_text is not None and not disposition_skip_effective:
         tts_avoided_chars = max(0, len(tmpresult) - len(delivery_audio_text))
     logger.info(
-        "[TG_VOICE] trace=%s gate voice_note=%s always_voice=%s voice_enabled=%s "
+        "[TG_VOICE] trace=%s gate voice_note=%s always_voice=%s reply_voice=%s voice_enabled=%s "
         "send=%s voice_decision=%s model_skip_requested=%s model_skip_effective=%s "
         "delivery_disposition_present=%s delivery_disposition_required=%s "
         "delivery_disposition_valid=%s delivery_disposition_audio=%s "
@@ -5045,6 +5056,7 @@ async def _getViventiumResponse(
         trace_id,
         int(bool(voice_note_detected)),
         int(always_voice_active),
+        int(reply_voice_active),
         int(voice_responses_active),
         int(bool(should_send_voice)),
         voice_decision,
@@ -5067,6 +5079,7 @@ async def _getViventiumResponse(
         extra=(
             f"voice_note={int(bool(voice_note_detected))} "
             f"always_voice={int(always_voice_active)} "
+            f"reply_voice={int(reply_voice_active)} "
             f"voice_enabled={int(voice_responses_active)} "
             f"send={int(bool(should_send_voice))} voice_decision={voice_decision} "
             f"model_skip_requested={int(model_skip_requested)} "
@@ -5090,6 +5103,7 @@ async def _getViventiumResponse(
         extra=(
             f"voice_note={int(bool(voice_note_detected))} "
             f"always_voice={int(always_voice_active)} "
+            f"reply_voice={int(reply_voice_active)} "
             f"voice_enabled={int(voice_responses_active)} "
             f"send={int(bool(should_send_voice))} voice_decision={voice_decision} "
             f"model_skip_requested={int(model_skip_requested)} "
@@ -5663,7 +5677,10 @@ async def button_press(update, context):
         import telegram
         try:
             if callback_query.message:
-                return await callback_query.edit_message_reply_markup(reply_markup=reply_markup)
+                return await callback_query.edit_message_text(
+                    text=fallback_text, reply_markup=reply_markup,
+                    parse_mode='MarkdownV2', disable_web_page_preview=True,
+                )
         except telegram.error.BadRequest as e:
             err_str = str(e)
             if "Message is not modified" in err_str:
@@ -5698,7 +5715,17 @@ async def button_press(update, context):
             pref_key = data[:-12]
             _t3 = _time.monotonic()
             try:
-                Users.toggle_config(convo_id, pref_key)
+                Users.toggle_config(
+                    convo_id, pref_key,
+                    telegram_user_id=getattr(getattr(callback_query, "from_user", None), "id", None),
+                )
+            except PermissionError as error:
+                await context.bot.send_message(
+                    chat_id=callback_query.message.chat_id,
+                    message_thread_id=getattr(callback_query.message, "message_thread_id", None),
+                    text=str(error),
+                )
+                return
             except Exception as e:
                 logger.info(e)
             _t4 = _time.monotonic()

@@ -79,6 +79,8 @@ release_tests:
     qa_owner: qa/glasshive-user-control-plane/cases.md
   tests/release/test_install_summary.py:
     qa_owner: qa/installer-resilience/cases.md
+  tests/release/test_helper_local_call.py:
+    qa_owner: qa/stable-dev-runtime/cases.md
   tests/release/test_helper_runtime_intent.py:
     qa_owner: qa/stable-dev-runtime/cases.md
   tests/release/test_helper_bundle_reopen.py:

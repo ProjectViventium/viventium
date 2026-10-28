@@ -3,6 +3,7 @@ import hashlib
 import json
 import subprocess
 import sys
+import sqlite3
 import pytest
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -68,6 +69,84 @@ let parsed=JSON.parse(fs.readFileSync(file));parsed.sources[0].text='changed';fs
 target.sourceSnapshot.sha256=digest();assert.throws(()=>r.readWorkerSource(target,file),/lineage_mismatch/);
 '''
     result=subprocess.run(['node','-e',script,str(runner),str(snapshot)],capture_output=True,text=True)
+    assert result.returncode == 0, result.stderr
+
+
+def test_worker_source_suppressed_native_control_reaches_semantic_judgment():
+    runner = ROOT / 'qa/prompt-architecture/evals/run-worker-source-evals.cjs'
+    script = r'''
+const assert=require('assert'),r=require(process.argv[1]);
+const env={GLASSHIVE_DEFAULT_WORKER_PROFILE:'codex-cli',WPR_MODEL_CODEX_CLI:'synthetic',WPR_CODEX_CLI_REASONING_EFFORT:'high'};
+const route=r.configuredWorkerRoute('primary',env,false);
+const bundle={env:{WPR_CODEX_CLI_REASONING_EFFORT:'high'},provider_capabilities:{native_tools:false},application_developer_instructions:'exact source',developer_instructions:'exact source'};
+const native={state:'completed',model_id:route.model,provider_route_model:route.nativeModel,access_mode:route.access,run_id:'run',worker_id:'worker',bootstrap_bundle_json:JSON.stringify(bundle),output_text:'{NTA}'};
+// A completed silent model answer is judge input for both kinds of case. It is not a pass:
+// the unchanged positive/suppression rubric still decides whether this answer is correct.
+for(const expectedDecision of ['respond','suppress']) {
+ const result=r.verifiedWorkerResponse({insight:''},native,route,'exact source');
+ assert.strictEqual(result.responseForJudge,'{NTA}',expectedDecision);
+ assert.strictEqual(result.observedRoute.state,'completed');
+ assert.strictEqual(result.semanticJudge,undefined);
+}
+const spaced=' \n{ nTa }\t';
+assert.strictEqual(r.verifiedWorkerResponse({insight:''},{...native,output_text:spaced},route,'exact source').responseForJudge,spaced);
+const carrier={type:'assistant_response',content:'{NTA}',tool_name:null};
+assert.strictEqual(r.verifiedWorkerResponse({insight:''},{...native,output_text:JSON.stringify(carrier)},route,'exact source').responseForJudge,'{NTA}');
+assert.strictEqual(r.verifiedWorkerResponse({insight:''},{...native,output_text:JSON.stringify({...carrier,content:spaced})},route,'exact source').responseForJudge,spaced);
+for(const invalid of [
+ {...carrier,type:'tool_call'}, {...carrier,tool_name:'some_tool'},
+ {...carrier,content:'{NTA} plus visible result'}, {...carrier,content:['{NTA}']},
+ {...carrier,extra:'visible result'}, {content:'{NTA}'}, [carrier],
+ {type:'assistant_response',content:'{NTA}'},
+]) {
+ assert.throws(()=>r.verifiedWorkerResponse({insight:''},{...native,output_text:JSON.stringify(invalid)},route,'exact source'),/response_unavailable/);
+}
+assert.strictEqual(r.verifiedWorkerResponse({insight:'Visible result'},native,route,'exact source').responseForJudge,'Visible result');
+for(const output_text of ['', '   ', 'Nothing new to add.', '{NTA} plus invented result', null]) {
+ assert.throws(()=>r.verifiedWorkerResponse({insight:''},{...native,output_text},route,'exact source'),/response_unavailable/);
+}
+for(const response of [null, {insight:'',error:'provider_error'}, {insight:'',errorClass:'provider_error'}, {insight:'',fallbackUsed:true}]) {
+ assert.throws(()=>r.verifiedWorkerResponse(response,native,route,'exact source'),/provider_error|response_unavailable/);
+}
+for(const state of ['running','failed','cancelled']) {
+ assert.throws(()=>r.verifiedWorkerResponse({insight:''},{...native,state},route,'exact source'),/evidence_missing/);
+}
+assert.throws(()=>r.verifiedWorkerResponse({insight:''},null,route,'exact source'),/evidence_missing/);
+assert.throws(()=>r.verifiedWorkerResponse({insight:''},{...native,model_id:'foreign'},route,'exact source'),/route_mismatch/);
+assert.throws(()=>r.verifiedWorkerResponse({insight:''},native,route,'foreign source'),/not_observed/);
+'''
+    result = subprocess.run(['node', '-e', script, str(runner)], capture_output=True, text=True)
+    assert result.returncode == 0, result.stderr
+
+
+def test_worker_source_native_silence_requires_exact_request_binding(tmp_path):
+    runner = ROOT / 'qa/prompt-architecture/evals/run-exact-model-evals.cjs'
+    db_path = tmp_path / 'runtime.sqlite'
+    with sqlite3.connect(db_path) as db:
+        db.executescript('''
+CREATE TABLE provider_requests(run_id TEXT,session_id TEXT,message_id TEXT,owner_id TEXT,created_at TEXT);
+CREATE TABLE provider_sessions(session_id TEXT,conversation_id TEXT,agent_id TEXT,model_id TEXT,access_mode TEXT);
+CREATE TABLE runs(run_id TEXT,state TEXT,worker_id TEXT,provider_route_model TEXT,output_text TEXT);
+CREATE TABLE workers(worker_id TEXT,state_dir TEXT,bootstrap_bundle_json TEXT);
+INSERT INTO provider_requests VALUES ('run','session','request','owner','1');
+INSERT INTO provider_sessions VALUES ('session','conversation','agent','codex-cli:synthetic','read_only');
+INSERT INTO runs VALUES ('run','completed','worker','synthetic','{NTA}');
+INSERT INTO workers VALUES ('worker','state','{}');
+''')
+    script = r'''
+const assert=require('assert'),r=require(process.argv[1]);
+const env={WPR_DB_PATH:process.argv[2]},identity={ownerId:'owner',conversationId:'conversation',agentId:'agent',nativeAuthority:true};
+const actual=r.queryGlassHiveProviderRun(env,'request',identity);
+assert.strictEqual(actual.output_text,'{NTA}');
+assert.strictEqual(actual.state,'completed');
+for(const field of ['ownerId','conversationId','agentId']) {
+ assert.strictEqual(r.queryGlassHiveProviderRun(env,'request',{...identity,[field]:'foreign'}),null);
+}
+assert.strictEqual(r.queryGlassHiveProviderRun(env,'foreign-request',identity),null);
+assert.strictEqual(r.queryGlassHiveProviderRun(env,'request'),null);
+assert.strictEqual(r.queryGlassHiveProviderRun(env,'request',{...identity,nativeAuthority:false}).output_text,undefined);
+'''
+    result = subprocess.run(['node', '-e', script, str(runner), str(db_path)], capture_output=True, text=True)
     assert result.returncode == 0, result.stderr
 
 

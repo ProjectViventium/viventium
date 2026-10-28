@@ -1,11 +1,27 @@
 """Library adapter for the existing Telegram speech engine; no bot/client startup."""
 
 import importlib.util
+import re
 from pathlib import Path
 import sys
 from threading import RLock
 
 _LOAD_LOCK = RLock()
+
+# Data-only speech grammar shared by display and the existing lazy TTS engine.
+SPEECH_URL_RE = re.compile(r"\bhttps?://\S+|\bwww\.\S+")
+CARTESIA_NONVERBAL_ALIASES = {
+    "laugh": "laughter",
+    "laughter": "laughter",
+    "giggle": "laughter",
+    "chuckle": "laughter",
+    "soft laugh": "laughter",
+    "gentle laugh": "laughter",
+    "quiet laugh": "laughter",
+    "nervous laugh": "laughter",
+    "awkward laugh": "laughter",
+    "light laugh": "laughter",
+}
 
 # Relative to the shared directory's parent in source and installed scheduler trees.
 # This is code and public capability data only; no bot, user state or runtime env.

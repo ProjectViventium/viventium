@@ -26,6 +26,12 @@
 - **CC-061:** Recurring appraisal stays private unless Main has one useful authorized result,
   question, plan, or action for the user.
 
+A user's standing invitation may include companionship, play or creative expression. These can
+be meaningful without a new external fact or unfinished task. Preserve that invitation when
+authoring its scheduled prompt; do not add an independent task-only or unanswered-message veto.
+Main weighs current context, Feelings, recent contact and newer user boundaries together. Quiet
+work and silence remain valid choices; no timer or fixed topic replaces that judgment.
+
 ### Safety
 
 - **CC-062:** Never optimize for engagement, guilt, dependence, hidden quotas, or higher Feeling

@@ -695,7 +695,8 @@ def test_call_button_refresh_does_not_overwrite_after_preferences_navigation(mon
         tg_bot._PENDING_INFO_CALL_REFRESHES.clear()
 
 
-def test_deliver_proactive_telegram_message_keeps_text_canonical_and_voice_additive():
+@pytest.mark.parametrize("include_audio", [False, True])
+def test_deliver_proactive_telegram_message_keeps_text_canonical_and_voice_additive(include_audio):
     bot = _FakeTelegramBot()
     authorizations = []
 
@@ -710,7 +711,7 @@ def test_deliver_proactive_telegram_message_keeps_text_canonical_and_voice_addit
             message_thread_id=77,
             text="**Bold** follow-up",
             parse_mode="MarkdownV2",
-            voice_audio=_valid_voice_bytes(),
+            voice_audio=_valid_voice_bytes() if include_audio else None,
             before_side_effect=authorize_transport,
         )
     )
@@ -723,15 +724,15 @@ def test_deliver_proactive_telegram_message_keeps_text_canonical_and_voice_addit
     assert bot.messages[0]["parse_mode"] == "HTML"
     assert "<b>Bold</b>" in bot.messages[0]["text"]
 
-    assert len(bot.audios) == 1
-    assert bot.audios[0]["chat_id"] == 321
-    assert bot.audios[0]["message_thread_id"] == 77
-    assert bot.audios[0]["title"] == "Voice"
-    assert bot.audios[0]["audio"].getvalue() == _valid_voice_bytes()
-    assert authorizations == ["authorized", "authorized"]
-
-    assert bot.audios[0]["audio"].name == "Voice.mp3"
-    assert bot.audios[0]["duration"] == 1
+    assert len(bot.audios) == int(include_audio)
+    assert authorizations == (["authorized", "authorized"] if include_audio else ["authorized"])
+    if include_audio:
+        assert bot.audios[0]["chat_id"] == 321
+        assert bot.audios[0]["message_thread_id"] == 77
+        assert bot.audios[0]["title"] == "Voice"
+        assert bot.audios[0]["audio"].getvalue() == _valid_voice_bytes()
+        assert bot.audios[0]["audio"].name == "Voice.mp3"
+        assert bot.audios[0]["duration"] == 1
 
 
 def test_deliver_proactive_telegram_message_falls_back_to_text_when_voice_send_fails():
@@ -985,12 +986,13 @@ def typing_response(monkeypatch):
     monkeypatch.setattr(tg_bot, "Users", types.SimpleNamespace(get_config=lambda *_a: False))
     monkeypatch.setattr(tg_bot.config, "VIVENTIUM_TELEGRAM_TYPING_INTERVAL_S", 0.01)
 
-    async def invoke(context, robot, source_guard=None, input_recovery=None):
+    async def invoke(context, robot, source_guard=None, input_recovery=None, voice_note_detected=False):
         return await tg_bot.getViventiumResponse(
             update_message=_FakeUpdateMessage(), context=context, title="", robot=robot,
             message="Synthetic lifecycle request.", chatid=111, messageid=222,
             convo_id="typing-lifecycle", message_thread_id=None, trace_id="typing-lifecycle",
             telegram_message_id=222, _source_guard=source_guard, _input_recovery=input_recovery,
+            voice_note_detected=voice_note_detected,
         )
 
     return invoke
@@ -1229,7 +1231,12 @@ def test_typing_stops_refreshing_superseded_source(typing_response, presentation
     asyncio.run(scenario())
 
 
-def test_get_viventium_response_always_voice_stays_text_mode_with_audio(monkeypatch, caplog):
+@pytest.mark.parametrize("master,reply_voice,always,expected_audio", [
+    (True, False, True, 1), (True, True, False, 0), (False, True, True, 0),
+])
+def test_get_viventium_response_always_voice_stays_text_mode_with_audio(
+    monkeypatch, caplog, master, reply_voice, always, expected_audio,
+):
     timings = []
     monkeypatch.setattr(tg_bot, "_tg_timing_log", lambda trace, stage, start, **fields: timings.append((stage, fields)))
     class _CaptureRobot:
@@ -1259,7 +1266,8 @@ def test_get_viventium_response_always_voice_stays_text_mode_with_audio(monkeypa
         "Users",
         types.SimpleNamespace(
             get_config=lambda _convo_id, key: (
-                True if key in {"ALWAYS_VOICE_RESPONSE", "VOICE_RESPONSES_ENABLED"} else ""
+                {"ALWAYS_VOICE_RESPONSE": always, "VOICE_RESPONSES_ENABLED": master,
+                 "REPLY_VOICE_WITH_VOICE": reply_voice}.get(key, "")
             ),
         ),
     )
@@ -1295,8 +1303,9 @@ def test_get_viventium_response_always_voice_stays_text_mode_with_audio(monkeypa
 
     assert robot.kwargs["voice_mode"] is False
     assert robot.kwargs["input_mode"] == "text"
-    assert len(context.bot.audios) == 1
-    assert any(stage == "tts_send" and "bytes=" in fields.get("extra", "") for stage, fields in timings)
+    assert robot.kwargs["audio_requested"] is bool(expected_audio)
+    assert len(context.bot.audios) == expected_audio
+    assert any(stage == "tts_send" and "bytes=" in fields.get("extra", "") for stage, fields in timings) is bool(expected_audio)
     assert "Failed to send voice response" not in caplog.text
     rendered = " ".join(str(item.get("text", "")) for item in context.bot.messages + context.bot.edits)
     assert "[laughter]" not in rendered
@@ -1359,11 +1368,12 @@ def test_get_viventium_response_resolves_nested_blockquote_formatting(monkeypatc
 
 
 @pytest.mark.parametrize("reject_html", [False, True])
+@pytest.mark.parametrize("audio_enabled", [False, True])
 def test_main_reply_preserves_literal_code_with_audio_preference_and_html_fallback(
-    monkeypatch, reject_html
+    monkeypatch, reject_html, audio_enabled,
 ):
     literal = r'{"path":"C:\\temp\\notes","items":["[draft]","a\\b"]}'
-    text = "<soft>Ready.</soft>\n```json\n" + literal + "\n```"
+    text = "<soft>Ready.</soft>\n```json\n" + literal + "\n```\nFor [your name], read [docs](https://example.test/guide)."
 
     class LiteralRobot:
         async def ask_stream_async(self, *args, **kwargs):
@@ -1386,7 +1396,7 @@ def test_main_reply_preserves_literal_code_with_audio_preference_and_html_fallba
     async def no_attachments(**_kwargs):
         pass
 
-    monkeypatch.setattr(tg_bot, "Users", types.SimpleNamespace(get_config=lambda *_a, **_k: True))
+    monkeypatch.setattr(tg_bot, "Users", types.SimpleNamespace(get_config=lambda *_a, **_k: audio_enabled))
     monkeypatch.setattr(tg_bot, "send_librechat_attachments", no_attachments)
     context = _FakeContext()
     if reject_html:
@@ -1418,6 +1428,7 @@ def test_main_reply_preserves_literal_code_with_audio_preference_and_html_fallba
     assert all(literal in item["text"] for item in messages if "Ready." in item.get("text", ""))
     assert any(literal in item.get("text", "") for item in messages)
     assert all("&lt;soft&gt;" not in item.get("text", "") for item in messages)
+    assert any("[your name]" in item.get("text", "") and "docs" in item.get("text", "") for item in messages)
     assert context.bot.audios == []
 
 
@@ -2224,10 +2235,10 @@ def test_get_viventium_response_skip_voice_sends_full_text_without_tts(monkeypat
     assert context.bot.audios == []
 
 
-def test_optional_text_audio_preference_has_smart_user_facing_label():
-    assert tg_bot.config.PREFERENCE_DISPLAY_NAMES["ALWAYS_VOICE_RESPONSE"] == (
-        "Smart voice for text"
-    )
+def test_optional_text_audio_preference_retains_legacy_key_with_clear_user_facing_label():
+    assert tg_bot.config.PREFERENCE_DISPLAY_NAMES["VOICE_RESPONSES_ENABLED"] == "Master Switch"
+    assert tg_bot.config.PREFERENCE_DISPLAY_NAMES["REPLY_VOICE_WITH_VOICE"] == "Reply Voice with Voice"
+    assert tg_bot.config.PREFERENCE_DISPLAY_NAMES["ALWAYS_VOICE_RESPONSE"] == "Always Include Voice Reply"
 
 
 def test_get_viventium_response_message_break_sends_two_bubbles_and_one_audio(monkeypatch):
@@ -2362,7 +2373,13 @@ def test_get_viventium_response_does_not_voice_transport_bridge_errors(monkeypat
     assert context.bot.audios == []
 
 
-def test_get_viventium_response_voice_note_stays_text_mode_with_voice_note_input(monkeypatch):
+@pytest.mark.parametrize("master,reply_voice,always,expected_audio", [
+    (True, True, False, 1), (True, False, True, 1), (False, True, True, 0),
+])
+@pytest.mark.parametrize("tts_failure", [False, True])
+def test_get_viventium_response_voice_note_stays_text_mode_with_voice_note_input(
+    monkeypatch, master, reply_voice, always, expected_audio, tts_failure,
+):
     class _CaptureRobot:
         def __init__(self) -> None:
             self.kwargs = None
@@ -2383,6 +2400,8 @@ def test_get_viventium_response_voice_note_stays_text_mode_with_voice_note_input
 
     async def _fake_synthesize(_text, _convo_id, *, voice_route=None):
         _ = voice_route
+        if tts_failure:
+            raise TimeoutError("synthetic TTS unavailable")
         return _valid_voice_bytes()
 
     monkeypatch.setattr(
@@ -2390,7 +2409,8 @@ def test_get_viventium_response_voice_note_stays_text_mode_with_voice_note_input
         "Users",
         types.SimpleNamespace(
             get_config=lambda _convo_id, key: (
-                False if key == "ALWAYS_VOICE_RESPONSE" else True
+                {"ALWAYS_VOICE_RESPONSE": always, "VOICE_RESPONSES_ENABLED": master,
+                 "REPLY_VOICE_WITH_VOICE": reply_voice}.get(key, True)
             ),
         ),
     )
@@ -2426,7 +2446,11 @@ def test_get_viventium_response_voice_note_stays_text_mode_with_voice_note_input
 
     assert robot.kwargs["voice_mode"] is False
     assert robot.kwargs["input_mode"] == "voice_note"
-    assert len(context.bot.audios) == 1
+    assert robot.kwargs["audio_requested"] is bool(expected_audio)
+    assert len(context.bot.audios) == (0 if tts_failure else expected_audio)
+    assert "Voice note received." in " ".join(
+        str(item.get("text", "")) for item in context.bot.messages + context.bot.edits
+    )
 
 
 def test_get_viventium_response_stream_preview_flush_no_unbound(monkeypatch):
@@ -6302,7 +6326,8 @@ def test_preferences_menu_fetches_core_availability_and_hides_unavailable_featur
     asyncio.run(tg_bot.button_press(update, _FakeContext()))
 
     assert client.get_calls == ["user-1"]
-    buttons = _flatten_keyboard(query.markup_edits[-1]["reply_markup"])
+    buttons = _flatten_keyboard(query.text_edits[-1]["reply_markup"])
+    assert "Master Switch allows reply audio" in query.text_edits[-1]["text"]
     assert not any(
         str(getattr(button, "callback_data", "") or "").startswith("PW:")
         for button in buttons
@@ -7764,3 +7789,118 @@ def test_silent_ack_uncertainty_replays_same_receipt_without_notice(monkeypatch,
 
     asyncio.run(scenario())
     assert robot.acks == [(("quiet-ack", 2, "committed", "", []), {})] * 2
+
+
+@pytest.mark.parametrize("preference", ["VOICE_RESPONSES_ENABLED", "REPLY_VOICE_WITH_VOICE", "ALWAYS_VOICE_RESPONSE"])
+def test_preferences_toggle_passes_authenticated_requester_to_config(monkeypatch, preference):
+    calls = []
+    update, query = _parallel_callback_update(f"{preference}_PREFERENCES", user_id="123", chat_id="505")
+    monkeypatch.setattr(tg_bot, "Users", types.SimpleNamespace(
+        toggle_config=lambda *args, **kwargs: calls.append((args, kwargs))))
+    async def unavailable(_owner): return False
+    monkeypatch.setattr(tg_bot, "_parallel_work_available", unavailable)
+    monkeypatch.setattr(tg_bot, "_preferences_menu_buttons", lambda *_a, **_k: [])
+    asyncio.run(tg_bot.button_press(update, _FakeContext()))
+    assert query.answers == 1
+    assert calls == [(("505:123", preference), {"telegram_user_id": "123"})]
+
+
+def test_global_voice_permission_refusal_is_visible_without_changing_menu(monkeypatch):
+    update, query = _parallel_callback_update("VOICE_RESPONSES_ENABLED_PREFERENCES", user_id="999", chat_id="505")
+    def refused(*_args, **_kwargs):
+        raise PermissionError("Only a configured administrator can change global voice preferences.")
+    monkeypatch.setattr(tg_bot, "Users", types.SimpleNamespace(toggle_config=refused))
+    context = _FakeContext()
+    asyncio.run(tg_bot.button_press(update, context))
+    assert query.answers == 1
+    assert query.text_edits == [] and query.markup_edits == []
+    assert len(context.bot.messages) == 1
+    assert "configured administrator" in context.bot.messages[0]["text"]
+
+
+@pytest.mark.parametrize("decision", ["master-off", "voice-off", "model-skip", "audio-enabled"])
+def test_streaming_display_hides_synthesis_controls_independent_of_audio_gate(
+    monkeypatch, typing_response, decision,
+):
+    async def scenario():
+        preview_sent = asyncio.Event()
+        context = _FakeContext()
+        original_send = context.bot.send_message
+        async def send(**kwargs):
+            result = await original_send(**kwargs)
+            preview_sent.set()
+            return result
+        context.bot.send_message = send
+        tail = "<soft>there.</soft> [your name] [docs](https://example.test/guide)"
+        raw = "Warm [chuckle] hello " + tail
+        class Robot(_FakeRobot):
+            async def ask_stream_async(self, *_args, **_kwargs):
+                yield "Warm [chuckle] hello "
+                await asyncio.wait_for(preview_sent.wait(), 0.5)
+                yield tail + ("\n{SKIP_VOICE}" if decision == "model-skip" else "")
+        preferences = {"VOICE_RESPONSES_ENABLED": decision != "master-off",
+            "REPLY_VOICE_WITH_VOICE": decision != "voice-off", "ALWAYS_VOICE_RESPONSE": False}
+        monkeypatch.setattr(tg_bot, "Users", types.SimpleNamespace(
+            get_config=lambda _key, field: preferences.get(field, "")))
+        prepared, spoken = [], []
+        def prepare(value):
+            prepared.append(value)
+            return value
+        async def synthesize(value, *_args, **_kwargs):
+            spoken.append(value)
+            return _valid_voice_bytes()
+        async def attachments(**_kwargs): return None
+        monkeypatch.setattr(tg_bot.config, "prepare_tts_text", prepare)
+        monkeypatch.setattr(tg_bot, "synthesize_speech", synthesize)
+        monkeypatch.setattr(tg_bot, "send_librechat_attachments", attachments)
+        monkeypatch.setattr(tg_bot, "resolve_tts_selection", lambda **_kwargs: {"provider": "xai", "source": "test"})
+        await typing_response(context, Robot(), voice_note_detected=True)
+        assert preview_sent.is_set()
+        displays = [str(item.get("text", "")) for item in context.bot.messages + context.bot.edits]
+        assert all("[chuckle]" not in value and "<soft>" not in value and "&lt;soft&gt;" not in value for value in displays)
+        assert "Warm hello" in displays[0]
+        assert any("there." in value for value in displays)
+        assert any("[your name]" in value and '<a href="https://example.test/guide">docs</a>' in value for value in displays)
+        expected_audio = decision == "audio-enabled"
+        assert prepared == ([raw] if expected_audio else [])
+        assert spoken == ([raw] if expected_audio else [])
+        assert len(context.bot.audios) == int(expected_audio)
+    asyncio.run(scenario())
+
+
+def test_text_only_topic_delivery_failure_never_retries_in_general():
+    attempts = []
+    class ClosedTopicBot(_FakeTelegramBot):
+        async def send_message(self, **kwargs):
+            attempts.append(kwargs)
+            raise RuntimeError("message thread not found")
+    with pytest.raises(RuntimeError, match="message thread not found"):
+        asyncio.run(tg_bot.deliver_proactive_telegram_message(
+            ClosedTopicBot(), chat_id=-505, message_thread_id=7,
+            text="Completed work.", parse_mode="HTML", voice_audio=None,
+        ))
+    assert len(attempts) == 1
+    assert attempts[0]["chat_id"] == -505
+    assert attempts[0]["message_thread_id"] == 7
+
+
+def test_text_only_reply_preserves_provider_tag_in_multiline_code_and_strips_prose(typing_response):
+    literal = "first line\n<soft>literal</soft>\nlast line"
+    raw = "<soft>Ready.</soft>\n```text\n" + literal + "\n```"
+    requested_audio = []
+
+    class LiteralRobot(_FakeRobot):
+        async def ask_stream_async(self, *_args, **kwargs):
+            requested_audio.append(kwargs["audio_requested"])
+            yield raw
+
+    context = _FakeContext()
+    asyncio.run(typing_response(context, LiteralRobot()))
+
+    displays = [str(item.get("text", "")) for item in context.bot.messages + context.bot.edits]
+    assert requested_audio == [False]
+    assert context.bot.audios == []
+    assert any("Ready." in value and "<pre>" in value for value in displays)
+    assert any(html.escape(literal) in value for value in displays)
+    assert all(value.count("&lt;soft&gt;") == 1 for value in displays if "literal" in value)
+    assert all("<soft>" not in value for value in displays)

@@ -11,11 +11,16 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 MODULE_PATH = REPO_ROOT / "scripts" / "viventium" / "remote_call_tunnel.py"
 
 
-def load_module():
+def load_module(*, native_dns=False):
     spec = importlib.util.spec_from_file_location("remote_call_tunnel", MODULE_PATH)
     module = importlib.util.module_from_spec(spec)
     assert spec.loader is not None
     spec.loader.exec_module(module)
+    if not native_dns:
+        # Existing lifecycle tests must never query real DNS.
+        module.resolve_public_ipv4_hosts = lambda hosts: {
+            host: {"addresses": ["198.51.100.20"]} for host in hosts
+        }
     return module
 
 
@@ -1482,7 +1487,7 @@ def test_start_observation_fallback_preserves_existing_edge_without_upnp_depende
     monkeypatch.setattr(module, "discover_public_ipv4", observe)
     if wan == state["public_ip"]:
         assert module.cmd_start(args) == 0
-        assert module.load_state(state_path) == state
+        assert {key: value for key, value in module.load_state(state_path).items() if key != "public_dns"} == state
     else:
         with pytest.raises(module.PublicEdgeWanError): module.cmd_start(args)
         retained = module.load_state(state_path)
@@ -1500,7 +1505,7 @@ def test_start_manual_forwarding_has_no_upnp_or_public_probe_dependency(monkeypa
     monkeypatch.setattr(module, "resolve_binary", lambda _name: None)
     monkeypatch.setattr(module, "discover_public_ipv4", lambda *_args: pytest.fail("Manual edge reuse has no router observation dependency"))
     assert module.cmd_start(args) == 0
-    assert module.load_state(state_path) == state
+    assert {key: value for key, value in module.load_state(state_path).items() if key != "public_dns"} == state
     assert commands == []
 
 
@@ -1523,7 +1528,7 @@ def test_start_retry_recovers_transient_wan_observation_outage_without_teardown(
         assert module.load_state(state_path) == failed
     else:
         assert module.cmd_start(args) == 0
-        assert module.load_state(state_path) == state
+        assert {key: value for key, value in module.load_state(state_path).items() if key != "public_dns"} == state
         assert module.state_is_healthy(state) is True
     assert commands == []
 
@@ -1631,3 +1636,264 @@ def test_public_media_address_guard_preserves_other_supported_topologies(monkeyp
     elif scope == "router_not_assigned": assigned = {"192.0.2.99"}
     monkeypatch.setattr(module, "assigned_local_ipv4s", lambda: assigned)
     module.validate_local_public_media_address(node_ip, "9.9.9.9", local_ip, livekit_port=port)
+
+
+def dns_edge_state():
+    return {
+        "provider": "public_https_edge", "public_ip": "198.51.100.20",
+        "caddy": {"pid": 701}, "router": {"local_ip": "192.168.50.10", "mappings": []},
+        "client": {"target": "http://127.0.0.1:3190", "public_url": "https://app.example.test"},
+        "playground": {"target": "http://localhost:3300", "public_url": "https://voice.example.test"},
+    }
+
+
+def test_status_reports_wrong_voice_dns_without_stopping_healthy_edge(monkeypatch, tmp_path, capsys):
+    module = load_module()
+    state = dns_edge_state()
+    path = tmp_path / "edge.json"
+    module.save_state(path, state)
+    monkeypatch.setattr(module, "state_is_healthy", lambda _state, **_kw: True)
+    monkeypatch.setattr(module, "assigned_local_ipv4s", lambda: {"192.168.50.10"})
+    monkeypatch.setattr(module, "resolve_public_ipv4_hosts", lambda hosts: {
+        host: {"addresses": ["198.51.100.20" if host == "app.example.test" else "203.0.113.44"]}
+        for host in hosts
+    }, raising=False)
+    monkeypatch.setattr(module, "stop_state", lambda _state: pytest.fail("DNS must not stop owned edge"))
+
+    assert module.cmd_status(types.SimpleNamespace(state_file=str(path))) == 0
+    result = json.loads(capsys.readouterr().out)
+    assert result["runtime_healthy"] is True
+    assert result["healthy"] is True
+    assert result["public_dns"]["code"] == "public_edge_dns_mismatch"
+    assert "voice.example.test" in result["public_dns"]["message"]
+    assert result["public_dns"]["hosts"][1]["addresses"] == ["203.0.113.44"]
+    saved = module.load_state(path)
+    assert saved["caddy"] == state["caddy"]
+    assert saved["router"] == state["router"]
+    assert "last_error" not in saved
+
+
+@pytest.mark.parametrize("addresses,expected", [
+    (["198.51.100.20"], "match"),
+    (["192.168.50.10"], "local_override"),
+    (["203.0.113.44"], "mismatch"),
+    ([], "unavailable"),
+    (["198.51.100.20", "203.0.113.44"], "mismatch"),
+])
+def test_public_dns_classifies_each_managed_host(monkeypatch, addresses, expected):
+    module = load_module()
+    monkeypatch.setattr(module, "assigned_local_ipv4s", lambda: {"192.168.50.10"})
+    monkeypatch.setattr(module, "resolve_public_ipv4_hosts", lambda hosts: {host: {"addresses": addresses} for host in hosts})
+    observed = module.observe_public_edge_dns(dns_edge_state(), force=True)
+    assert {host["status"] for host in observed["public_dns"]["hosts"]} == {expected}
+    assert observed["public_dns"]["off_network_reachability"] == "not_probed"
+    assert "last_error" not in observed
+
+
+def test_dns_recovery_rechecks_negative_result_and_caches_matching_snapshot(monkeypatch):
+    module = load_module()
+    monkeypatch.setattr(module, "assigned_local_ipv4s", lambda: {"192.168.50.10"})
+    clock = [1000.0]
+    calls = []
+    addresses = ["203.0.113.44"]
+    monkeypatch.setattr(module.time, "time", lambda: clock[0])
+    def resolve(hosts):
+        calls.append(list(hosts))
+        return {host: {"addresses": list(addresses)} for host in hosts}
+    monkeypatch.setattr(module, "resolve_public_ipv4_hosts", resolve)
+    first = module.observe_public_edge_dns(dns_edge_state())
+    addresses[:] = ["198.51.100.20"]
+    recovered = module.observe_public_edge_dns(first)
+    assert recovered["public_dns"]["status"] == "match"
+    assert len(calls) == 2
+    assert module.observe_public_edge_dns(recovered) == recovered
+    assert len(calls) == 2
+    clock[0] += module.PUBLIC_EDGE_DNS_CACHE_SECONDS + 1
+    module.observe_public_edge_dns(recovered)
+    assert len(calls) == 3
+    changed = {**recovered, "public_ip": "198.51.100.21"}
+    module.observe_public_edge_dns(changed)
+    assert len(calls) == 4
+
+
+def test_dns_observation_does_not_own_external_targets_or_other_remote_modes(monkeypatch):
+    module = load_module()
+    monkeypatch.setattr(module, "resolve_public_ipv4_hosts", lambda _hosts: pytest.fail("Not a managed local public edge"))
+    state = dns_edge_state()
+    state["provider"] = "tailscale_tailnet_https"
+    assert module.observe_public_edge_dns(state) == state
+    state["provider"] = "public_https_edge"
+    for key in ("client", "playground"):
+        state[key]["target"] = "https://managed-provider.example.test"
+    assert module.observe_public_edge_dns(state) == state
+
+
+def test_dns_subprocess_timeout_is_bounded_and_not_an_empty_success(monkeypatch):
+    module = load_module(native_dns=True)
+    def timed_out(command, **kwargs):
+        assert kwargs["timeout"] == module.PUBLIC_EDGE_DNS_TIMEOUT_SECONDS
+        assert kwargs.get("shell", False) is False
+        raise module.subprocess.TimeoutExpired(command, kwargs["timeout"])
+    monkeypatch.setattr(module.subprocess, "run", timed_out)
+    result = module.resolve_public_ipv4_hosts(["voice.example.test"])
+    assert result["voice.example.test"]["addresses"] == []
+    assert result["voice.example.test"]["error"] == "lookup_unavailable"
+
+
+def test_start_reuses_healthy_edge_even_with_stale_dns(monkeypatch, tmp_path, capsys):
+    module = load_module()
+    state = dns_edge_state()
+    path = tmp_path / "edge.json"
+    module.save_state(path, state)
+    monkeypatch.setattr(module, "state_is_healthy", lambda value: bool(value))
+    monkeypatch.setattr(module, "state_matches_requested_livekit_node_ip", lambda *_args: True)
+    monkeypatch.setattr(module, "state_matches_requested_public_edge_surfaces", lambda *_args: True)
+    monkeypatch.setattr(module, "assigned_local_ipv4s", lambda: {"192.168.50.10"})
+    monkeypatch.setattr(module, "resolve_public_ipv4_hosts", lambda hosts: {host: {"addresses": ["203.0.113.44"]} for host in hosts})
+    monkeypatch.setattr(module, "stop_state", lambda _state: pytest.fail("DNS must not retire a healthy edge"))
+    args = types.SimpleNamespace(state_file=str(path), log_dir=str(tmp_path / "logs"), provider="public_https_edge")
+    assert module.cmd_start(args) == 0
+    result = json.loads(capsys.readouterr().out)
+    assert result["public_dns"]["code"] == "public_edge_dns_mismatch"
+    assert result["caddy"] == state["caddy"]
+
+
+def test_dns_stale_lan_override_is_not_accepted_and_malformed_cache_is_rechecked(monkeypatch):
+    module = load_module()
+    state = dns_edge_state()
+    state["public_dns"] = {"checked_at_unix": "invalid", "status": "match"}
+    monkeypatch.setattr(module, "assigned_local_ipv4s", lambda: {"192.168.50.11"})
+    monkeypatch.setattr(module, "resolve_public_ipv4_hosts", lambda hosts: {
+        host: {"addresses": ["192.168.50.10"]} for host in hosts
+    })
+    assert module.observe_public_edge_dns(state)["public_dns"]["status"] == "mismatch"
+
+
+def test_native_dns_resolver_validates_bounded_json_result_and_all_hosts(monkeypatch):
+    module = load_module(native_dns=True)
+    hostnames = ["app.example.test", "voice.example.test"]
+    calls = []
+    def run(command, **kwargs):
+        calls.append(command)
+        assert json.loads(command[-1]) == hostnames
+        assert kwargs["timeout"] == module.PUBLIC_EDGE_DNS_TIMEOUT_SECONDS
+        return types.SimpleNamespace(returncode=0, stdout=json.dumps({host: {"addresses": ["198.51.100.20"]} for host in hostnames}))
+    monkeypatch.setattr(module.subprocess, "run", run)
+    assert set(module.resolve_public_ipv4_hosts(hostnames)) == set(hostnames)
+    assert len(calls) == 1
+    monkeypatch.setattr(module.subprocess, "run", lambda *_args, **_kwargs: types.SimpleNamespace(returncode=0, stdout="not json"))
+    assert module.resolve_public_ipv4_hosts(hostnames)[hostnames[0]]["error"] == "lookup_unavailable"
+
+
+def test_mapping_refresh_records_dns_issue_without_replacing_owned_edge(monkeypatch, tmp_path, capsys):
+    module = load_module()
+    state, _live, commands, _ports, _old_ip, _new_ip = edge_refresh_fixture(module, monkeypatch, moved=False)
+    state["client"] = {"target": "http://127.0.0.1:3190", "public_url": "https://app.example.test"}
+    path = tmp_path / "edge.json"
+    module.save_state(path, state)
+    monkeypatch.setattr(module, "resolve_public_ipv4_hosts", lambda hosts: {
+        host: {"addresses": ["203.0.113.44"]} for host in hosts
+    })
+    assert module.cmd_refresh_mappings(types.SimpleNamespace(state_file=str(path), upnp_lease_seconds=14400)) == 0
+    result = json.loads(capsys.readouterr().out)
+    assert result["public_dns"]["code"] == "public_edge_dns_mismatch"
+    assert result["caddy"] == state["caddy"]
+    assert result["router"]["mappings"] == state["router"]["mappings"]
+    assert len(commands) == len(state["router"]["mappings"])
+    assert all("-d" not in command for command in commands)
+    assert "last_error" not in result
+
+
+
+def test_status_does_not_wait_for_existing_lifecycle_lock(tmp_path):
+    module = load_module()
+    path = tmp_path / "edge.json"
+    module.save_state(path, dns_edge_state())
+    lock = module.with_lock(path.with_suffix(".lock"))
+    program = """import importlib.util, json, sys, types
+from pathlib import Path
+spec = importlib.util.spec_from_file_location('status_probe', sys.argv[1])
+m = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(m)
+m.assigned_local_ipv4s = lambda: {'192.168.50.10'}
+m.state_is_healthy = lambda _state, **_kw: True
+m.resolve_public_ipv4_hosts = lambda hosts: {h: {'addresses': ['203.0.113.44']} for h in hosts}
+raise SystemExit(m.cmd_status(types.SimpleNamespace(state_file=sys.argv[2])))
+"""
+    try:
+        result = module.subprocess.run(
+            [module.sys.executable, "-I", "-c", program, str(MODULE_PATH), str(path)],
+            capture_output=True, text=True, timeout=2,
+        )
+    finally:
+        module.fcntl.flock(lock.fileno(), module.fcntl.LOCK_UN)
+        lock.close()
+    assert result.returncode == 0
+    output = json.loads(result.stdout)
+    assert output["healthy"] is True
+    assert output["public_dns"]["code"] == "public_edge_dns_mismatch"
+    assert "public_dns" not in module.load_state(path)
+
+
+@pytest.mark.parametrize("runtime_healthy", [True, False])
+@pytest.mark.parametrize("dns_status", ["match", "mismatch", "unavailable"])
+def test_status_exit_code_remains_runtime_health_for_launcher_consumers(monkeypatch, tmp_path, capsys, runtime_healthy, dns_status):
+    module = load_module()
+    path = tmp_path / "edge.json"
+    module.save_state(path, dns_edge_state())
+    monkeypatch.setattr(module, "assigned_local_ipv4s", lambda: {"192.168.50.10"})
+    monkeypatch.setattr(module, "observe_public_edge_dns", lambda state, **_kw: {**state, "public_dns": {"status": dns_status}})
+    monkeypatch.setattr(module, "state_is_healthy", lambda _state, **_kw: runtime_healthy)
+    assert module.cmd_status(types.SimpleNamespace(state_file=str(path))) == (0 if runtime_healthy else 1)
+    result = json.loads(capsys.readouterr().out)
+    assert result["healthy"] is runtime_healthy
+    assert result["runtime_healthy"] is runtime_healthy
+    assert result["public_dns"]["status"] == dns_status
+
+
+def test_status_keeps_runtime_result_when_diagnostic_save_is_unwritable(monkeypatch, tmp_path, capsys):
+    module = load_module()
+    path = tmp_path / "edge.json"
+    module.save_state(path, dns_edge_state())
+    monkeypatch.setattr(module, "assigned_local_ipv4s", lambda: {"192.168.50.10"})
+    monkeypatch.setattr(module, "state_is_healthy", lambda _state, **_kw: True)
+    monkeypatch.setattr(module, "resolve_public_ipv4_hosts", lambda hosts: {
+        host: {"addresses": ["203.0.113.44"]} for host in hosts
+    })
+    monkeypatch.setattr(module, "save_state", lambda *_args: (_ for _ in ()).throw(PermissionError("Read-only state")))
+    assert module.cmd_status(types.SimpleNamespace(state_file=str(path))) == 0
+    result = json.loads(capsys.readouterr().out)
+    assert result["healthy"] is True
+    assert result["public_dns"]["code"] == "public_edge_dns_mismatch"
+    assert "public_dns" not in module.load_state(path)
+
+
+def test_status_never_overwrites_a_newer_lifecycle_snapshot(monkeypatch, tmp_path, capsys):
+    module = load_module()
+    initial = dns_edge_state()
+    newer = {**initial, "created_at": "2030-01-02T03:04:05Z"}
+    reads = iter([initial, newer])
+    saved = []
+    monkeypatch.setattr(module, "load_state", lambda _path: next(reads))
+    monkeypatch.setattr(module, "assigned_local_ipv4s", lambda: {"192.168.50.10"})
+    monkeypatch.setattr(module, "state_is_healthy", lambda _state, **_kw: True)
+    monkeypatch.setattr(module, "save_state", lambda *_args: saved.append(_args))
+    assert module.cmd_status(types.SimpleNamespace(state_file=str(tmp_path / "edge.json"))) == 0
+    assert saved == []
+    assert json.loads(capsys.readouterr().out)["healthy"] is True
+
+
+def test_status_reuses_one_fresh_interface_observation(monkeypatch, tmp_path, capsys):
+    module = load_module()
+    path = tmp_path / "edge.json"
+    module.save_state(path, dns_edge_state())
+    scans = []
+    def assigned():
+        scans.append(True)
+        return {"192.168.50.10"}
+    monkeypatch.setattr(module, "assigned_local_ipv4s", assigned)
+    monkeypatch.setattr(module, "probe_local_endpoint", lambda *_args, **_kw: True)
+    monkeypatch.setattr(module, "pid_is_running", lambda *_args: True)
+    assert module.cmd_status(types.SimpleNamespace(state_file=str(path))) == 0
+    assert json.loads(capsys.readouterr().out)["healthy"] is True
+    assert scans == [True]

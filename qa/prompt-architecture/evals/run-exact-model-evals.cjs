@@ -496,7 +496,7 @@ function queryGlassHiveProviderRun(env, responseMessageId, { ownerId, conversati
   if (!responseMessageId || !ownerId || !conversationId || !agentId) return null;
   const sql = [
     nativeAuthority
-      ? "SELECT pr.run_id, r.state, w.worker_id, w.state_dir, ps.model_id, ps.access_mode, r.provider_route_model, w.bootstrap_bundle_json"
+      ? "SELECT pr.run_id, r.state, w.worker_id, w.state_dir, ps.model_id, ps.access_mode, r.provider_route_model, w.bootstrap_bundle_json, r.output_text"
       : "SELECT pr.run_id, r.state, w.worker_id, w.state_dir",
     "FROM provider_requests pr",
     "JOIN runs r ON r.run_id = pr.run_id",

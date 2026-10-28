@@ -345,6 +345,10 @@ Supporting release regressions: `tests/release/test_helper_hash_consumers.py`, `
   reason and the visible Configuration needs repair status; never weaken checks to start.
   Confirm actual browser/Telegram/Voice response after
   recovery and deliberate Stop through the affected user surface.
+- **Local call shortcut:** the helper uses the configured loopback chat and focuses the normal
+  Call control after ordinary sign-in. It must not create a call or start recording from a URL hint.
+  `tests/release/test_helper_local_call.py` checks the existing helper lifecycle and URL selection;
+  the [local-call-entry journey](../voice/cases.yaml) owns actual click, speech and persistence proof.
 - **Automated support:** `tests/release/test_runtime_reliability_recovery.py`, `test_helper_runtime_intent.py`,
   `test_macos_helper_supervision.py`, `test_macos_helper_install.py`, `test_cli_upgrade.py`,
   `test_detached_librechat_api_watchdog.py`, `test_native_stack_helpers.py`.

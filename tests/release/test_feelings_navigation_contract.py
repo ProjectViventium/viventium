@@ -72,7 +72,8 @@ def test_status_bar_exposes_direct_feelings_navigation_for_running_and_stopped_s
     assert 'alert.addButton(withTitle: "Start and Open Feelings")' in source
     assert "Start Viventium now and open Feelings in your browser?" in source
     assert re.search(
-        r"private func startStack\(\s*openWhenReady: Bool,\s*openPath: String\? = nil,\s*launchReason:",
+        r"private func startStack\(\s*openWhenReady: Bool,\s*openPath: String\? = nil,\s*"
+        r"openLocalCallWhenReady: Bool = false,\s*launchReason:",
         source,
     )
     assert "self.openBrowser(path: openPath)" in source

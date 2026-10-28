@@ -324,6 +324,34 @@ Router lease note:
   interface addresses and an explicitly separate managed LiveKit API endpoint retain their
   existing behavior. This guard does not infer the address of a hosted media service.
 
+Public DNS observation:
+
+- Startup, mapping refresh and status reuse the existing public-edge state to record an IPv4 DNS
+  observation for each surface served by this local edge. A healthy app hostname does not stand in
+  for the separate Playground, LiveKit or worker-link hostname.
+- The observation names each host, its returned IPv4 addresses and the expected public IPv4.
+  `public_edge_dns_mismatch` means the observed addresses differ; `public_edge_dns_unavailable`
+  means the lookup could not establish an answer. Neither is proof of an off-network call result.
+- This check is bounded to two seconds for the complete hostname set. Matching observations may be
+  reused for at most 60 seconds, with the current host set, public address and assigned LAN addresses
+  unchanged. Negative or unavailable observations are rechecked on the next status request.
+- A deliberate local DNS answer matching this machine's assigned LAN address is recorded as
+  `local_override`; it is not incorrectly treated as a stale public address. External provider
+  targets and other remote-access modes are outside this local direct-edge comparison. An
+  intentional public proxy needs separate reachability proof; an IP difference alone does not prove
+  that proxy is unavailable. IPv6 and real media acceptance remain separate checks.
+- DNS observations are diagnostic state, not lifecycle authority. They never stop Caddy, clear
+  published URLs, replace owned router mappings, change DNS records, or block local startup. Status
+  reports the DNS problem separately from `runtime_healthy`; correcting DNS needs no service restart.
+  The compatibility `healthy` value and status exit code continue to mean local runtime health, so
+  launcher/progress consumers do not mislabel DNS drift as a missing tunnel. Saving a status
+  observation is best-effort and nonblocking while startup or refresh holds the lifecycle lock;
+  an unwritable state directory never turns a readable healthy runtime into a status failure.
+  Stronger existing WAN/media-address errors retain their original recovery rules.
+- No DNS lookup is added to call creation, speech turns, Queen execution or worker handoff. Existing
+  status output names an action-required mismatch or an unverified lookup, without claiming that
+  this Mac has proved cellular reachability.
+
 Hostname guidance:
 
 - The recommended stable layout is unique subdomains per surface, for example:
@@ -345,11 +373,13 @@ Same-network note:
 - Public custom domains resolve to the router's public address. A phone on the same Wi-Fi can use
   those URLs only when the router supports NAT loopback/hairpinning (or split-horizon DNS sends the
   names back through an equivalent trusted HTTPS edge).
-- A public link working over cellular while timing out on the same Wi-Fi is evidence of missing NAT
-  loopback, not evidence that Caddy, public DNS, or the public edge is down.
-- The immediate user test is to turn Wi-Fi off and use cellular. The durable LAN fix is router NAT
-  loopback/split DNS, or a supported private-mesh mode such as Tailscale. Plain LAN HTTP is not a
-  substitute for browser microphone, LiveKit WSS, or signed public-link security.
+- A public link working over cellular while timing out on the same Wi-Fi requires route, DNS and
+  application evidence before assigning a cause. That comparison alone proves neither a router
+  fault nor an application regression; different resolver answers can produce the same symptom.
+- Compare cellular and Wi-Fi DNS answers, HTTPS reachability and the actual router route. Use the
+  existing supported repair for the proven cause, such as correcting DNS, router loopback/split DNS
+  or a private-mesh mode. Plain LAN HTTP is not a substitute for browser microphone, LiveKit WSS,
+  or signed public-link security.
 - The helper intentionally rejects reusing one hostname for different surface ports because that
   would blur routing ownership and create brittle mixed-surface assumptions.
 
@@ -471,9 +501,9 @@ that should overwrite the other:
 - The prior assumption that advertised TURN/TLS was sufficient fallback was documentation and QA
   drift. A TLS listener and relay-candidate allocation do not prove media unless the allocated relay
   range is reachable and the browser selects a relay pair.
-- A public hostname that works off-LAN but times out on the serving Wi-Fi is a separate router
-  hairpin/split-DNS topology issue. It must not be misreported as either a dead public edge or a
-  completed same-Wi-Fi fix.
+- A public hostname that works off-LAN but times out on the serving Wi-Fi needs separate route,
+  DNS and application evidence. The comparison alone establishes neither a dead public edge nor a
+  router hairpin/split-DNS fault, and it does not prove a completed same-Wi-Fi fix.
 
 Product, development, and operations consequences:
 

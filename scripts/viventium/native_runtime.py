@@ -493,6 +493,7 @@ def native_glasshive_transport_environment(
         "GLASSHIVE_PROVIDER_ALLOWED_WORKSPACE_ROOTS": str(support / "state/runtime/native/glasshive/workspaces"),
         "WPR_HOST_WORKSPACE_ROOT": str(support / "state/runtime/native/glasshive/workspaces"),
         "WPR_LIBRECHAT_UPLOADS_ROOT": str(support / "data/uploads"),
+        "GLASSHIVE_PROTECTED_SOURCE_ROOTS": str(support),
         "WPR_BOOTSTRAP_SOURCE_ROOTS": os.pathsep.join((
             str(support / "data/uploads"), str(database_path.parent / "managed-files"),
         )),
@@ -548,6 +549,7 @@ def native_glasshive_environment(root: Path, support: Path) -> dict[str, str]:
         "WPR_API_TOKEN": token,
         "WPR_DB_PATH": str(support / "state/runtime/native/glasshive/runtime.sqlite"),
         "GLASSHIVE_PROVIDER_ACCOUNT_HOME_ROOT": str(support / "state/provider-accounts/glasshive"),
+        "GLASSHIVE_PROTECTED_SOURCE_ROOTS": str(support),
         "GLASSHIVE_RELEASE_ID": str(metadata["source_commit"]),
         "GLASSHIVE_PARENT_REVISION": str(metadata["source_commit"]),
         "GLASSHIVE_COMPONENT_REVISION": str(metadata["components"]["glasshive"]["commit"]),
