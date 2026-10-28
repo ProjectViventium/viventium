@@ -7882,3 +7882,25 @@ def test_text_only_topic_delivery_failure_never_retries_in_general():
     assert len(attempts) == 1
     assert attempts[0]["chat_id"] == -505
     assert attempts[0]["message_thread_id"] == 7
+
+
+def test_text_only_reply_preserves_provider_tag_in_multiline_code_and_strips_prose(typing_response):
+    literal = "first line\n<soft>literal</soft>\nlast line"
+    raw = "<soft>Ready.</soft>\n```text\n" + literal + "\n```"
+    requested_audio = []
+
+    class LiteralRobot(_FakeRobot):
+        async def ask_stream_async(self, *_args, **kwargs):
+            requested_audio.append(kwargs["audio_requested"])
+            yield raw
+
+    context = _FakeContext()
+    asyncio.run(typing_response(context, LiteralRobot()))
+
+    displays = [str(item.get("text", "")) for item in context.bot.messages + context.bot.edits]
+    assert requested_audio == [False]
+    assert context.bot.audios == []
+    assert any("Ready." in value and "<pre>" in value for value in displays)
+    assert any(html.escape(literal) in value for value in displays)
+    assert all(value.count("&lt;soft&gt;") == 1 for value in displays if "literal" in value)
+    assert all("<soft>" not in value for value in displays)

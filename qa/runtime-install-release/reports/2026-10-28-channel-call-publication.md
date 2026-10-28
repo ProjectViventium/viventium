@@ -73,6 +73,8 @@ The separate source/consumer selections are recorded in Scope Run. Package build
 - Preserved: original local work and private evidence; newer main fixes, explicit supported choices and the simple continuous-relationship architecture.
 - Reconciled: stale formatting/history differences were not used to overwrite newer main behavior. Only reviewed product progress and public-safe documentation enter the publication candidates.
 - Privacy: raw prompts, conversations, accounts, local paths, attachments, logs and runtime state are excluded.
+- Independent review corrected a remaining network-cause overclaim: cellular/Wi-Fi differences need DNS, route and application evidence. The helper regression also has its bidirectional QA-owner reference. The source review found no further material product defect.
+- Existing repository CI runs are recorded separately from the focused selections above. Passing source/publication checks does not establish installed or audio acceptance.
 - Remaining acceptance: signed phone/local call and audible end-to-end behavior remain PARTIAL. No service configuration or runtime was changed by this publication task.
 
 Feature evidence:
