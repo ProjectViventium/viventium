@@ -2346,8 +2346,8 @@ fences still govern it. A queue or message continuation does not erase an earlie
 because another run starts. This recovery does not automatically revive historical deadletters.
 Do not create a new model request to recover a completed answer or relax immutable idempotency
 conflicts. A first dispatch adds no recovery lookup.
-Recovered files keep the validated native emitter message ID even when the original invocation
-receipt is missing. Do not substitute the parent message ID or fabricate a full invocation identity.
+Normal and recovered follow-up files keep the validated native emitter message ID. Recovery
+preserves that emitter even when the original invocation receipt is missing. Do not substitute the parent message ID or fabricate a full invocation identity.
 
 A retry keeps the same authored message; it does not regenerate Main. Superseded results and fixed
 errors retain their existing rejection behavior. The existing warning records only bounded stage

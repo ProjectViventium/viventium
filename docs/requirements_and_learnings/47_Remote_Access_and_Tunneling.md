@@ -373,11 +373,13 @@ Same-network note:
 - Public custom domains resolve to the router's public address. A phone on the same Wi-Fi can use
   those URLs only when the router supports NAT loopback/hairpinning (or split-horizon DNS sends the
   names back through an equivalent trusted HTTPS edge).
-- A public link working over cellular while timing out on the same Wi-Fi is evidence of missing NAT
-  loopback, not evidence that Caddy, public DNS, or the public edge is down.
-- The immediate user test is to turn Wi-Fi off and use cellular. The durable LAN fix is router NAT
-  loopback/split DNS, or a supported private-mesh mode such as Tailscale. Plain LAN HTTP is not a
-  substitute for browser microphone, LiveKit WSS, or signed public-link security.
+- A public link working over cellular while timing out on the same Wi-Fi requires route, DNS and
+  application evidence before assigning a cause. That comparison alone proves neither a router
+  fault nor an application regression; different resolver answers can produce the same symptom.
+- Compare cellular and Wi-Fi DNS answers, HTTPS reachability and the actual router route. Use the
+  existing supported repair for the proven cause, such as correcting DNS, router loopback/split DNS
+  or a private-mesh mode. Plain LAN HTTP is not a substitute for browser microphone, LiveKit WSS,
+  or signed public-link security.
 - The helper intentionally rejects reusing one hostname for different surface ports because that
   would blur routing ownership and create brittle mixed-surface assumptions.
 
@@ -499,9 +501,9 @@ that should overwrite the other:
 - The prior assumption that advertised TURN/TLS was sufficient fallback was documentation and QA
   drift. A TLS listener and relay-candidate allocation do not prove media unless the allocated relay
   range is reachable and the browser selects a relay pair.
-- A public hostname that works off-LAN but times out on the serving Wi-Fi is a separate router
-  hairpin/split-DNS topology issue. It must not be misreported as either a dead public edge or a
-  completed same-Wi-Fi fix.
+- A public hostname that works off-LAN but times out on the serving Wi-Fi needs separate route,
+  DNS and application evidence. The comparison alone establishes neither a dead public edge nor a
+  router hairpin/split-DNS fault, and it does not prove a completed same-Wi-Fi fix.
 
 Product, development, and operations consequences:
 
