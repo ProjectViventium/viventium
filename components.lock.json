@@ -8,7 +8,7 @@
       "path": "viventium_v0_4/LibreChat",
       "origin": "https://github.com/ProjectViventium/viventium-librechat.git",
       "upstream": "https://github.com/danny-avila/LibreChat.git",
-      "ref": "67176b4153104a372b8745fc380a06247149ceff"
+      "ref": "1f22b82cc967bea9d01d8e5dc72a820f8501263c"
     },
     {
       "name": "agents-playground",
@@ -43,7 +43,7 @@
       "path": "viventium_v0_4/xPerfect",
       "origin": "https://github.com/xPerfectAI/xPerfect.git",
       "upstream": "",
-      "ref": "bf2b922f3c2690d37d95574177c01f510e831204"
+      "ref": "3c4df9ba8164244bf1b79ef7d0fab86adfd22893"
     },
     {
       "name": "Viventium-Health",

@@ -125,12 +125,19 @@ truthful Main presentation without losing or repeating durable work.
   the existing read-only work facade. Preserve the full output and accepted input. A retained
   terminal result does not prove that a later correction or current run is complete. Reading
   a result must not launch, retry, steer, or alter its delivery state.
-- Retained result-file inventory reads only evidence that contains files. Check its accepted
+- Retained delegated-result file inventory reads only evidence that contains files. Check accepted
   callbacks in one batch against the exact owner, origin, work, run, attempt, callback, result
   revision/digest, and accepted operation/generation tuple. Do not add a courier row cap. An
   invalid legacy row grants no access and does not hide valid sibling files. Foreign scope remains
   rejected. Explicitly selecting or publishing a file still requires its current accepted-result
   fence; inventory visibility does not grant publication authority.
+- Retained native-coordination files use the existing saved-presentation authority and its exact
+  owner, conversation, source, run and result proof. They do not require a legacy delegated-callback
+  record. File rows, links and model text alone cannot grant access.
+- Before Main synthesizes a current native result, pass its verified run, attempt and file-hash
+  grants through the existing signed per-invocation bootstrap. File authority is separate from
+  native action tools; a tool-less Main must retain authorized result files. Client request bodies
+  and model text cannot supply these grants.
 - **PW-109:** If an origin disappears, useful completion uses its governed exact-owner continuation
   and never recreates the deleted origin.
 - **PW-110:** Callback completion survives stream close, updates authoritative Active Work state
