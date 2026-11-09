@@ -4,7 +4,7 @@
 
 QA mode: **blast-radius**. Selected component tests, retained model evaluations and bounded browser
 checks passed. Two new source-retention inference probes are **BLOCKED** by provider availability.
-Final independent source/PR review and fresh CI remain open. Installed end-to-end acceptance remains
+Source and remote PR diffs have been reviewed. Installed end-to-end acceptance remains
 **PARTIAL**; this report does not activate an installation or prove physical phone audio.
 
 The [cognitive system](../../../docs/architecture/cognitive-system.md) owns the speaking Main,
@@ -103,9 +103,9 @@ before accepted state changes; Native capacity admission still owns dispatch. Pr
 remain unchanged. Existing incomplete historical receipts stay marked incomplete; no missing original
 is invented. Publication does not change saved user settings or certify a newly activated runtime.
 
-The final semantic source/PR review and fresh CI remain open. Retained independent reviews and
-deterministic checks do not close those gates or the two blocked inference probes. No final merge
-or installed callback/audio acceptance is claimed.
+Source publication requires the existing CI checks on the exact reviewed head. The two additional
+inference probes remain blocked and are not counted as passes. Source review and deterministic
+checks do not establish installed callback or audible acceptance.
 
 The [runtime owner](../../../docs/requirements_and_learnings/capabilities/runtime-install-release.md)
 and [runtime cases](../cases.yaml) retain the open installed-candidate, login/upgrade/restart,
