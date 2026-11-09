@@ -172,7 +172,7 @@ def _make_fake_runtime_repo_root(path: Path) -> None:
         encoding="utf-8",
     )
     (telegram_bot_root / "utils" / "telegram_preparation.py").write_text("SYNTHETIC = True\n", encoding="utf-8")
-    for name in ("telegram_audio.py", "telegram_stt.py", "telegram_vad.py"):
+    for name in ("telegram_audio.py", "telegram_stt.py", "telegram_vad.py", "telegram_video.py"):
         (telegram_bot_root / "utils" / name).write_text("SYNTHETIC = True\n", encoding="utf-8")
     for name in ("tts.py", "stt_env.py"):
         shutil.copy2(REPO_ROOT / "viventium_v0_4/telegram-viventium/TelegramVivBot/utils" / name,

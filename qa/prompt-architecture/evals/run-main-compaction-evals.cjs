@@ -122,6 +122,8 @@ function caseEvidence(testCase, family) {
     sourceDigest: source.sourceDigest || sha(JSON.stringify(source)),
     acceptedOlderTurns: source.sourceTurns,
     previousSemanticCompaction: source.previousSemanticCompaction,
+    ...(source.legacyInputs ? { legacyInputs: source.legacyInputs } : {}),
+    ...(source.outputContract ? { outputContract: source.outputContract } : {}),
     ...(fixture.candidate ? { candidate: fixture.candidate } : {}),
     ...(fixture.priorRejection ? { priorRejection: fixture.priorRejection } : {}),
   };
@@ -442,6 +444,8 @@ async function run(options = cliOptions, qaAuth = null) {
         sourceDigest: evidence.sourceDigest,
         sourceTurns: evidence.acceptedOlderTurns,
         previousSemanticCompaction: evidence.previousSemanticCompaction,
+        ...(evidence.legacyInputs ? { legacyInputs: evidence.legacyInputs } : {}),
+        ...(evidence.outputContract ? { outputContract: evidence.outputContract } : {}),
         domainEpochKey: sha(`${runId}:${testCase.id}`),
       };
       const result = {
@@ -745,6 +749,12 @@ async function run(options = cliOptions, qaAuth = null) {
             agent: route,
             stage: isReview ? "review" : "compaction",
             signal: new AbortController().signal,
+            // Standalone replay has no enclosing turn. Accept the same native response
+            // deadline that the production claim lease admits, and retain its receipt.
+            onNativeAdmission: async (receipt) => {
+              result.nativeAdmission = receipt;
+              return Number.isFinite(Date.parse(receipt.responseDeadlineAt));
+            },
           });
         }
         result.status = "completed";

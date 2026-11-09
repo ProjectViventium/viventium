@@ -181,14 +181,14 @@ def test_create_buttons_uses_status_map_without_get_status(monkeypatch):
 def test_update_first_buttons_message_adds_call_button_when_available(monkeypatch):
     monkeypatch.setattr(
         telegram_config,
-        "get_telegram_call_url",
-        lambda chatid: f"http://198.51.100.25:3300/?chatid={chatid}",
+        "get_telegram_call_link_result",
+        lambda chatid: {"url": f"http://198.51.100.25:3300/?chatid={chatid}", "local_url": ""},
     )
 
     buttons = telegram_config.update_first_buttons_message("user-1")
     flattened = [btn for row in buttons for btn in row]
 
-    call_button = next(btn for btn in flattened if btn.text == "Call Viventium")
+    call_button = next(btn for btn in flattened if btn.text == "Other Wi-Fi or mobile data")
     prefs_button = next(btn for btn in flattened if btn.text == "Preferences")
 
     assert call_button.url == "http://198.51.100.25:3300/?chatid=user-1"
@@ -222,7 +222,7 @@ def test_update_first_buttons_message_uses_explicit_call_url_without_fetch(monke
     )
     flattened = [btn for row in buttons for btn in row]
 
-    assert flattened[0].text == "Call Viventium"
+    assert flattened[0].text == "Other Wi-Fi or mobile data"
     assert flattened[0].url == "http://198.51.100.25:3300/?ok=1"
     assert flattened[1].text == "Preferences"
 
@@ -241,7 +241,7 @@ def test_update_first_buttons_message_uses_cached_call_url_without_fetch(monkeyp
     buttons = telegram_config.update_first_buttons_message("user-1", fetch_call_url=False)
     flattened = [btn for row in buttons for btn in row]
 
-    assert flattened[0].text == "Call Viventium"
+    assert flattened[0].text == "Other Wi-Fi or mobile data"
     assert flattened[0].url == "https://voice.example.test/?cached=1"
     assert flattened[1].text == "Preferences"
 
@@ -423,6 +423,62 @@ def test_cached_legacy_call_bearer_is_removed_instead_of_reused():
 
     assert telegram_config.get_cached_telegram_call_url("123456789") == ""
     assert telegram_config._CALL_URL_CACHE == {}
+
+
+def test_call_link_choices_preserve_local_url_without_caching_bearers(monkeypatch):
+    public = 'https://voice.example.test/call-bootstrap?callSessionId=call-1#viventiumCallLaunch=' + 'L' * 43
+    local = 'https://192.168.1.20:8443/call-bootstrap?callSessionId=call-1#viventiumCallLaunch=' + 'L' * 43
+    class Response:
+        status_code = 200
+        content = b'result'
+        def json(self): return {'callUrl': public, 'localCallUrl': local}
+    monkeypatch.setenv('VIVENTIUM_LIBRECHAT_ORIGIN', 'http://localhost:3180')
+    monkeypatch.setenv('VIVENTIUM_TELEGRAM_SECRET', 'test-secret')
+    monkeypatch.setattr(telegram_config.Users, 'get_config', lambda *_: '')
+    monkeypatch.setattr(telegram_config.requests, 'post', lambda *a, **k: Response())
+    telegram_config._CALL_URL_CACHE.clear()
+    result = telegram_config.get_telegram_call_link_result('123456789')
+    assert result['url'] == public
+    assert result['local_url'] == local
+    assert telegram_config._CALL_URL_CACHE == {}
+
+
+def test_call_link_choices_request_local_with_same_linked_topic_context(monkeypatch):
+    requests = []
+    local = 'https://192.168.1.20:8443/call-bootstrap?callSessionId=call-1#viventiumCallLaunch=' + 'L' * 43
+    class Response:
+        status_code = 200
+        content = b'result'
+        def json(self): return {'callUrl': local, 'localCallUrl': local}
+    def post(url, **kwargs):
+        requests.append(kwargs['json']); return Response()
+    monkeypatch.setenv('VIVENTIUM_LIBRECHAT_ORIGIN', 'http://localhost:3180')
+    monkeypatch.setenv('VIVENTIUM_TELEGRAM_SECRET', 'test-secret')
+    monkeypatch.setattr(telegram_config, 'get_librechat_conversation_state', lambda key: {'conversation_id': 'original-conversation'})
+    monkeypatch.setattr(telegram_config.Users, 'get_config', lambda key, field: 'agent-original' if field == 'LIBRECHAT_AGENT_ID' else '')
+    monkeypatch.setattr(telegram_config.requests, 'post', post)
+    telegram_config._CALL_URL_CACHE.clear()
+    result = telegram_config.get_telegram_call_link_result('123456789:123456789', launch_target='local')
+    assert result['url'] == local
+    assert requests == [{'telegramUserId': '123456789', 'conversationId': 'original-conversation', 'agentId': 'agent-original', 'launchTarget': 'local'}]
+    assert telegram_config._CALL_URL_CACHE == {}
+
+
+@pytest.mark.parametrize('invalid_local', ['https://localhost:8443/', 'http://192.168.1.20:8443/', 'https://198.51.100.20:8443/', 'https://192.168.1.20/', 'http://internal-service:3300/', 'http://192.0.2.10:3300/', 'ftp://localhost:3300/', 'http://user:secret@localhost:3300/'])
+def test_call_link_choices_refuse_non_loopback_or_credentialed_urls(monkeypatch, invalid_local):
+    class Response:
+        status_code = 200
+        content = b'result'
+        def json(self): return {'callUrl': 'https://voice.example.test/', 'localCallUrl': invalid_local}
+    monkeypatch.setenv('VIVENTIUM_LIBRECHAT_ORIGIN', 'http://localhost:3180')
+    monkeypatch.setenv('VIVENTIUM_TELEGRAM_SECRET', 'test-secret')
+    monkeypatch.setattr(telegram_config.Users, 'get_config', lambda *_: '')
+    monkeypatch.setattr(telegram_config.requests, 'post', lambda *a, **k: Response())
+    telegram_config._CALL_URL_CACHE.clear()
+    result = telegram_config.get_telegram_call_link_result('123456789')
+    assert result['url'] == 'https://voice.example.test/'
+    assert result['local_url'] == ''
+    assert all(button.text != 'Same Wi-Fi' for row in telegram_config.update_first_buttons_message('123456789', call_url='', fetch_call_url=False, local_call_url=invalid_local) for button in row)
 
 
 VOICE_KEYS = ("VOICE_RESPONSES_ENABLED", "REPLY_VOICE_WITH_VOICE", "ALWAYS_VOICE_RESPONSE")
@@ -639,3 +695,36 @@ def test_voice_toggle_label_has_explicit_state_and_empty_off_icon(monkeypatch, k
     label = telegram_config.PREFERENCE_DISPLAY_NAMES[key]
     assert button.text == (f"✅ {label} · ON" if enabled else f"⬜ {label} · OFF")
     assert button.callback_data == f"{key}_PREFERENCES"
+
+
+@pytest.mark.parametrize("url,expected", [
+    ("https://playground.lan.example.test:8443/call-bootstrap?callSessionId=test", True),
+    ("https://other.lan.example.test:8443/call-bootstrap", False),
+    ("https://playground.lan.example.test.other.test:8443/", False),
+    ("http://playground.lan.example.test:8443/", False),
+    ("https://user:secret@playground.lan.example.test:8443/", False),
+    ("https://playground.lan.example.test/", False),
+])
+def test_call_link_trusted_lan_hostname_is_exact_and_credential_free(monkeypatch, url, expected):
+    monkeypatch.setenv("VIVENTIUM_LAN_DOMAIN", "lan.example.test")
+    assert telegram_config._is_local_call_url(url) is expected
+
+
+def test_menu_uses_structured_local_choice_without_labelling_it_public(monkeypatch):
+    url = 'https://192.168.1.20:8443/?launch=synthetic'
+    monkeypatch.setattr(telegram_config, 'get_telegram_call_link_result', lambda chatid:
+                        {'url': url, 'local_url': url, 'launch_target': 'local'})
+    buttons = [button for row in telegram_config.update_first_buttons_message('user-1') for button in row]
+    assert [(button.text, button.url) for button in buttons if button.url] == [('Same Wi-Fi', url)]
+
+
+@pytest.mark.parametrize("url,expected", [
+    ("http://localhost:3300/", True),
+    ("http://127.0.0.1:3300/", True),
+    ("http://[::1]:3300/", True),
+    ("http://198.51.100.20:3300/", False),
+    ("https://voice.example.test/", True),
+    ("https://voice.example.test/#viventiumCallLaunch=synthetic", False),
+])
+def test_call_url_cache_preserves_loopback_policy_without_caching_launch_grants(url, expected):
+    assert telegram_config._should_cache_call_url(url) is expected

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import subprocess
 import pytest
 from pathlib import Path
@@ -86,13 +87,131 @@ def init_repo(tmp_path: Path) -> Path:
     return repo
 
 
-def run_staged_safety(repo: Path) -> subprocess.CompletedProcess[str]:
+def run_staged_safety(repo: Path, *arguments: str) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
-        ["python3", str(STAGED_SAFETY), "--repo", str(repo)],
+        ["python3", str(STAGED_SAFETY), "--repo", str(repo), *arguments],
         check=False,
         capture_output=True,
         text=True,
     )
+
+
+@pytest.mark.parametrize("relative", [
+    "Life/private-fixture.txt",
+    "assets/lIfE/private-fixture.txt",
+    Path("qa", "Life", "private-fixture.md").as_posix(),
+    Path("qa", "life", "other.yaml").as_posix(),
+    Path("qa", "life", "cases.yaml.bak").as_posix(),
+    Path("qa", "life", "reports", "synthetic.md").as_posix(),
+    Path("qa", "life", "nested", "cases.yaml").as_posix(),
+])
+def test_personal_workspace_is_ignored_and_force_add_is_rejected(
+    tmp_path: Path, relative: str,
+) -> None:
+    repo = init_repo(tmp_path)
+    (repo / relative).parent.mkdir(parents=True)
+    (repo / relative).write_text("harmless-looking bytes")
+    (repo / ".gitignore").write_bytes((REPO_ROOT / ".gitignore").read_bytes())
+    subprocess.run(["git", "-C", str(repo), "check-ignore", "-q", relative], check=True)
+    subprocess.run(["git", "-C", str(repo), "add", "-f", relative], check=True)
+    checked = run_staged_safety(repo)
+    assert checked.returncode == 2
+    assert "Personal workspace data" in checked.stderr
+    assert relative not in checked.stderr
+
+
+def test_canonical_life_case_inventory_is_public_source(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    repo = init_repo(tmp_path)
+    relative = "qa/life/cases.yaml"
+    source = repo / relative
+    source.parent.mkdir(parents=True)
+    source.write_text("schemaVersion: 1\n", encoding="utf-8")
+    (repo / ".gitignore").write_bytes((REPO_ROOT / ".gitignore").read_bytes())
+    monkeypatch.setenv("VIVENTIUM_LIFE_DIR", str(tmp_path / "private-workspace"))
+    ignored = subprocess.run(
+        ["git", "-C", str(repo), "check-ignore", "--no-index", "--quiet", relative],
+        check=False,
+    )
+    assert ignored.returncode == 1
+    subprocess.run(["git", "-C", str(repo), "add", relative], check=True)
+    checked = run_staged_safety(repo)
+    assert checked.returncode == 0, checked.stderr
+
+
+@pytest.mark.parametrize("ignore_case", [False, True])
+def test_case_alias_of_public_life_source_is_rejected(
+    tmp_path: Path, ignore_case: bool,
+) -> None:
+    repo = init_repo(tmp_path)
+    relative = Path("qa", "Life", "cases.yaml").as_posix()
+    source = repo / relative
+    source.parent.mkdir(parents=True)
+    source.write_text("Synthetic private fixture.\n", encoding="utf-8")
+    (repo / ".gitignore").write_bytes((REPO_ROOT / ".gitignore").read_bytes())
+    git = ["git", "-C", str(repo), "-c", f"core.ignorecase={str(ignore_case).lower()}"]
+    ignored = subprocess.run(
+        [*git, "check-ignore", "--no-index", "--quiet", relative], check=False,
+    )
+    # Git folds exact exceptions on case-insensitive filesystems; the source guard does not.
+    assert ignored.returncode == (1 if ignore_case else 0)
+    subprocess.run([*git, "add", "--force", relative], check=True)
+    checked = run_staged_safety(repo)
+    assert checked.returncode == 2
+    assert "Personal workspace data" in checked.stderr
+    assert relative not in checked.stderr
+
+
+def test_personal_workspace_symlink_metadata_is_rejected(tmp_path: Path) -> None:
+    repo = init_repo(tmp_path)
+    (repo / "shortcut").symlink_to("../Life/private-fixture.txt")
+    subprocess.run(["git", "-C", str(repo), "add", "shortcut"], check=True)
+    checked = run_staged_safety(repo)
+    assert checked.returncode == 2
+    assert "Personal workspace metadata" in checked.stderr
+    assert "private-fixture" not in checked.stderr
+
+
+def test_renamed_identity_bytes_and_lfs_pointer_cannot_be_staged(tmp_path: Path, monkeypatch) -> None:
+    repo = init_repo(tmp_path)
+    life = tmp_path / "private-folder"
+    identity = life / "Self/Identity"
+    identity.mkdir(parents=True)
+    secret = b"synthetic personal bytes with no path marker"
+    (identity / "source.bin").write_bytes(secret)
+    monkeypatch.setenv("VIVENTIUM_LIFE_DIR", str(life))
+    digest = hashlib.sha256(secret).hexdigest()
+    for data in (
+        secret,
+        f"version https://hawser.github.com/spec/v1\r\noid sha256:{digest}\r\nsize {len(secret)}\r\n".encode(),
+    ):
+        (repo / "asset.bin").write_bytes(data)
+        subprocess.run(["git", "-C", str(repo), "add", "asset.bin"], check=True)
+        checked = run_staged_safety(repo)
+        assert checked.returncode == 2
+        assert "Private identity bytes" in checked.stderr
+        assert digest not in checked.stderr
+
+
+def test_outgoing_check_catches_metadata_in_commit_later_deleted(tmp_path: Path) -> None:
+    repo = init_repo(tmp_path)
+    git = ["git", "-C", str(repo), "-c", "user.name=Fixture", "-c", "user.email=qa@example.com",
+           "-c", "core.hooksPath=/dev/null"]
+    subprocess.run([*git, "commit", "--allow-empty", "-qm", "public baseline"], check=True)
+    subprocess.run([*git, "update-ref", "refs/remotes/origin/main", "HEAD"], check=True)
+    source = repo / "report.txt"
+    source.write_text("file:%2f%2f%2fhome%2fsynthetic%2f" + "Life%2fprivate-fixture.txt")
+    subprocess.run([*git, "add", source.name], check=True)
+    assert run_staged_safety(repo).returncode == 2
+    subprocess.run([*git, "commit", "-qm", "local first commit"], check=True)
+    subprocess.run([*git, "rm", "-q", source.name], check=True)
+    subprocess.run([*git, "commit", "-qm", "local removal"], check=True)
+    assert run_staged_safety(repo).returncode == 0
+    checked = run_staged_safety(repo, "--outgoing-ref", "HEAD")
+    assert checked.returncode == 2
+    assert "outgoing history" in checked.stderr
+    assert "private-fixture" not in checked.stderr
 
 
 def test_staged_public_safety_rejects_owner_and_runtime_env_paths(
@@ -246,3 +365,61 @@ def test_generated_owner_environment_paths_are_ignored_by_default() -> None:
     assert completed.returncode == 0, completed.stderr
     for path in paths:
         assert path in completed.stdout
+
+
+@pytest.mark.parametrize("relative,payload", [
+    ("report.txt", "token=" + "sk-" + "proj-" + "abcdefghijklmnopqrstuvwxyz123456"),
+    ("nested/runtime.env", "WEAK_SENTINEL=value"),
+    (Path("qa", "model.private.json").as_posix(), "{\"synthetic_private_run\":true}"),
+    (Path("qa", "model-private.json").as_posix(), "{\"synthetic_private_run\":true}"),
+    ("codex/fixture/prompt.md", "Synthetic private session text"),
+])
+def test_outgoing_rejects_forbidden_content_even_after_removal(
+    tmp_path: Path, relative: str, payload: str,
+) -> None:
+    repo = init_repo(tmp_path)
+    commands = ["git", "-C", str(repo), "-c", "user.name=Fixture",
+                "-c", "user.email=qa@example.com", "-c", "core.hooksPath=/dev/null"]
+    subprocess.run([*commands, "commit", "--allow-empty", "-qm", "public baseline"], check=True)
+    subprocess.run([*commands, "update-ref", "refs/remotes/origin/main", "HEAD"], check=True)
+    source = repo / relative
+    source.parent.mkdir(parents=True, exist_ok=True)
+    source.write_text(payload, encoding="utf-8")
+    subprocess.run([*commands, "add", "-f", relative], check=True)
+    subprocess.run([*commands, "commit", "-qm", "synthetic local addition"], check=True)
+    subprocess.run([*commands, "rm", "-q", relative], check=True)
+    subprocess.run([*commands, "commit", "-qm", "synthetic local removal"], check=True)
+    assert run_staged_safety(repo).returncode == 0
+    result = run_staged_safety(repo, "--outgoing-ref", "HEAD")
+    assert result.returncode == 2
+    assert "outgoing" in result.stderr
+    assert payload not in result.stderr
+
+
+def test_outgoing_allows_public_synthetic_content_and_noreply_identity(tmp_path: Path) -> None:
+    repo = init_repo(tmp_path)
+    commands = ["git", "-C", str(repo), "-c", "user.name=Fixture",
+                "-c", "user.email=12345+fixture@users.noreply.github.com",
+                "-c", "core.hooksPath=/dev/null"]
+    subprocess.run([*commands, "commit", "--allow-empty", "-qm", "public baseline"], check=True)
+    subprocess.run([*commands, "update-ref", "refs/remotes/origin/main", "HEAD"], check=True)
+    (repo / "guide.md").write_text("qa@example.com\nhttps://service.example.test\n", encoding="utf-8")
+    subprocess.run([*commands, "add", "guide.md"], check=True)
+    subprocess.run([*commands, "commit", "-qm", "Add synthetic guide"], check=True)
+    result = run_staged_safety(repo, "--outgoing-ref", "HEAD")
+    assert result.returncode == 0, result.stderr
+
+
+@pytest.mark.parametrize("relative", [
+    Path("qa", "model.private.json").as_posix(),
+    Path("qa", "model-private.json").as_posix(),
+])
+def test_staged_rejects_private_evidence_names(tmp_path: Path, relative: str) -> None:
+    repo = init_repo(tmp_path)
+    source = repo / relative
+    source.parent.mkdir(parents=True)
+    source.write_text("{\"synthetic_private_run\":true}", encoding="utf-8")
+    subprocess.run(["git", "-C", str(repo), "add", relative], check=True)
+    result = run_staged_safety(repo)
+    assert result.returncode == 2
+    assert "forbidden staged" in result.stderr

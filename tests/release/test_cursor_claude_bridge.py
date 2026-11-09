@@ -16,6 +16,30 @@ def load_module():
     return module
 
 
+def test_default_models_follow_current_subscription_catalog(monkeypatch) -> None:
+    monkeypatch.delenv("CURSOR_BRIDGE_CLAUDE_MODEL", raising=False)
+    monkeypatch.delenv("CURSOR_BRIDGE_CODEX_MODEL", raising=False)
+    module = load_module()
+
+    assert module.CLAUDE_MODEL == "claude-opus-5-5"
+    assert module.CODEX_MODEL == "gpt-6.1-sol"
+    assert module._select_backend_for_model(module.CLAUDE_MODEL) == "claude"
+    assert module._select_backend_for_model(module.CODEX_MODEL) == "codex"
+
+
+def test_explicit_model_choices_and_aliases_remain_selected(monkeypatch) -> None:
+    monkeypatch.setenv("CURSOR_BRIDGE_CLAUDE_MODEL", "claude-opus-5")
+    monkeypatch.setenv("CURSOR_BRIDGE_CODEX_MODEL", "gpt-5.4")
+    module = load_module()
+
+    assert module.CLAUDE_MODEL == "claude-opus-5"
+    assert module.CODEX_MODEL == "gpt-5.4"
+    assert module._select_backend_for_model("claude-opus-5") == "claude"
+    assert module._select_backend_for_model("gpt-5.4") == "codex"
+    assert module._select_backend_for_model("SUBSCRIPTION OPUS") == "claude"
+    assert module._select_backend_for_model("CODEX_SUBSCRIPTION") == "codex"
+
+
 def test_normalize_chat_messages_merges_system_and_history() -> None:
     module = load_module()
 

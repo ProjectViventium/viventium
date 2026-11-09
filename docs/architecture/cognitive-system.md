@@ -11,7 +11,7 @@ and its evidence. Approval of this vision does not claim that every design targe
 ## One Soul. Everything connected.
 
 The user faces one **Soul**: Viventium Core. Channels lead into the same identity and relationship.
-The Core is powered by **xPerfect**, the intelligence unit and harness of harnesses. Its harnesses
+The Core uses **xPerfect**, an independent control plane, orchestrator, manager and harness of harnesses. Its harnesses
 include Codex, Claude Code, Grok, and future harnesses. The diagram places channels in one horizontal
 row, then the Core, then its connected cognitive system, so the page reads in that order.
 
@@ -32,7 +32,7 @@ Open the full diagram: [light SVG](assets/cognitive-system/viventium-0.5-light.s
 | --- | --- |
 | **Channels** | Telegram, LiveKit calls, WhatsApp, web chat, and future surfaces reach the same Soul. |
 | **Viventium Core / Soul** | One identity, one relationship, and one Main that owns user-facing judgment. |
-| **xPerfect** | The Core's intelligence unit: a harness of harnesses with shared context and capable execution. |
+| **xPerfect** | An independent execution and orchestration product used by the Core and other applications. |
 | **Bio Lab** | Feelings, Subconscious, Continuity / Conscious Stream, and optional integrations that give the system life. |
 | **Built-in wiring** | Life, Sleep / Dreaming, and Scheduling Cortex are part of the system's normal operation. |
 | **Prompt Workbench** | Shared definitions for voice, tone, prompts, templates, how-to's, skills, keys, and variables; inspect, test, and apply them across waking and nightly work. A simpler future interface remains the goal. |
@@ -120,20 +120,84 @@ are tracked in the owning scheduling contract.
 
 ### One relationship, with a fast Queen and capable workers
 
-Text, Telegram, and Voice feed the same ordered input owner. Preserve every original A, B, C…
-segment, files, history, authority, and unfinished work. The configured Queen is the Main: one
-speaking personality that can answer, continue an existing worker, or start more workers. A fast
-Direct Queen remains a valid configuration; cognition does not require an extra slow planning
-model before each reply.
+**Approved pattern. Benchmark reference: warm native Claude Code, Opus 5, Low.**
+Inference profiles remain configurable. The visual roles and return path are fixed;
+implementation and channel acceptance remain separate evidence gates. This section owns the intended Fast Queen pattern.
+The [visual guide](fast-queen.html) presents it, and the separate
+[alignment assessment](../../qa/parallel-work/reports/2026-11-07-fast-queen-alignment.html)
+compares the candidate with it. A target diagram is not an implementation or acceptance claim.
 
-For the fast Direct profile, `hand_off_to` and `list_workers` are the small work interface. Action
-capabilities belong to the configured native workers. Scheduling uses the scoped native-worker
-tools described in the scheduling contract; existing Cortex definitions retain their service owner.
-Handoff shares the original authorized conversation and context; it does not require the Queen to
-rewrite a brief.
-An accepted handoff confirms admission, not that the requested action succeeded. Worker results,
-files, failures, and requests for needed input return to the same Queen, which talks naturally to
-the user. Internal status belongs in Active Work and logs, not repeated chat or speech.
+![Fast Queen, durable handoff, background native coordinator and parallel Workers](assets/fast-queen/flow.svg)
+
+| Role | Responsibility |
+| --- | --- |
+| Speaking Fast Queen | The configured fast inference route with the full prepared cognitive context. The benchmark reference uses warm native Claude Code, Opus 5, Low. Answer naturally, retain personality and Feelings, and decide whether background action is needed. Remain available to the user. |
+| Handoff boundary | One small typed signal, bound to the accepted original input and authorized context. Persist admission before acknowledging that work is underway. No authored replacement brief. |
+| Background orchestrator (secondary Queen) | Reuse xPerfect's native coordinator as the single manager of handed-off work. Its model selects, reuses, starts and controls appropriate Workers. It may resolve the goal itself when suitable. It has no separate user-facing voice. |
+| Workers A…N | Configurable native harnesses or specialized workers. Default effort is High. Use authorized tools, apps, browser/computer, files and context. Run independent work concurrently within real capacity. |
+| Result delivery | Durable result and artifact records return through Viventium's existing receipt/surfacing path to the same speaking Queen. Retain undelivered results for retry and recovery. |
+
+Text, Telegram and Voice feed the same ordered input owner. Preserve every original A, B, C…
+segment, attachment, authority and unfinished work. The Fast Queen raises the handoff signal when
+her own judgment requires background action. After admission, a natural acknowledgment such as
+“On it” is enough. Worker selection happens **after that foreground boundary**, not as another
+model call that delays the acknowledgment. An admission receipt proves accepted work, not successful
+execution. Failure to admit must be stated honestly.
+
+This is a role split inside the existing runtime, not a second cognitive system, new scheduler,
+duplicate conversation memory, or competing work ledger. Each work item has exactly one management
+owner. Existing hosted delegation remains a compatibility path until an approved cutover; the
+hosted manager and coordinator must never both launch or manage the same item. The speaking Queen
+retains context and controls needed for immediate answers and exact steering. The background
+coordinator owns assignment planning. Neither layer writes a substitute for the user's goal.
+Tool names such as `hand_off_to` are implementation details; the contract is one minimal handoff
+with inherited source/context and a durable receipt.
+
+#### Context without a broken telephone
+
+Viventium prepares identity, personality, current Feelings, relevant Life memory, conversation,
+files and authorized capabilities. The background Queen and Workers **inherit** this same authorized
+context and the original requests. xPerfect preserves their roles, scope and original sources.
+An optional specialist instruction must stay separate; a replacement brief is never required.
+Use existing native session inheritance, context references and readers where supported; do not
+claim that every harness can clone every other harness's session. Cross-harness access must still
+make the authorized originals available without requiring either Queen to paraphrase them.
+
+Retained history can grow beyond a model window. Each inference still has finite provider capacity.
+Use native compaction and scoped retrieval of older originals; a context failure must leave the
+Queen responsive with an honest temporary-gap disclosure. Do not silently slice text or files,
+lower effort, remove personality, or invent a courier character ceiling. Typed transport/provider
+limits remain real; large material belongs behind authorized references/readers.
+
+#### Parallel work and results
+
+While A and B run, the speaking Queen can answer C. Guidance for A updates only A; interrupting
+speech, ending a call or asking C does not cancel accepted work. Only an authorized explicit Stop
+for exact work cancels it. New input, results and replies preserve order without sharing one
+blocking inference queue. Background scheduling, memory maintenance and assignment planning must
+not hold the first conversational reply.
+
+Completed, failed and needs-input results return with their evidence and files to the same Queen.
+Keep internal coordination in Active Work/logs. Delivery uses durable idempotency identities and
+channel receipts so retry, reload, reconnect and restart do not lose work or repeat presentation.
+A spoken interruption stops stale presentation, not the result record; files remain reachable in
+chat or Active Work. One speaking identity is required across all channels.
+
+#### Account choice and acceptance
+
+Prefer included subscription quota through supported provider mechanisms. Native Codex and Claude
+Code subscription routes are distinct from Direct inference. Official Sign in with ChatGPT for
+local open-source apps is distinct from legacy Codex OAuth reuse. Included API credits use an API
+organization and separate terms/balance; they are a lower-priority option, not subscription
+inference and not proof of no paid fallback. Never silently change accounts, model, effort,
+billing or quotas.
+
+Compare quality and latency using complete prepared cognition and realistic conversation,
+not only arithmetic or an empty prompt. Record first useful reply, completed handoff signal,
+durable admission, useful result and audible response separately. Use the
+[benchmark register](../../qa/parallel-work/benchmarks/README.md) for methods, samples and limits;
+the [Parallel Work cases](../../qa/parallel-work/cases.yaml) own acceptance. A fast decision-only
+probe does not prove executed work, audible delivery or recovery.
 
 Subconscious activation and configured cortices run beside Main, without holding its first reply.
 The finite activated set may pass one settled useful batch to the same Queen, excluding silent
@@ -180,21 +244,8 @@ The same Main is the **Queen** across these channels. xPerfect owns harness exec
 inputs, authorized cognitive context and results through the existing channel adapters. It must
 not grow a second harness manager or require the user to coordinate the workers.
 
-```mermaid
-flowchart TD
-    Input["You send A, B, C…: text, speech, files"] --> Ordered["Existing ordered input owner: retain every original segment"]
-    Ordered --> Queen["Same Queen / Main through xPerfect: answer, delegate, control exact work"]
-    Context["Shared authorized context: memory, Feelings, prompts, tools, files, history"] --> Queen
-    Ordered --> Background["Parallel subconscious: configured activation and cortices"]
-    Background --> Batch["One finite activated cohort: useful evidence; omit silent NTA results"]
-    Batch --> Queen
-    Queen --> Workers["Workers A…N: independent durable work within available capacity"]
-    Workers --> Results["Existing durable results: files, actual failures, needed input"]
-    Results --> Queen
-    Queen --> Presentation["Main-authored conversation: one presenter and durable receipt per item"]
-    Presentation --> Channels["Text / Call stream / Telegram audio; files in the linked chat"]
-    Results --> Status["Active Work: visible state and controls; internal logs; no routine status speech"]
-```
+Use the approved Fast Queen diagram above for the execution and return path. The same ordered-source and one-presenter rules apply to the activated subconscious cohort.
+
 
 For A and B that need ongoing work followed by conversational C, Main can keep the work moving
 and answer C. This is an outcome example, not a task classifier or a limit of two workers. New

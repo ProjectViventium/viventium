@@ -58,8 +58,18 @@ generation. The existing after-Main relevance, NTA and durable surface-delivery 
 Recent raw source stays complete; existing context budgets and compaction still apply. Native
 generation framing and real Voice/Text/Telegram acceptance remain separate delivery gates.
 
-Required Main continuity must remain in the selected instruction context or fail with the existing
-typed source-context error. Every declared native graph route, including lazy handoffs and its
+Main stays responsive when older accepted continuity cannot fit or is still being reconciled.
+Its admission view keeps a contiguous newest sequence of whole sources and explicitly marks
+the older evidence gap. Originals remain private and saved; needed older details are retrieved
+through authorized Workers or recall, respecting disabled and excluded sources. Current identity,
+request, permissions and source-authority checks remain intact. Background compaction uses the
+existing idle owner without a foreground wait; frequent turns must not postpone its first repair
+time. Summary promotion still requires the complete candidate to fit its selected contract and
+pass fidelity review. A later turn reads the recovered summary normally. If even the disclosure
+and required current context cannot fit, the existing typed source-context error remains valid.
+The registered continuity-availability instruction applies independently of the recall toggle.
+
+Every declared native graph route, including lazy handoffs and its
 configured graph fallbacks, uses the existing JSON `metadata.turn_context` carrier. Its default
 allocation is 128 KiB UTF-8. A larger allocation requires a positive complete-source fit against
 every declared route and uses only the proven remaining native body budget, up to the existing
@@ -336,7 +346,7 @@ Useful invariants are:
 - system activity does not reset user-interaction continuity;
 - compaction, recent-turn preservation, and tool-result pruning are separate operations;
 - compacted summaries persist while recent turns remain intact;
-- overflow compacts and retries once, then fails closed;
+- required current-source overflow fails closed; older accepted continuity uses the responsive gap policy above;
 - typed reply ancestry stays separate from user-authored text;
 - durable admission and recovery use exact persisted state, not partially hydrated projections;
 - successor reply admission can continue while an exact failed turn is recovered separately.
@@ -888,6 +898,21 @@ feedback and full-source regeneration. Native admission remains authoritative. T
 allows size repair to shorten wording throughout while retaining source-supported facts,
 qualifications and consequential identifiers, adding nothing. Other repairs retain their existing
 candidate behavior. Independent fidelity review and the existing attempt/deadline bounds remain required.
+
+When an approved previous semantic state or a bounded rejected draft is available, initial
+reconciliation, size repair and fidelity repair may return complete replacements for selected
+semantic fields instead of re-emitting every unchanged array and identifier. The registered
+compaction prompt exposes this optional contract and the JSON summary space left by unchanged
+fields. Its declared base is either the previous semantic fields or the exact rejected draft;
+server-owned provenance is never part of the editable state. The same projection supplies prompt
+rendering and response application. The response binds to the exact base digest and a closed field set; omitted fields stay
+unchanged. A stale digest, schema/version change or unknown replacement field is rejected. A full
+proposal remains compatible. Empty replacements are rejected; a truly unchanged full proposal
+still needs review. The merged object passes the same whole-object and carrier checks,
+then independent fidelity review against the original claimed source before normal promotion.
+Fidelity feedback retains the complete merged draft, never only its replacement payload. Restoring
+required verbatim unfinished input uses the same original source and approval checks. Source
+identity, failure memo keys, attempts, leases and approval boundaries do not change.
 Legacy conversation reconciliation can use the learned smaller target in the same wake only when the next whole-turn prefix has fewer source bytes and a different digest,
 within the existing six-claim turn bound and each store-owned lease. Transport, lease and
 indivisible-source failures end that wake. Promotion advances only the reviewed prefix watermark and never deletes
@@ -1090,7 +1115,7 @@ positive-only: a false or
 unavailable estimate cannot prove that the final native source cannot be carried.
 
 When the current transport and every declared alternate support the native source protocol and
-its complete projected replay fits the smallest declared native byte floor, conversation-prefix
+its complete projected replay fits the smallest proven current native allocation, conversation-prefix
 migration uses the existing per-domain idle deferral and bounded compaction runner. Authenticated
 model discovery exposes that floor from the same native budget owner at its minimum calibration.
 A redundant lower discovery clamp previously forced foreground reconciliation even when the
@@ -1101,7 +1126,22 @@ choices stay unchanged. A cached menu does not prove successful capability disco
 catalog read retries only a missing native discovery through the same authenticated owner. Concurrent
 identical requests share that recovery. A successful catalog, including one with no admission floor,
 is reused without another fetch; absent floors still fail closed. No turn allocates an invented budget.
-Admission reads that cache only, costs the fields rendered by the native
+For an existing native conversation, the authenticated result owner can also return a current
+session replay-budget receipt. Core reads it through its existing saved admission and exact
+result identity using the existing result transport timeout. No shorter observational timer may
+replace a still-pending lookup with the smaller discovery floor. Request cancellation releases
+Core immediately; the read-only result request retains its normal transport timeout. Provider,
+model, conversation, agent and current stable authority must agree. Only that request and route may use the observed allocation; other declared
+fallbacks retain their own bounds. Missing, stale or unavailable receipts retain the discovery
+floor. The receipt neither reserves capacity nor guarantees later admission. Native still rejects
+protected-source overflow without admitting a partial source if its actual allocation shrinks.
+This adds no endpoint, database coupling, model call or shared user budget cache.
+The receipt reports Native's current admission policy, not a fresh token measurement for the new
+turn. Its calibration can remain historical when native evidence coverage is unproven; this path
+adds no age limit or automatic calibration-refresh guarantee. It does not certify downstream model
+capacity. Existing Native admission and protected-source failures remain authoritative.
+
+Admission costs the fields rendered by the native
 history reader, the existing final native turn-context byte cap, source/delivery framing and the
 selected upload ledger with its workspace paths. Reserving the final cap covers every later dynamic
 section and summary without trusting an earlier size forecast. Original messages, tool evidence and source-integrity guards remain unchanged;
@@ -1327,3 +1367,10 @@ prepared files in favor of raw browser references. Unselected tool-resource file
 declared sources cannot enter the current upload set. Selected-history hydration may fill an absent
 body from the same authorized file ID and declared source. An explicit current body, including empty
 text, always wins.
+
+Native replay capacity belongs to Native's authenticated, current session receipt. A valid receipt
+for the exact request, session, model and stable authority must not be reduced by a separate fixed
+courier ceiling. Native's physical context epoch and Core's stable authority epoch are different
+identities. Stale or malformed receipts retain the existing discovery fallback; Native admission
+still owns final capacity. Historical image archives keep per-image validation without inheriting
+the aggregate bounds of a fresh visual-input batch.

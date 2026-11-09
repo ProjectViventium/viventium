@@ -22,6 +22,11 @@ for(const slot of ['primary','fallback']) {
  const bundle={env:{[key]:route.effort},provider_capabilities:{native_tools:true},application_developer_instructions:'exact source',developer_instructions:'exact source'};
  const record={state:'completed',model_id:route.model,provider_route_model:route.nativeModel,access_mode:'full',run_id:'run',worker_id:'worker',bootstrap_bundle_json:JSON.stringify(bundle)};
  assert.strictEqual(r.verifyNativeRun(record,route,'exact source').effort,route.effort);
+ const composed={...record,bootstrap_bundle_json:JSON.stringify({...bundle,developer_instructions:'exact source\n\nowned delivery'})};
+ assert.strictEqual(r.verifyNativeRun(composed,route,'exact source','exact source\n\nowned delivery').effort,route.effort);
+ assert.throws(()=>r.verifyNativeRun(composed,route,'exact source'),/not_observed/);
+ assert.throws(()=>r.verifyNativeRun(composed,route,'exact source','exact source\n\nforeign delivery'),/not_observed/);
+ assert.throws(()=>r.verifyNativeRun({...composed,bootstrap_bundle_json:JSON.stringify({...bundle,application_developer_instructions:'foreign',developer_instructions:'exact source\n\nowned delivery'})},route,'exact source','exact source\n\nowned delivery'),/not_observed/);
  assert.throws(()=>r.verifyNativeRun({...record,model_id:'other'},route,'exact source'),/route_mismatch/);
  assert.throws(()=>r.verifyNativeRun({...record,state:'running'},route,'exact source'),/evidence_missing/);
  assert.throws(()=>r.verifyNativeRun(record,route,'another source'),/not_observed/);
@@ -179,3 +184,25 @@ def test_workbench_worker_target_never_uses_main_agent():
     assert evals._background_execution_target({'families':[family]},'worker',selected=selected)=={'mode':'worker_source_replay','promptRef':'worker.host_native_harness'}
     with pytest.raises(ValueError,match='isolated'):
         evals._background_execution_target({},None,selected=selected+[{'family':{'id':'main'},'case':{'id':'other'}}])
+
+
+def test_worker_delivery_replay_projects_declared_roots_into_restricted_subject():
+    runner = ROOT / 'qa/prompt-architecture/evals/run-worker-source-evals.cjs'
+    script = r'''
+const assert=require('assert'),r=require(process.argv[1]);
+const frames={harness:'host',project:'project',agents:'common',codex:'codex',delivery:'unknown fallback'};
+const roots={workspace:'local_only',tmpdir:'supported'};
+const key=JSON.stringify({tmpdir:roots.tmpdir,workspace:roots.workspace});
+const source={frames,deliveryFrames:{[key]:'exact registered file contract with current roots'}};
+const result=r.sourceInstructions(source,'codex-cli',roots);
+assert.strictEqual(result,'host\n\nproject\n\ncommon\n\ncodex\n\nexact registered file contract with current roots');
+assert(!result.includes('unknown fallback'));
+assert.strictEqual(result.split('exact registered file contract').length-1,1);
+assert.throws(()=>r.sourceInstructions({frames},'codex-cli',roots),/delivery_frame_missing/);
+for(const invalid of [null,[],{}, {workspace:'local_only'}, {...roots,tmpdir:'all'}, {...roots,extra:'supported'}]) {
+ assert.throws(()=>r.sourceInstructions(source,'codex-cli',invalid),/delivery_roots_invalid/);
+}
+assert.strictEqual(r.sourceInstructions(source,'codex-cli'),'host\n\nproject\n\ncommon\n\ncodex');
+'''
+    result=subprocess.run(['node','-e',script,str(runner)],capture_output=True,text=True)
+    assert result.returncode==0,result.stderr

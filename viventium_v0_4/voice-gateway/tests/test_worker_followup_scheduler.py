@@ -144,6 +144,27 @@ def _worker_completion_presentation(
     }
 
 
+def _native_main_delivery(kind="native_coordinator_turn"):
+    text = "The live page title and heading are verified."
+    source = {"kind": kind, "bindingRef": "native-binding",
+        "nativeConversationId": "native-conversation", "runId": "native-run",
+        "resultRevision": 1, "resultDigest": "sha256:" + "b" * 64,
+        "sourceTurnId": "original-turn", "sourceCallSessionId": "call_123"}
+    source.update({"turnId": "native-turn", "requestId": "native-request"}
+        if kind == "native_coordinator_turn" else {"goalId": "native-goal"})
+    presentation = {"version": 2, "nativeCoordinatorResult": source,
+        "responseMessageId": "native-main-result",
+        "responseDigest": "sha256:" + hashlib.sha256(text.encode()).hexdigest()}
+    return {"deliveryId": "native-delivery", "claimId": "native-claim",
+        "callbackId": "callback_sha256:" + "a" * 64,
+        "callbackMessageId": "native-main-result", "originRef": "native-binding",
+        "voiceCallSessionId": "call_123", "voiceRequestId": "native-result-turn",
+        "userId": "owner-one", "event": "main.followup", "text": text,
+        "fullText": text, "mainGenerationPresentation": presentation,
+        "presentationTask": {"taskId": "native-task",
+            "streamId": "glasshive-delivery:native-delivery"}}
+
+
 async def _renew_dispatch_permit_for_test(_self, _http_session, delivery, _permit):
     return _dispatch_permit(
         delivery_id=str(delivery["deliveryId"]),
@@ -3020,6 +3041,136 @@ class TestCortexFollowupScheduler(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(scheduler._mark_glasshive_delivery_status.await_args.args[2],
                                  "delivery_unknown" if interrupted else "sent")
                 scheduler._complete_glasshive_worker_presentation.assert_not_awaited()
+                await scheduler.close()
+
+    async def test_native_main_v2_goal_and_turn_use_exact_current_call_shapes(self):
+        scheduler = self._build_scheduler(session=_DummySession())
+        for kind in ("native_coordinator_goal", "native_coordinator_turn"):
+            delivery = _native_main_delivery(kind)
+            proof = delivery["mainGenerationPresentation"]
+            self.assertEqual(scheduler._validate_glasshive_main_presentation(
+                delivery, delivery["text"]), proof)
+            changes = [
+                {"event": "run.completed"}, {"voiceCallSessionId": "foreign-call"},
+                {"callbackMessageId": "foreign-result"}, {"originRef": "foreign-binding"},
+                {"mainGenerationPresentation": {**proof, "version": True}},
+                {"mainGenerationPresentation": {**proof, "streamId": "legacy-stream"}},
+                {"mainGenerationPresentation": {**proof, "responseDigest": "sha256:" + "0" * 64}},
+            ]
+            for change in changes:
+                with self.subTest(kind=kind, change=change):
+                    self.assertIsNone(scheduler._validate_glasshive_main_presentation(
+                        {**delivery, **change}, delivery["text"]))
+            self.assertIsNone(scheduler._validate_glasshive_main_presentation(
+                delivery, delivery["text"] + " changed"))
+            source = proof["nativeCoordinatorResult"]
+            source_changes = [{"kind": "unknown"}, {"sourceCallSessionId": "foreign-call"},
+                {"resultRevision": True}, {"resultRevision": 0},
+                {"resultRevision": 9_007_199_254_740_992}, {"resultDigest": "sha256:" + "F" * 64},
+                {"bindingRef": ""}, {"runId": None}, {"sourceTurnId": "x" * 513},
+                {"goalId": "cross-kind"} if kind.endswith("turn") else {"turnId": "cross-kind"},
+                {"requestId": "cross-kind"} if kind.endswith("goal") else {"turnId": ""}]
+            for change in source_changes:
+                with self.subTest(kind=kind, source_change=change):
+                    changed = {**delivery, "mainGenerationPresentation": {**proof,
+                        "nativeCoordinatorResult": {**source, **change}}}
+                    self.assertIsNone(scheduler._validate_glasshive_main_presentation(
+                        changed, delivery["text"]))
+        await scheduler.close()
+
+    async def test_native_main_v2_wake_claim_permit_audio_ack_and_replay(self):
+        for kind in ("native_coordinator_goal", "native_coordinator_turn"):
+            with self.subTest(kind=kind):
+                session = _DummySession(); scheduler = self._build_scheduler(session=session)
+                delivery = _native_main_delivery(kind)
+                event = self._pending_worker_delivery_event(taskId="native-task",
+                    streamId="glasshive-delivery:native-delivery",
+                    owner={"kind": "glasshive_delivery", "id": "native-delivery"},
+                    resultMessageId=delivery["callbackMessageId"])
+                permit = _dispatch_permit(delivery_id="native-delivery", claim_id="native-claim")
+                renewal = {**permit, "expiresAt": (
+                    datetime.now(timezone.utc) + timedelta(seconds=120)).isoformat()}
+                http = _RecordingPostSession([(200, {"deliveries": [delivery]}),
+                    (200, {"permit": permit}), (200, {"permit": renewal}),
+                    (200, {"delivery": {"status": "sent"}})])
+                client = _FakeClientSession(); client.post = http.post
+                ordinary_say = session.say
+                def say(*args, **kwargs):
+                    handle = ordinary_say(*args, **kwargs)
+                    def play():
+                        scheduler.note_started_playout(handle)
+                        handle.complete(audible=True)
+                    asyncio.get_running_loop().call_soon(play)
+                    return handle
+                session.say = say
+                scheduler.set_task_stream_connected(True)
+                with mock.patch.object(worker.aiohttp, "ClientSession", return_value=client):
+                    scheduler.on_task_event(event, is_task_suppressed=lambda _: False)
+                    await asyncio.gather(*tuple(scheduler._cortex_wake_tasks))
+                    await asyncio.sleep(0)
+                    scheduler.on_task_event(event, is_task_suppressed=lambda _: False)
+                    scheduler.set_task_stream_connected(False)
+                    scheduler.set_task_stream_connected(True)
+                self.assertEqual([call["text"] for call in session.say_calls], [delivery["text"]])
+                self.assertEqual([post["url"].rsplit("/", 1)[-1] for post in http.posts],
+                    ["claim", "authorize", "renew", "status"])
+                ack = http.posts[-1]["json"]
+                self.assertEqual(ack["status"], "sent")
+                self.assertEqual(ack["dispatchPermit"], renewal)
+                self.assertEqual(ack["taskPresentation"]["stage"], "audio.completed")
+                self.assertEqual(ack["taskPresentation"]["taskId"], "native-task")
+                self.assertGreater(ack["taskPresentation"]["startedAtMs"], 0)
+                self.assertEqual(delivery["mainGenerationPresentation"], _native_main_delivery(kind)["mainGenerationPresentation"])
+                await scheduler.close()
+
+    async def test_native_main_v2_core_authority_rejection_prevents_audio(self):
+        # Current Native owner/source, ended or moved Call and supersession are
+        # checked by Core, not reconstructed from stale gateway metadata.
+        for reason, status in (("foreign-owner", 403), ("ended-call", 409),
+                               ("replaced-call", 409), ("superseded-result", 409),
+                               ("modified-native-metadata", 409)):
+            with self.subTest(reason=reason):
+                session = _DummySession(); scheduler = self._build_scheduler(session=session)
+                delivery = _native_main_delivery()
+                if reason == "modified-native-metadata":
+                    delivery["mainGenerationPresentation"]["nativeCoordinatorResult"]["runId"] = "other-run"
+                self.assertIsNotNone(scheduler._validate_glasshive_main_presentation(
+                    delivery, delivery["text"]))
+                scheduler._claim_glasshive_delivery = mock.AsyncMock(return_value=delivery)
+                http = _RecordingPostSession([(status, {"code": reason})])
+                client = _FakeClientSession(); client.post = http.post
+                with mock.patch.object(worker.aiohttp, "ClientSession", return_value=client):
+                    result = await scheduler._run(scheduler._seq, delivery["callbackMessageId"], [],
+                        should_poll_cortex=False, should_poll_glasshive=True,
+                        allow_stale_delivery=True, presentation_is_current=lambda: True,
+                        task_ref=delivery["presentationTask"],
+                        published_worker_callback_id=delivery["callbackId"])
+                self.assertIsNone(result)
+                self.assertEqual(session.say_calls, [])
+                self.assertEqual(len(http.posts), 1)
+                self.assertTrue(http.posts[0]["url"].endswith("/authorize"))
+                await scheduler.close()
+
+    async def test_native_main_v2_closed_or_superseded_wake_never_claims(self):
+        for condition in ("closed", "foreign-call", "suppressed", "superseded", "completed"):
+            with self.subTest(condition=condition):
+                session = _DummySession(); scheduler = self._build_scheduler(session=session)
+                delivery = _native_main_delivery()
+                scheduler._claim_glasshive_delivery = mock.AsyncMock(return_value=delivery)
+                scheduler.set_task_stream_connected(True)
+                event = self._pending_worker_delivery_event(taskId="native-task",
+                    streamId="glasshive-delivery:native-delivery",
+                    owner={"kind": "glasshive_delivery", "id": "native-delivery"},
+                    resultMessageId=delivery["callbackMessageId"])
+                if condition == "closed": await scheduler.close()
+                elif condition == "foreign-call": event["callSessionId"] = "new-call"
+                elif condition in {"superseded", "completed"}:
+                    event["presentation"] = {"state": condition}
+                scheduler.on_task_event(event,
+                    is_task_suppressed=lambda _: condition == "suppressed")
+                self.assertEqual(len(scheduler._cortex_wake_tasks), 0)
+                scheduler._claim_glasshive_delivery.assert_not_awaited()
+                self.assertEqual(session.say_calls, [])
                 await scheduler.close()
 
     async def test_exact_pending_question_accepts_identical_future_native_expiry_cap_only(self):

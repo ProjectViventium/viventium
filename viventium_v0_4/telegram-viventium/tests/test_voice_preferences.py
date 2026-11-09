@@ -392,27 +392,27 @@ def test_get_message_returns_attachment_capture_errors(monkeypatch):
 
 
 @pytest.mark.parametrize("caption", [None, "Read the video label and spoken numbers.", "  Exact caption: café 17 + 23\nSecond line.  "])
-def test_get_message_treats_regular_video_as_file_attachment(monkeypatch, caption):
+def test_get_message_treats_other_video_containers_as_file_attachments(monkeypatch, caption):
     message = _DummyMessage(chat_id="chat-1", user_id="user-1")
     message.chat = types.SimpleNamespace(type="private")
     message.caption = caption
     monkeypatch.setattr(sys.modules["config"], "NICK", None, raising=False)
     message.video = types.SimpleNamespace(
         file_id="video-file",
-        file_name="clip.mp4",
-        mime_type="video/mp4",
+        file_name="clip.webm",
+        mime_type="video/webm",
     )
 
     async def _fake_download(*_args, **_kwargs):
         return scripts.TelegramDownloadResult(
             file_bytes=b"video-bytes",
-            filename="clip.mp4",
-            mime_type="video/mp4",
-            file_path="videos/source.mp4",
+            filename="clip.webm",
+            mime_type="video/webm",
+            file_path="videos/source.webm",
         )
 
     async def _fail_transcribe_video(*_args, **_kwargs):
-        raise AssertionError("regular video uploads should not be transcribed")
+        raise AssertionError("other video containers should use the generic attachment path")
 
     monkeypatch.setattr(scripts, "download_telegram_file_result", _fake_download)
     monkeypatch.setattr(scripts, "transcribe_video", _fail_transcribe_video)
@@ -426,12 +426,12 @@ def test_get_message_treats_regular_video_as_file_attachment(monkeypatch, captio
     )
 
     assert result[-1] == []
-    assert result[-2][0]["filename"] == "clip.mp4"
-    assert result[-2][0]["mime_type"] == "video/mp4"
+    assert result[-2][0]["filename"] == "clip.webm"
+    assert result[-2][0]["mime_type"] == "video/webm"
     assert base64.b64decode(result[-2][0]["data"]) == b"video-bytes"
     assert result[0] == caption
     assert result[1] == caption
-    assert result[8] == "videos/source.mp4"
+    assert result[8] == "videos/source.webm"
     assert result[11] is None
 
 

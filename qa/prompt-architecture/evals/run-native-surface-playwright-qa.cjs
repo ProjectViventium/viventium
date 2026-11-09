@@ -30,7 +30,6 @@ const USER_AGENT =
   'Mozilla/5.0 (Macintosh; Intel Mac OS X 14_0) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36 ViventiumNativeSurfaceQA/1.0';
 const QA_MAPPING_RUN_FIELD = 'viventiumNativeSurfaceQaRunId';
 const COMPLETION_PROMPT_FAMILIES = new Set([
-  'main_assembly',
   'main_runtime',
   'main_run_create',
 ]);
@@ -590,8 +589,7 @@ function buildTelegramSourceEventId({ sourceOrderScope, sourceSequence } = {}) {
 }
 
 function nextTelegramSourceSequence() {
-  const candidate = Date.now() * 1000 + crypto.randomInt(0, 1000);
-  lastTelegramSourceSequence = Math.max(candidate, lastTelegramSourceSequence + 1);
+  lastTelegramSourceSequence += 1;
   if (!Number.isSafeInteger(lastTelegramSourceSequence)) {
     throw new Error('telegram_source_sequence_overflow');
   }
@@ -1443,6 +1441,43 @@ function normalizeIdentifierSet(values) {
   );
 }
 
+function ownedQaBackgroundDescendants(messages, { userId, conversationId, qaRunId, runStartedAt }) {
+  const scoped = messages.filter((row) => String(row.user || '') === userId &&
+    row.conversationId === conversationId && new Date(row.createdAt).getTime() >= +runStartedAt);
+  const owned = new Set(scoped.filter((row) => row.metadata?.viventium?.qaRun === true &&
+    row.metadata?.viventium?.qaRunId === qaRunId).map((row) => row.messageId));
+  const selected = [];
+  let advanced = true;
+  while (advanced) {
+    advanced = false;
+    for (const row of scoped) {
+      if (owned.has(row.messageId) || row.isCreatedByUser !== false ||
+          row.metadata?.viventium?.qaRunId != null || row.metadata?.viventium?.qaRun != null ||
+          !['glasshive_worker_callback', 'cortex_followup'].includes(row.metadata?.viventium?.type) ||
+          !owned.has(row.parentMessageId)) continue;
+      owned.add(row.messageId);
+      selected.push(row);
+      advanced = true;
+    }
+  }
+  return selected;
+}
+
+async function tagQaBackgroundDescendants({ db, userId, conversationId, qaRunId, runStartedAt }) {
+  const rows = await db.collection('messages').find({user:userId, conversationId})
+    .limit(MAX_QA_CLEANUP_ROWS + 1).toArray();
+  if (rows.length > MAX_QA_CLEANUP_ROWS) throw new Error('qa_cleanup_message_limit_exceeded');
+  const selected = ownedQaBackgroundDescendants(rows, {userId,conversationId,qaRunId,runStartedAt});
+  for (const row of selected) {
+    const result = await db.collection('messages').updateOne({
+      _id:row._id, user:userId, conversationId, isCreatedByUser:false, parentMessageId:row.parentMessageId,
+      'metadata.viventium.qaRun':{$exists:false}, 'metadata.viventium.qaRunId':{$exists:false},
+    }, {$set:{'metadata.viventium.qaRun':true,'metadata.viventium.qaRunId':qaRunId}});
+    if (result.matchedCount !== 1) throw new Error('qa_background_artifact_tag_unverified');
+  }
+  return selected.length;
+}
+
 async function cleanupExactQaArtifacts({
   db,
   qaUser,
@@ -1770,7 +1805,7 @@ async function createQaAuth({ args, env }) {
       throw new Error('native_surface_qa_session_creation_failed');
     }
 
-    const syntheticTelegramUserId = `qa_native_${hashValue(`${userId}:${args.agentId}`, 12)}`;
+    const syntheticTelegramUserId = `qa_native_${hashValue(`${userId}:${args.agentId}:${args.qaRunId}`, 12)}`;
     const mappingCollection = db.collection('telegramusermappings');
     const originalMapping = await mappingCollection.findOne({
       telegramUserId: syntheticTelegramUserId,
@@ -1852,6 +1887,7 @@ async function createQaAuth({ args, env }) {
 
     return {
       cleanup,
+      runStartedAt,
       trackCreatedCall(callSessionId) {
         if (typeof callSessionId !== 'string' || !callSessionId.trim()) {
           throw new Error('qa_created_call_identity_invalid');
@@ -2233,7 +2269,7 @@ async function runVoiceSurface({
   };
 }
 
-async function runTelegramSurface({ args, env, qaAuth, testCase }) {
+async function runTelegramTurn({ args, env, qaAuth, testCase, text, conversationId = 'new', parentMessageId }) {
   const sourceSequence = nextTelegramSourceSequence();
   const sourceOrderScope = buildTelegramSourceOrderScope({
     ownerId: qaAuth.userId,
@@ -2247,8 +2283,9 @@ async function runTelegramSurface({ args, env, qaAuth, testCase }) {
     sourceEventId,
   });
   const body = {
-    text: buildText(testCase),
-    conversationId: 'new',
+    text,
+    conversationId,
+    ...(parentMessageId ? { parentMessageId } : {}),
     agentId: args.agentId,
     telegramUserId: qaAuth.syntheticTelegramUserId,
     telegramChatId: qaAuth.syntheticTelegramUserId,
@@ -2321,6 +2358,30 @@ async function runTelegramSurface({ args, env, qaAuth, testCase }) {
     hasRuntimeHold: hasRuntimeHold(stream.events),
     privateEvents: stream.events,
   };
+}
+
+async function runTelegramSurface({ args, env, qaAuth, testCase }) {
+  let conversationId = 'new';
+  let parentMessageId;
+  const seedEvidence = [];
+  const cleanupFinalMetas = [];
+  for (const text of normalizeSeedPrompts(testCase)) {
+    const seed = await runTelegramTurn({ args, env, qaAuth, testCase, text,
+      conversationId, parentMessageId });
+    seedEvidence.push({ ok: seed.ok, responseHash: hashValue(seed.text || ''),
+      eventCount: seed.eventCount || 0 });
+    if (seed.finalMeta?.conversationId) cleanupFinalMetas.push(seed.finalMeta);
+    if (!seed.ok || !seed.finalMeta?.conversationId || !seed.finalMeta?.responseMessageId) {
+      return { ...seed, ok: false, error: seed.error || 'seed_turn_failed',
+        seedEvidence, cleanupFinalMetas };
+    }
+    conversationId = seed.finalMeta.conversationId;
+    parentMessageId = seed.finalMeta.responseMessageId;
+  }
+  const result = await runTelegramTurn({ args, env, qaAuth, testCase,
+    text: buildText(testCase), conversationId, parentMessageId });
+  if (result.finalMeta?.conversationId) cleanupFinalMetas.push(result.finalMeta);
+  return { ...result, seedEvidence, cleanupFinalMetas };
 }
 
 async function startTelegramSurfaceTurn({ args, headers, body, fetcher = fetchJson }) {
@@ -2472,7 +2533,7 @@ async function runSurfaceCase({ args, env, qaAuth, token, testCase }) {
   return runAgentsSurface({ args, token, ownerId: qaAuth.userId, testCase });
 }
 
-async function observePostCaseDbEvidence({ db, result, maxObserveMs, followUpGraceMs }) {
+async function observePostCaseDbEvidence({ db, result, maxObserveMs, followUpGraceMs, ownerId, env, nativeRequest }) {
   const conversationId = result?.finalMeta?.conversationId || '';
   if (!conversationId || !db) {
     return {
@@ -2489,14 +2550,18 @@ async function observePostCaseDbEvidence({ db, result, maxObserveMs, followUpGra
   let cortexSettledAt = 0;
   let latest = null;
   while (Date.now() <= deadline) {
-    latest = await readConversationEvidence({ db, result, conversationId });
+    latest = await readConversationEvidence({ db, result, conversationId, ownerId, env, nativeRequest });
     const hasPendingCortex = latest.primaryCortexStatuses.some((status) =>
       ['activating', 'brewing', 'running', 'pending'].includes(status),
     );
-    if (!result.hasCortexActivation) {
+    if (result.observeBackgroundResults) {
+      const missions = [...(latest.missionAdjudications || []), ...(latest.nativeCoordinatorResults || [])];
+      if (missions.length > 0 && missions.every((row) =>
+        ['completed', 'silent', 'superseded', 'deadletter'].includes(row.state))) break;
+    } else if (!result.hasCortexActivation) {
       break;
     }
-    if (!hasPendingCortex) {
+    if (!result.observeBackgroundResults && !hasPendingCortex) {
       cortexSettledAt = cortexSettledAt || Date.now();
       const awaitingAsyncFollowUp =
         latest.cortexInsightCount > 0 &&
@@ -2508,25 +2573,42 @@ async function observePostCaseDbEvidence({ db, result, maxObserveMs, followUpGra
     }
     await new Promise((resolve) => setTimeout(resolve, 1500));
   }
-  return latest || readConversationEvidence({ db, result, conversationId });
+  return latest || readConversationEvidence({ db, result, conversationId, ownerId, env, nativeRequest });
 }
 
-async function readConversationEvidence({ db, result, conversationId }) {
+async function readConversationEvidence({ db, result, conversationId, ownerId, env, nativeRequest }) {
   const messages = await db
     .collection('messages')
-    .find({ conversationId })
+    .find({ conversationId, ...(ownerId ? { user: ownerId } : {}) })
     .sort({ createdAt: 1 })
     .toArray();
   const responseMessageId = result?.finalMeta?.responseMessageId || '';
   const primary = messages.find((message) => message.messageId === responseMessageId);
-  const delayed = messages.filter((message) => {
+  const missionRows = result.observeBackgroundResults && primary?.user
+    ? await db.collection('viventium_glasshive_mission_evidence').find({
+        conversationId, ownerId: String(primary.user),
+      }, { projection: { state: 1, followUpMessageId: 1 } }).toArray()
+    : [];
+  const native = result.observeBackgroundResults
+    ? await require('./native-background-observation.cjs').readNativeBackgroundObservation({
+        db, result, conversationId, ownerId, env, messages, libreChatRoot: LIBRECHAT_ROOT,
+        request: nativeRequest,
+      })
+    : { results: [], messages: [] };
+  const followUpIds = new Set([...missionRows.map((row) => row.followUpMessageId),
+    ...native.messages.map((message) => message.messageId)].filter(Boolean));
+  const primaryIndex = messages.findIndex((message) => message.messageId === responseMessageId);
+  const followUpCandidates = result.observeBackgroundResults
+    ? messages.filter((message) => followUpIds.has(message.messageId))
+    : messages.slice(primaryIndex < 0 ? messages.length : primaryIndex + 1);
+  const delayed = followUpCandidates.filter((message) => {
     if (message.messageId === responseMessageId) {
       return false;
     }
     if (message.isCreatedByUser === true || message.sender === 'User') {
       return false;
     }
-    return Boolean(contentToText(message.text || message.content).trim());
+    return Boolean(contentToText(message.text || message.content).trim() || message.attachments?.length);
   });
   const cortexItems = Array.isArray(primary?.content)
     ? primary.content.filter((part) => part?.type === 'cortex_insight' || part?.type === 'cortex_activation')
@@ -2543,6 +2625,10 @@ async function readConversationEvidence({ db, result, conversationId }) {
     }));
   return {
     observed: true,
+    nativeCoordinatorResults: native.results,
+    missionAdjudications: missionRows.map((row) => ({
+      state: row.state, hasFollowUp: Boolean(row.followUpMessageId),
+    })),
     conversationIdHash: hashValue(conversationId),
     responseMessageIdHash: hashValue(responseMessageId),
     delayedMessageCount: delayed.length,
@@ -2554,9 +2640,32 @@ async function readConversationEvidence({ db, result, conversationId }) {
     nativeToolObservations: nativeToolObservationsForJudge(primary),
     normalAttachmentObservations: {
       availability: primary ? 'observed' : 'unavailable',
-      attachments: normalAttachmentObservationsForJudge(primary?.attachments),
+      attachments: normalAttachmentObservationsForJudge(result.observeBackgroundResults
+        ? delayed.flatMap((message) => message.attachments || []) : primary?.attachments),
     },
   };
+}
+
+function inspectBackgroundResultObservation(testCase, evidence = {}) {
+  const missions = [...(evidence.missionAdjudications || []), ...(evidence.nativeCoordinatorResults || [])];
+  if (!missions.length || missions.some((row) => !['completed', 'silent'].includes(row.state))) {
+    return { ok: false, error: missions.some((row) => row.state === 'deadletter')
+      ? 'background_result_deadletter' : 'background_result_not_adjudicated' };
+  }
+  if (testCase.expected_decision === 'suppress') {
+    const silent = missions.every((row) => row.state === 'silent' && !row.hasFollowUp) &&
+      evidence.delayedMessageCount === 0;
+    return { ok: silent, ...(silent ? {} : { error: 'background_result_unexpected_delivery' }) };
+  }
+  const surfaced = missions.some((row) => row.state === 'completed' && row.hasFollowUp) &&
+    evidence.delayedMessageCount > 0;
+  if (!surfaced) return { ok: false, error: 'background_result_missing_delivery' };
+  const requiredFile = testCase.required_background_attachment;
+  if (requiredFile && !(evidence.normalAttachmentObservations?.attachments || []).some((file) =>
+    file.status === 'attached' && file.filename === requiredFile)) {
+    return { ok: false, error: 'background_result_missing_attachment' };
+  }
+  return { ok: true };
 }
 
 function buildJudgePrompt(
@@ -2616,7 +2725,12 @@ function buildJudgePrompt(
     'Rubric:',
     (testCase.rubric || []).map((item) => `- ${item}`).join('\n'),
     '',
-    'Assistant output:',
+    ...(result.observeBackgroundResults ? [
+      'This is a real background-result case. The first response below is only the primary turn. Score the later authored result and real mission adjudication or current Native presentation proof, not that acknowledgement or unrelated answer. A settled silent row plus no delayed message is the visible equivalent of {NTA}. No mission, a pending row, deadletter, or superseded row does not prove suppression. Native silence also requires the exact authored no-response decision and no saved output.',
+      `Mission adjudication: ${JSON.stringify(result.postCaseEvidence?.missionAdjudications || [])}`,
+      `Native presentation proof: ${JSON.stringify(result.postCaseEvidence?.nativeCoordinatorResults || [])}`,
+    ] : []),
+    'Primary assistant output:',
     result.text || '[empty_or_suppressed]',
     ...(comparisonResult
       ? [
@@ -3293,15 +3407,30 @@ async function main() {
           ...(surfaceResult.cleanupFinalMetas || []),
           surfaceResult.finalMeta,
         ]);
-        const observeMs = surfaceResult.hasCortexActivation
+        surfaceResult.observeBackgroundResults = testCase.observe_background_results === true;
+        const observeMs = surfaceResult.observeBackgroundResults
+          ? args.timeoutMs
+          : surfaceResult.hasCortexActivation
           ? args.postCaseObserveMs
           : Math.min(args.postCaseObserveMs, 2500);
         surfaceResult.postCaseEvidence = await observePostCaseDbEvidence({
           db: qaAuth.db,
+          ownerId: qaAuth.userId,
+          env,
           result: surfaceResult,
           maxObserveMs: observeMs,
           followUpGraceMs: args.followUpGraceMs,
         });
+        if (surfaceResult.observeBackgroundResults) {
+          await tagQaBackgroundDescendants({db:qaAuth.db, userId:qaAuth.userId,
+            conversationId:surfaceResult.finalMeta.conversationId, qaRunId:args.qaRunId,
+            runStartedAt:qaAuth.runStartedAt});
+          const observation = inspectBackgroundResultObservation(testCase, surfaceResult.postCaseEvidence);
+          if (!observation.ok) {
+            surfaceResult.ok = false;
+            surfaceResult.error = observation.error;
+          }
+        }
         await new Promise((resolve) => setTimeout(resolve, 750));
         frameDelta = readFrameDelta(caseOffsets);
         offsets = frameDelta.afterOffsets;
@@ -3442,6 +3571,7 @@ async function main() {
           ok: false,
           status: 'failed',
           error: scrubForPublic(error?.code || error?.message || 'native_surface_qa_cleanup_failed'),
+          detail: scrubForPublic(error?.message || ''),
         };
       }
     }
@@ -3766,6 +3896,8 @@ module.exports = {
   buildVoiceTypedInput,
   caseRequiresSemanticJudge,
   cleanupExactQaArtifacts,
+  ownedQaBackgroundDescendants,
+  tagQaBackgroundDescendants,
   endQaCallSessions,
   completionEvidenceForCase,
   extractFinalStreamError,
@@ -3779,6 +3911,10 @@ module.exports = {
   scoreNativeDecisionQualityJudgment,
   selectPromptCases,
   startTelegramSurfaceTurn,
+  runTelegramSurface,
+  observePostCaseDbEvidence,
+  readConversationEvidence,
+  inspectBackgroundResultObservation,
   summarizeRun,
   trustedCompletionSurface,
 };

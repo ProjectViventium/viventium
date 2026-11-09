@@ -13,3 +13,11 @@ journeys:
     degradedAndRecovery: Invalid or unavailable local paths produce one truthful action; remote users are told folder choice occurs on the Mac.
     persistenceAndCleanup: Restart preserves owner-only enabled and path state. Clear keeps LIFE enabled; disable persists off and keeps personal content. A note-only API update preserves Mac-selected folders. Disable and cleanup remove synthetic intent without logging the path.
     evidence: [visible helper flow, typed config, filesystem metadata only, logs redaction, cleanup proof]
+  - id: personal-workspace-publication-boundary
+    requirements: [ONB-007, CORE-010, GOV-004]
+    userAction: Save synthetic identity material locally. Attempt a normal delivery, signed replay and public publication using a synthetic Life file or its path.
+    surfaces: [Life workspace, managed artifact delivery, Git helper, Native packaging]
+    expectedResult: Local files stay accessible to the owner. Managed file export omits protected paths, names and bytes. The public candidate and Git gates reject prohibited paths and private path references without echoing them.
+    degradedAndRecovery: A previously issued file link, symlink alias, copied path in a commit later deleted and an untracked template file cannot bypass the relevant gate. Regular artifacts outside Life still work.
+    persistenceAndCleanup: Reload and restart preserve protected-export denial and leave the original local files and permissions unchanged. Remove only test-owned synthetic fixtures; no private bytes or paths enter public evidence.
+    evidence: [workspace identity, owner permissions, synthetic denied link and allowed artifact, synthetic Git history, exact template source, redacted failure]

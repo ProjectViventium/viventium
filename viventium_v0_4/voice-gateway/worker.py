@@ -6281,23 +6281,50 @@ class CortexFollowupScheduler:
     def _validate_glasshive_main_presentation(
         self, delivery: dict[str, Any], text: str,
     ) -> Optional[dict[str, Any]]:
-        """Retain the canonical Main reply; Core rechecks its durable admission on permit use."""
+        """Retain Main's typed reply; Core rechecks its current source on permit use."""
         presentation = delivery.get("mainGenerationPresentation")
-        if not isinstance(presentation, dict) or set(presentation) != {
-            "version", "streamId", "admissionId", "responseMessageId", "responseDigest",
-        }:
+        if not isinstance(presentation, dict):
             return None
-        if (presentation.get("version") != 1 or isinstance(presentation.get("version"), bool)
-                or delivery.get("event") != "main.followup"
+        if (delivery.get("event") != "main.followup"
                 or delivery.get("voiceCallSessionId") != self._auth.call_session_id
-                or presentation.get("streamId") != delivery.get("voiceRequestId")
                 or presentation.get("responseMessageId") != delivery.get("callbackMessageId")
-                or any(not isinstance(presentation.get(key), str) or not presentation[key]
-                       or len(presentation[key]) > 512
-                       for key in ("streamId", "admissionId", "responseMessageId"))
+                or not isinstance(presentation.get("responseMessageId"), str)
+                or not 0 < len(presentation["responseMessageId"]) <= 512
                 or not str(text or "").strip()
                 or presentation.get("responseDigest") != "sha256:" + hashlib.sha256(
                     str(text).encode("utf-8")).hexdigest()):
+            return None
+        if presentation.get("version") == 1 and not isinstance(presentation["version"], bool):
+            if (set(presentation) != {
+                    "version", "streamId", "admissionId", "responseMessageId", "responseDigest",
+                } or presentation.get("streamId") != delivery.get("voiceRequestId")
+                    or any(not isinstance(presentation.get(key), str) or not presentation[key]
+                           or len(presentation[key]) > 512 for key in ("streamId", "admissionId"))):
+                return None
+            return dict(presentation)
+        if (presentation.get("version") != 2 or isinstance(presentation.get("version"), bool)
+                or set(presentation) != {
+                    "version", "nativeCoordinatorResult", "responseMessageId", "responseDigest",
+                }):
+            return None
+        source = presentation.get("nativeCoordinatorResult")
+        if not isinstance(source, dict):
+            return None
+        kind = source.get("kind")
+        common = {"kind", "bindingRef", "nativeConversationId", "runId", "resultRevision",
+                  "resultDigest", "sourceTurnId", "sourceCallSessionId"}
+        identity = ({"goalId"} if kind == "native_coordinator_goal" else
+                    {"turnId", "requestId"} if kind == "native_coordinator_turn" else None)
+        if identity is None or set(source) != common | identity:
+            return None
+        if (any(not isinstance(source.get(key), str) or not 0 < len(source[key]) <= 512
+                for key in {"bindingRef", "nativeConversationId", "runId", "sourceTurnId"} | identity)
+                or source.get("sourceCallSessionId") != self._auth.call_session_id
+                or source.get("bindingRef") != delivery.get("originRef")
+                or not isinstance(source.get("resultRevision"), int)
+                or isinstance(source["resultRevision"], bool)
+                or not 1 <= source["resultRevision"] <= 9_007_199_254_740_991
+                or not self._prefixed_lower_hex(source.get("resultDigest"), "sha256:", 64)):
             return None
         return dict(presentation)
 

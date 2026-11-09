@@ -44,7 +44,7 @@ def path_export_line(shell_name: str) -> str:
 
 
 def source_command(shell_name: str, profile_path: Path) -> str:
-    quoted_profile = shell_quoted_path(profile_path)
+    quoted_profile = shell_quoted_path(profile_path, shell_name)
     if shell_name in {"zsh", "bash", "fish"}:
         return f"source {quoted_profile}"
     return f". {quoted_profile}"
@@ -68,16 +68,23 @@ def home_aware_path(path: Path) -> str:
     return f"$HOME/{relative_path.as_posix()}"
 
 
-def shell_quoted_path(path: Path) -> str:
+def shell_quoted_path(path: Path, shell_name: str = "sh") -> str:
     rendered = home_aware_path(path)
     if rendered.startswith("$HOME/") or rendered == "$HOME":
-        return f'"{rendered}"'
+        # Only the HOME reference is shell syntax; the filename is literal data.
+        suffix = rendered[len("$HOME"):]
+        if shell_name != "fish":
+            # Single-quoted data also avoids interactive history expansion of '!'.
+            return '"$HOME"' + (shlex.quote(suffix) if suffix else "")
+        suffix = suffix.replace("\\", "\\\\").replace('"', '\\"')
+        suffix = suffix.replace("$", "\\$")
+        return f'"$HOME{suffix}"'
     return shlex.quote(rendered)
 
 
 def recommend_one_liner(target_path: Path, shell_name: str, profile_path: Path) -> str:
     quoted_target = shlex.quote(str(target_path))
-    quoted_profile = shell_quoted_path(profile_path)
+    quoted_profile = shell_quoted_path(profile_path, shell_name)
     export_line = shlex.quote(path_export_line(shell_name))
     mkdir_args = ['"$HOME/.local/bin"', *profile_parent_dirs(shell_name)]
     mkdir_step = f"mkdir -p {' '.join(mkdir_args)}"

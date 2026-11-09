@@ -12,7 +12,7 @@ import unittest
 import uuid
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Any
+from typing import Any, Literal
 from unittest.mock import AsyncMock
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -59,7 +59,7 @@ class InputRecoveryTests(unittest.IsolatedAsyncioTestCase):
         guard.robot.input_status.assert_awaited_once_with(guard.input_claim, "renew")
 
     def test_current_presentation_binding_never_rewrites_original_source(self):
-        owners = load_bot_owners("_TelegramSourceOrderGuard", Any=Any)
+        owners = load_bot_owners("_TelegramSourceOrderGuard", Any=Any, Literal=Literal)
         guard = owners["_TelegramSourceOrderGuard"](bot=None, robot=None, telegram_user_id=7,
             chat_id=8, thread_id=None, source_sequence=41)
         guard.source_event_id = "a" * 64
@@ -202,7 +202,7 @@ class InputRecoveryTests(unittest.IsolatedAsyncioTestCase):
         finished = AsyncMock()
         owners = load_bot_owners("_resolve_prepared_voice_input", "_resolve_voice_input_message",
             "_prepared_voice_text", _finish_telegram_preparation=finished,
-            _with_source_ordered_context_bot=lambda context, _guard, operation: operation(context))
+            _with_source_ordered_context_bot=lambda context, _guard, operation, **_: operation(context))
         guard = SimpleNamespace(is_current=AsyncMock(return_value=True))
         context = SimpleNamespace(bot=SimpleNamespace(send_message=AsyncMock()))
         notice = TelegramTranscriptionResult(error_text="No speech was detected.", error_code="no_speech")
@@ -217,7 +217,7 @@ class InputRecoveryTests(unittest.IsolatedAsyncioTestCase):
         finished = AsyncMock()
         owners = load_bot_owners("_resolve_prepared_voice_input", "_resolve_voice_input_message",
             "_prepared_voice_text", _finish_telegram_preparation=finished,
-            _with_source_ordered_context_bot=lambda context, _guard, operation: operation(context))
+            _with_source_ordered_context_bot=lambda context, _guard, operation, **_: operation(context))
         guard = SimpleNamespace(is_current=AsyncMock(return_value=True))
         context = SimpleNamespace(bot=SimpleNamespace(send_message=AsyncMock()))
         await owners["_resolve_prepared_voice_input"](context, guard,
@@ -234,6 +234,25 @@ class InputRecoveryTests(unittest.IsolatedAsyncioTestCase):
             voice_error_text=None)
         self.assertEqual(result, ("Compare the attached options.\n\nUse total ownership cost over five years.", False))
         context.bot.send_message.assert_not_called()
+
+    async def test_partial_media_notice_keeps_preparation_and_uses_current_source(self):
+        from TelegramVivBot.utils.scripts import TelegramTranscriptionNotice
+
+        finished = AsyncMock()
+        owners = load_bot_owners("_resolve_prepared_voice_input", "_resolve_voice_input_message",
+            "_prepared_voice_text", _finish_telegram_preparation=finished,
+            _with_source_ordered_context_bot=lambda context, _guard, operation, **_: operation(context))
+        notice = TelegramTranscriptionNotice("Frames unavailable.", "video_frames_timeout", continues=True)
+        for is_current in (True, False):
+            with self.subTest(is_current=is_current):
+                guard = SimpleNamespace(is_current=AsyncMock(return_value=is_current))
+                context = SimpleNamespace(bot=SimpleNamespace(send_message=AsyncMock()))
+                result = await owners["_resolve_prepared_voice_input"](context, guard,
+                    chatid=8, messageid=42, message_thread_id=None,
+                    message=None, voice_text="Exact spoken input.", voice_error_text=notice)
+                self.assertEqual(result, ("Exact spoken input.", False))
+                self.assertEqual(context.bot.send_message.await_count, int(is_current))
+        finished.assert_not_awaited()
 
     async def test_retained_text_uses_core_merge_and_settles_empty_command(self):
         forwarded = AsyncMock()
@@ -277,6 +296,57 @@ class InputRecoveryTests(unittest.IsolatedAsyncioTestCase):
         finished.assert_awaited_once_with(guard, "cancelled")
         self.assertEqual(forwarded.await_count, 2)
 
+    async def test_uncaptioned_video_file_keeps_grid_after_partial_transcription_failure(self):
+        from TelegramVivBot.utils.scripts import TelegramTranscriptionNotice
+
+        notice = TelegramTranscriptionNotice("Use the frames.", "transcription_failed", continues=True)
+        message = SimpleNamespace(chat=SimpleNamespace(type="private"), message_id=42, from_user=None)
+        context = SimpleNamespace(bot=object())
+        files = [{"filename": "video-frames.jpg"}]
+        info = (None, None, None, 8, 42, None, message, None, "8:7", None,
+                None, None, notice, files, [])
+        prepared = AsyncMock(return_value=(None, False))
+        send = AsyncMock()
+        owners = load_bot_owners("_handle_file_prepared",
+            _queue_media_group_update=AsyncMock(return_value=False),
+            _unpack_message_info=lambda value: value, GetMesageInfo=AsyncMock(return_value=info),
+            _resolve_prepared_voice_input=prepared, getViventiumResponse=send,
+            get_robot=lambda *_: (object(), None, None, None),
+            Users=SimpleNamespace(get_config=lambda *_: None),
+            config=SimpleNamespace(VIVENTIUM_TELEGRAM_FILE_TEXT_FALLBACK=False),
+            _telegram_reply_context_v1=lambda *a: None,
+        )
+        await owners["_handle_file_prepared"](SimpleNamespace(update_id=10), context, SimpleNamespace())
+        self.assertIs(prepared.call_args.kwargs["voice_error_text"], notice)
+        self.assertIs(send.call_args.kwargs["files"], files)
+
+    async def test_video_album_keeps_caption_and_transcripts_in_upload_order(self):
+        def album_item(sequence, caption, transcript):
+            message = SimpleNamespace(message_id=sequence, chat=SimpleNamespace(type="private"),
+                                      from_user=None)
+            update = SimpleNamespace(update_id=sequence, message=message)
+            guard = SimpleNamespace(source_sequence=sequence, input_claim={"sourceSequence": sequence})
+            info = (caption, caption, None, 8, sequence, None, message, None, "8:7", None,
+                    None, transcript, None, [{"filename": f"{sequence}-frames.jpg"}], [])
+            return {"update": update, "context": SimpleNamespace(bot=object()), "ingress_guard": guard}, info
+
+        first, first_info = album_item(41, None, "First video.")
+        second, second_info = album_item(42, "Compare these clips.", "Second video.")
+        send = AsyncMock()
+        owners = load_bot_owners("_process_media_group_entries", "_prepared_voice_text",
+            _telegram_update_message=lambda update: update.message,
+            _unpack_message_info=lambda value: value,
+            GetMesageInfo=AsyncMock(side_effect=[first_info, second_info]),
+            get_robot=lambda *_: (object(), None, None, None),
+            getViventiumResponse=send, _telegram_reply_context_v1=lambda *a: None,
+        )
+        await owners["_process_media_group_entries"](("8", "", "7", "group"), [second, first])
+        self.assertEqual(send.await_count, 1)
+        self.assertEqual(send.call_args.args[4], "Compare these clips.\n\nFirst video.\n\nSecond video.")
+        self.assertEqual(send.call_args.kwargs["files"], first_info[13] + [
+            {**second_info[13][0], "caption": "Compare these clips."},
+        ])
+
     async def test_ready_recovery_uses_retained_stream_without_preparing_or_starting_another_turn(self):
         message = SimpleNamespace(message_id=42, message_thread_id=None, voice=None, video_note=None)
         update = SimpleNamespace(update_id=10)
@@ -311,6 +381,55 @@ class InputRecoveryTests(unittest.IsolatedAsyncioTestCase):
             restore_telegram_preparation=lambda *_: update, _telegram_update_message=lambda _: None)
         await owners["_resume_telegram_input"](SimpleNamespace(bot=object()), robot, claim)
         robot.input_status.assert_awaited_once_with(claim, "cancelled")
+
+    async def test_album_keeps_distinct_verbatim_captions_bound_to_original_files(self):
+        cases = [
+            (["Compare the red option.", "Use the blue option's warranty."],
+             "Attachment 1 (same.jpg):\nCompare the red option.\n\nAttachment 2 (same.jpg):\nUse the blue option's warranty."),
+            (["Same request.", "Same request."], "Same request."),
+            ([None, None], ""),
+            (["Only caption.", None], "Only caption."),
+            ([None, "Later caption."], "Later caption."),
+            (["  Exact caption: café 17 + 23\nSecond line.  ", "Exact second instruction."],
+             "Attachment 1 (same.jpg):\n  Exact caption: café 17 + 23\nSecond line.  \n\nAttachment 2 (same.jpg):\nExact second instruction."),
+        ]
+        for captions, expected in cases:
+            for with_transcripts in (False, True):
+                with self.subTest(captions=captions, with_transcripts=with_transcripts):
+                    infos, entries, originals = [], [], []
+                    for index, caption in enumerate(captions):
+                        sequence = 41 + index
+                        message = SimpleNamespace(message_id=sequence, chat=SimpleNamespace(type="private"),
+                                                  from_user=None)
+                        update = SimpleNamespace(update_id=sequence, message=message)
+                        guard = SimpleNamespace(source_sequence=sequence, input_claim={"sourceSequence": sequence})
+                        attachment = {"filename": "same.jpg", "data": f"original-{sequence}"}
+                        originals.append(attachment.copy())
+                        transcript = f"Transcript {index + 1}." if with_transcripts else None
+                        infos.append((caption, caption, None, 8, sequence, None, message, None, "8:7", None,
+                                      None, transcript, None, [attachment], []))
+                        entries.append({"update": update, "context": SimpleNamespace(bot=object()),
+                                        "ingress_guard": guard})
+                    send = AsyncMock()
+                    owners = load_bot_owners("_process_media_group_entries", "_prepared_voice_text",
+                        _telegram_update_message=lambda update: update.message,
+                        _unpack_message_info=lambda value: value,
+                        GetMesageInfo=AsyncMock(side_effect=infos),
+                        get_robot=lambda *_: (object(), None, None, None),
+                        getViventiumResponse=send, _telegram_reply_context_v1=lambda *a: None,
+                    )
+                    await owners["_process_media_group_entries"](("8", "", "7", "group"), list(reversed(entries)))
+                    self.assertEqual(send.await_count, 1)
+                    actual_text = expected
+                    if with_transcripts:
+                        actual_text = (actual_text + "\n\n" if actual_text else "") + "Transcript 1.\n\nTranscript 2."
+                    self.assertEqual(send.call_args.args[4], actual_text)
+                    expected_files = [{**original, **({"caption": caption} if caption else {})}
+                                      for original, caption in zip(originals, captions)]
+                    self.assertEqual(send.call_args.kwargs["files"], expected_files)
+                    self.assertEqual([info[13][0] for info in infos], originals)
+                    self.assertEqual(send.call_args.kwargs["_source_guard"].input_claims,
+                                     [{"sourceSequence": 41}, {"sourceSequence": 42}])
 
 
 if __name__ == "__main__":

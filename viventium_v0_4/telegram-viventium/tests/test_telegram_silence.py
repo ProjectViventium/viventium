@@ -23,6 +23,7 @@ def separate_silence_decode_from_speech_presence(monkeypatch):
     # speech-presence bank uses real spoken/noise fixtures through Silero.
     async def admitted_speech(_pcm): return True
     monkeypatch.setattr(telegram_vad, 'has_speech', admitted_speech)
+    monkeypatch.setattr(scripts.config, 'VIVENTIUM_TELEGRAM_FILE_UPLOAD_ENABLED', False, raising=False)
 
 
 def float_wav(samples, rate=16000, channels=1):

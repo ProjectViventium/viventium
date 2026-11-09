@@ -143,6 +143,75 @@ The private delivery ledger preserves exact commands, old failures, candidate by
 - [x] Private evidence is represented only by sanitized outcomes, counts and measurements.
 
 
+## Latest local recheck — 2026-10-07
+
+Result remains **PARTIAL** for the full requested outcome. These checks supersede only the
+matching earlier observations above; retained evidence is not a new current run.
+
+| Affected path | Current actual evidence | Result / remaining gap |
+| --- | --- | --- |
+| Loaded local candidate | Normal CLI ownership, matching selected Source and installed API bytes, current Core/Native/Gateway/Next listeners, actual Gateway registration, unchanged prompt bundle and protected account preferences. | Loaded local repair batch verified; no release, component-pin or new-install claim. |
+| Listening, Speaking and voice brain | Headed Chrome opened the separate Voice settings popup. The local Whisper Turbo and xAI voice controls were present and retained after reload; xPerfect/Grok 4.7 Fast/high and Opus 5.5/high backup remained selected. | Current selector and reload PASS; this settings-only run does not prove microphone action authority or audible-call completion. |
+| Worker result and workspace files | The actual headed workspace view separates selected mission result files from reusable workspace files. A completed text-only mission truthfully reports no result files. A new Voice-origin Worker completed a selected CSV; Chrome opened its native preview, downloaded its exact bytes, and retained the result actions after reload. | Visible separation and selected CSV Open/Download/reload PASS. Inline result text still shows an unresolved artifact link; preview and download use a storage identifier as the filename. These user experience gaps remain open. |
+| Telegram normal recovery | The existing component assembler created a valid current code generation and reused the sealed dependency generation. The existing watchdog recovered the bot. Unexpected bytecode in the superseded generation was retained as private failure evidence. | Normal recovery and exact current component integrity PASS. The original bytecode writer remains unproved. |
+| Telegram ordinary conversation | Real Telegram delivered a correct arithmetic reply, accepted a correction, and truthfully declined to invent unseen information. The replies remained visible after reopening the same bot conversation; exact Core parent-linked records and the actual GPT 6.1 Sol/high session support the delivered replies. | These current happy, correction and unavailable-knowledge paths PASS; no universal prompt/file/worker parity claim. |
+| Telegram background memory | All three corresponding governed memory operations completed as no-ops. The existing writer accepted the completed tool receipts despite an empty native chat-response error. Persisted memory-operation records have no error attachment. | Completed no-op processing PASS. The raw provider response status alone was not a memory failure. Save/recall and complete memory parity remain open. |
+| Enabled local dependencies | RAG and search services responded; Redis returned PONG. The connected enterprise MCP endpoint responded with auth-required status. | Reachability is supporting evidence. Authenticated MCP tool use is not proved. |
+| Parallel Work readiness | Actual Core configuration reports Parallel Work unavailable after dedicated Redis provenance could not be verified through Docker control. Docker control remains unresponsive. Native worker admission has separate gates and known work remains reachable. | Deployment-wide automatic readiness is degraded. This flag alone does not prove every native Worker route unavailable. No provenance or feature-flag bypass was used. |
+| Native Worker and callback | Current Grok 4.7 Fast/high Main accepted a GPT 6.1 Sol/high Worker through its normal declared tools. The Worker completed; the selected file, terminal result, callback and linked-chat attachment match the correct owner and conversation. Gateway claimed the callback and TTS produced audio after a timed RTC outage. The receiver captured only zero PCM during that completion; End settled interrupted speech as unknown. | Acceptance, completion and durable file import PASS. Worker audio delivery FAIL in this call. RTC root cause and same-call recovery remain open; no callback, model or TTS repair is supported by this trace. |
+| Current stream and timing | A new actual typed call reached first PCM in 20.651 seconds, with public speech beginning before final completion. A different typed delegation/file request reached first PCM in 54.056 seconds. The retained physical speech-end sample is 18.660 seconds. Each is one sample from its recorded path. | Early streaming remains proved. Typed timing is not physical speech-end timing, and these are not matched before/after samples or pure inference measurements. No measured latency saving; under two seconds remains unmet/unproved. |
+| End control | A deliberately connected SDK receiver observed ten active frames after the persisted End response, with its last active frame about 196 milliseconds later. The real browser initiates End and disconnects immediately; its remote-ended consumer also disconnects. | The private zero-after-ACK metric failed and is retained. It is not the documented user-audible End contract. Current headed End, terminal reload, continued durable work and audible-stop proof remain required. No server-tail fix or stronger controller was added. |
+
+The actual Opus 5.5 review used original prompt/thread excerpts, Key Principles, golden rules/NFA,
+current owning docs, Source and private measurement receipts. It remains supporting evidence.
+Independent Source checks corrected its assumptions about native Worker availability and the scope
+of a global Docker restart. Published ports do not inventory unpublished containers. Current
+browser-audible End is not passed from Source inspection alone.
+
+The latest Opus follow-up accepted those corrections and inspected the new call, file and Gateway
+evidence. A fresh local LiveKit HTTP probe also failed. This proves an unavailable endpoint in that
+probe, not that a server process died or why RTC recovery failed. The global Docker recovery scope
+remains unverified; no daemon-wide restart was performed.
+
+A five-line early terminal-state classification candidate remains private and unapplied. It is
+optional, has no measured user benefit, and can add a bounded state-read delay on transient EOF.
+It is not needed to meet the browser's immediate disconnect contract. The full coupled two-Worker,
+control, spoken completion, later Grok tool-record consumer, microphone authority, hosted recognition
+and public-edge journeys retain their open gates. Current selected CSV preview/download proof does
+not pass those journeys. OpenCode remains unchanged in the backlog.
+
+
+## Urgent local completion batch — 2026-10-08
+
+QA mode: **SKIP**, as explicitly requested. This section records implementation and necessary
+configuration/build/load work. Automated acceptance checks, exact-model evaluations, browser/audio
+QA and latency benchmarks are **NOT RUN** for the final candidate. Retained earlier proof applies
+only where its contract and source still match.
+
+| Requested outcome | Delivered or reused change | Evidence type | Remaining acceptance gap |
+| --- | --- | --- | --- |
+| Current personal runtime | Recovered current-laptop data and services are reused; normal supported Stop/Launch loads the coherent repair batch. | Existing recovery receipts, selected owner identity, current startup receipts. | Service startup does not prove an end-to-end user call. |
+| Agreed models and legal alternatives | Main GPT 6.1 Sol/high; Voice xPerfect with the supported Grok 4.7 route/high; Opus 5.5/high fallback. Explicit supported alternatives remain legal; OpenCode remains unchanged. | Read-only saved configuration after load matches the prior selected configuration. | Forced live fallback and full role/provider matrix NOT RUN. |
+| Interrupted input and receipt | Retain the original ordered admissions through interruption; keep authentic receipt and removal guards, configured bounded wait and End cleanup. | Actual prior lost-receipt trace, source review and syntax build. | Final live split-input/interruption/End acceptance NOT RUN. Serial receipt ordering remains; no measured speed gain. |
+| Internal memory maintenance | Reuse the isolated signed tool-free compactor request without inheriting the live-call frame. | Existing exact-provider zero-tool admission proof and current loaded owner. | Accepted summary fidelity, digest/cursor advance and spoken save/recall NOT RUN. |
+| Main worker action and Steer | Reuse exact file transport and queued Steer; pin the bounded worker-roster projection and preserve the existing required/optional context priorities. | Existing file/Steer proof, structural budget evidence and source review. | Natural correct action, running-worker update with other workers unchanged and truthful success NOT RUN. A prior false success remains an open behavioral gate. |
+| Callback truth | Existing Native sender and Core receiver/claim reject obsolete same-run attention after terminal truth; generic completed work still goes through Main. | Prior stale-order diagnosis and review of the final exact owners. | Real race, once-only completion and Voice/Text/Telegram delivery acceptance NOT RUN. |
+| Observability and existing speed work | Keep current stage clocks, streaming, warmup, session reuse and caches; add metadata-only context-retention receipts. | Exact source lineage and retained joined timing evidence. | No final-candidate benchmark or latency saving claim. Under two seconds and clean audio remain unmet or unverified. |
+| Separate runtime preservation | Broad source/pattern cleanup now requires owned process-group proof; exact port/PID recovery remains. The accidental same-checkout QA shutdown is retained as a delivery incident and restored through its supported scoped owner. | Incident receipts, exact source review and scoped startup restoration records. | General stop/start isolation acceptance NOT RUN. |
+
+Earlier original-database and absent-primary-Telegram blockers are superseded by current recovery
+and startup receipts. Earlier hash-filename and missing chat-file-renderer observations are
+superseded only for the retained matching Chrome preview/download/name/byte cases. Neither update
+claims universal file, memory, worker, Telegram or call parity.
+
+The existing Opus 5.5 review context received original user requirements, owning principles and
+golden rules/NFA, source, build/runtime evidence and the complete scope record. Its material source
+findings were corrected: original POST ordering is retained and optional continuity is not made
+mandatory. It found no supported material defect in the final repair and lifecycle deltas. This is
+supporting source evidence, not substituted user acceptance. Trusted passive local speaker mode,
+remote/off-network endurance, full cognitive parity, forced fallback and audio quality retain their
+explicit gaps. No component release, commit, push or pin claim is made.
+
 ## 2026-10-09 — Current local candidate and bounded acceptance
 
 **PARTIAL for the full requested experience.** The compatible repair source was implemented,

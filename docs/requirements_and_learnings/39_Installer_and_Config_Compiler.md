@@ -35,6 +35,11 @@ grant Native operator authority. Explicit and stored Native owners must remain r
 Missing users, placeholder owners, unsupported roles, and conflicting non-placeholder agent authors
 remain guarded; startup must not rewrite legitimate authors to make seeding succeed.
 
+Direct-action MCP ownership comes from the canonical Agent bundle. The compiler projects only its
+`direct_action_mcp_servers` list into LibreChat's activation policy, then applies the existing
+server-availability filter. Other template activation settings remain intact. Optional Chrome
+configuration and its per-user connection lifecycle are owned by [MCPs](07_MCPs.md#optional-local-chrome-connection).
+
 The health runtime is a generated installed artifact, not an authoring surface. Install, upgrade,
 component bootstrap, and start rebuild it atomically from the exact `components.lock.json` ref,
 reject a mismatched or dirty component package, and preserve OAuth/archive state outside the runtime

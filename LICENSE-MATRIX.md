@@ -17,6 +17,8 @@ the project as if one top-level license governs every component.
 | `livekit` | Apache-2.0 | Preserve upstream license and NOTICE. |
 | `cartesia-voice-agent` | Apache-2.0 | Preserve upstream license. |
 | `agent-starter-react` | MIT | Preserve upstream license. |
+| Fast Queen OpenAI identification artwork | Third-party mark; [OpenAI usage terms](https://openai.com/brand/) | The local SVG identifies the compared provider. It is not Viventium-owned branding or an endorsement; the root code license grants no rights to the mark. |
+| Fast Queen Anthropic identification artwork | Third-party mark; [Anthropic trademark guidelines](https://www.anthropic.com/legal/trademark-guidelines) | The local SVG identifies the compared provider. It is not Viventium-owned branding or an endorsement; the root code license grants no rights to the mark. |
 | private preservation repo | Private | Stores personal state, backups, prompts, secrets, and private documentation. |
 | `<enterprise-deployment-repo>` | Private | Deployment automation and service-only infrastructure repo. |
 

@@ -31,6 +31,37 @@
 
 ## Specifications
 
+### Optional local Chrome connection
+
+`integrations.chrome_devtools.enabled` defaults to `false`. When enabled, the compiler adds the
+official `chrome-devtools-mcp@1.12.0` stdio server with automatic connection to an existing Chrome,
+usage statistics off, and CrUX requests off. Chrome Remote Debugging and Chrome's own Allow prompt
+remain required. The existing LibreChat per-user MCP connection pool owns this process; compiler
+output adds `chrome-devtools` to `MCP_PERSISTENT_CONNECTION_SERVERS` while preserving other entries.
+The module adds no service, daemon or native harness global config.
+
+The reviewed connection is local-owner and host-only. The Agent source declares one deferred
+`list_pages` activation anchor; this declares the server rather than restricting it to one method.
+Authorized Workers discover the server's complete current tool schemas through the existing
+capability broker. The speaking assistant keeps its existing coordination tools. Its model,
+personality, saved access and background Worker settings do not change when this module is enabled.
+Background tab creation is available through the upstream `new_page` tool's `background` option.
+The caller must respect the user's request about tab focus and interaction.
+
+Reviewed `viventiumGlassHive.nativeServerIds` lists the exact inherited Native MCP IDs that this
+Core server replaces. Only a successfully prepared mission authorization or signed current broker
+grant may apply that selection. The per-invocation TOML overlay disables those exact counterparts;
+it preserves unrelated Native servers, model settings, access policy and global configuration.
+Codex and Claude use the same selection. A missing broker, excluded server, or unauthorized audience
+does not disable a Native fallback.
+
+A continuation uses the existing mission's owner-bound, persisted server scope as its ceiling.
+Enabling a new module does not expand old work's authorization or remove its Native fallback.
+Missing mission scope produces an explicit preparation error; it never mints a broader grant.
+The browser policy keeps content reads within the signed grant and permits the already authorized
+local-owner browser actions. Existing effect receipts, argument schemas, Native access rules and
+external-action boundaries still apply. Chrome's own consent prompt is not bypassed.
+
 ### MS365 MCP
 
 - Server config: `viventium_v0_3_py/viventium_v1/backend/brain/tools/mcp/servers/ms365.yaml`
@@ -1022,6 +1053,14 @@ Component source, vision, provider inventory, operational setup, and dated owner
 tool-binding parity, live-agent sync review, and a real user-level browser answer check.
 
 ---
+
+## Local image and video generation
+
+The opt-in [Viventium Media MCP](../../viventium_v0_4/MCPs/local-media/README.md) is available
+to native host Workers through the existing xPerfect worker configuration. Queen can delegate
+a request without loading any model. The Worker chooses the local tool and links the finished
+result for the existing chat attachment path. Inputs inside the private LIFE workspace remain
+local; a newly rendered output uses the Worker’s private temporary area for capture.
 
 ## Integration Points
 

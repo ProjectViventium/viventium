@@ -161,6 +161,9 @@ voice:
   wing_mode:
     default_enabled: false
 integrations:
+  chrome_devtools:
+    # Reuse one local Chrome connection through the existing per-user MCP pool.
+    enabled: false
   health:
     enabled: false
     life_projection_dir: ""

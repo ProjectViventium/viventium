@@ -74,6 +74,13 @@ work and silence remain valid choices; no timer or fixed topic replaces that jud
   and cancelled stay distinct.
 - **CC-014:** Claim is atomic, concurrency is bounded, only one active execution may own an
   occurrence, and saturated work remains eligible.
+- Scheduled authoring reconnects the same accepted stream after a connection interruption and
+  reconciles its durable terminal result before cancellation. Cache loss must not turn an accepted
+  dispatch into an unaccepted one. Recovery requires the exact owner, conversation, source event,
+  logical turn and revision; a partial response is not completion. Read windows and leases use
+  wall-clock bounds, including sleep. An expired owner cannot renew its lease or claim delivery.
+  If neither a final result nor a confirmed stop is available, report the result as unconfirmed;
+  do not claim completion, cancellation or a safe automatic retry.
 - **CC-015:** Expired leases recover after interruption; recurring catch-up dispatches only the
   latest eligible occurrence.
 - **GHU-010:** GlassHive recurring work reuses this occurrence, idempotency, overlap, recovery, and
@@ -400,6 +407,15 @@ An authorized existing call may receive eligible speech. No scheduled request st
 Existing Cortex definitions retain their clock and effective policy. The new target explicitly
 uses xPerfect's clock. No bulk migration or deletion is implied; unsupported active-window or
 recovery semantics remain with their current owner until a compatible migration is accepted.
+Both immediate and durable external-work callback paths must resolve that owner from the saved,
+owner-scoped admission. `kind: schedule_due` belongs to the application receiver and must not be
+sent to the legacy Cortex clock. Apply the same check when dispatching retained outbox rows;
+preserve incorrectly routed rows as superseded with an ownership reason. Do not infer ownership
+from an occurrence-key prefix or erase completed work to stop retries.
+If ownership lookup is temporarily unavailable at enqueue, retain the durable intent and retry
+the lookup at dispatch; do not send to a guessed owner. A failed dispatch must not stop the
+bounded batch or jump ahead of callbacks that have been eligible for longer. Keep failed rows
+retryable with their diagnostic; queue progress must not depend on deleting them.
 Legacy Feeling projection remains intact; the optional generic opaque-context contract does not
 silently remove cognitive content from the existing client path.
 

@@ -109,3 +109,36 @@ SHA-256. The snapshot retains the exact source text, its hashes, and composed fr
 snapshot or source bytes stop before model execution. Reuse the same case inputs on both versions.
 Keep a failed invocation distinct from a semantic failure and retain completed subjects when a
 later route is unavailable. After the comparison, exercise the real authorized host action.
+
+### Real background-result observations
+
+The native-surface runner supports ordinary `seed_prompts` on Telegram as well as Web. Each case
+starts a fresh synthetic conversation; later seed and test turns retain its current parent. Cases
+with `observe_background_results: true` observe the existing owner-bound mission adjudications
+or Native presentation owner through the normal case timeout. The Native adapter calls the actual
+`createNativeCoordinatorPresentationService.resolve` with read-only Mongo and account-API readers;
+it does not recover, settle, publish or start work. It selects the original seed and current turn
+parents, so a result for A remains observable while Main answers unrelated C. Dependency or Native
+read failures fail the observation; they cannot become a legacy fallback pass.
+
+Score legacy `followUpMessageId` messages or the exact current Native goal/direct-turn result with
+its saved Main v2 authority and accepted surface receipts. Score actual attachments, even when a
+callback arrives before the unrelated primary answer. Earlier acknowledgements, missing receipts,
+changed authority and unbound messages cannot substitute for a result.
+
+A suppress case requires settled silence with no saved or delayed result. Native silence also
+requires the exact current eligible result, its semantic-suppression ledger row and the parent's
+authored no-response decision. Missing work, held or stale authority cannot prove suppression.
+A surface case requires an authored completed result. An optional
+`required_background_attachment` must match a real file on that result. Pending work, supersession
+or deadletter is not a pass. The semantic judge assesses relevance and wording after these
+deterministic checks. Synthetic gateway proof remains separate from actual Telegram app delivery
+and authenticated file-download proof. Merely describing a callback in an ordinary user message
+does not exercise the result-author path.
+
+The `worker_file_delivery` family uses the existing `worker_source` snapshot replay on both
+configured Worker routes. It compares the exact old and proposed registered file contract with
+the same positive, privacy-negative and ordinary-chat cases. Snapshots retain exact source hashes
+and composed frames privately. Tools-disabled semantic replay verifies the selected model, High
+effort, actual native instructions and call audit; real new-file delivery remains a separate gate.
+The runner uses the same approved synthetic-account and owner-exclusion guard as native-surface QA.

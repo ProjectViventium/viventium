@@ -312,6 +312,36 @@ def command_output(command: list[str]) -> str:
     return completed.stdout + completed.stderr
 
 
+def stage_committed_life_template(repo: Path, destination: Path, commit: str, epoch: int) -> None:
+    """Read the shipped template from the selected commit, never the producer's directory."""
+    completed = subprocess.run(
+        ["git", "--no-replace-objects", "-C", str(repo), "archive", "--format=tar",
+         f"{commit}:templates/life-v0.01"],
+        capture_output=True, check=False, env={**os.environ, "GIT_NO_LAZY_FETCH": "1"},
+    )
+    if completed.returncode:
+        raise AssemblyError("Committed personal workspace template is unavailable")
+    try:
+        with tarfile.open(fileobj=io.BytesIO(completed.stdout), mode="r:") as archive:
+            for member in archive.getmembers():
+                relative = Path(member.name)
+                if (not relative.parts or relative.is_absolute() or ".." in relative.parts
+                        or ".git" in relative.parts or not (member.isdir() or member.isfile())):
+                    raise AssemblyError("Committed template contains an unsafe entry")
+                path = destination / relative
+                if member.isdir():
+                    path.mkdir(parents=True, exist_ok=True)
+                    path.chmod(0o755)
+                    continue
+                path.parent.mkdir(parents=True, exist_ok=True)
+                with archive.extractfile(member) as source, path.open("xb") as target:
+                    shutil.copyfileobj(source, target)
+                path.chmod(0o644)
+                os.utime(path, (epoch, epoch))
+    except (OSError, tarfile.TarError) as error:
+        raise AssemblyError("Could not stage the committed workspace template") from error
+
+
 def run_glasshive_build(command: list[str], *, env: dict[str, str]) -> None:
     completed = subprocess.run(command, env=env, check=False, capture_output=True, text=True)
     if completed.returncode != 0:
@@ -944,8 +974,14 @@ def assemble(args: argparse.Namespace) -> dict[str, object]:
             args.source_date_epoch,
         )
 
-        copy_safe(repo / "templates/life-v0.01", payload / "templates/life-v0.01",
-                  boundary=repo, source_date_epoch=args.source_date_epoch)
+        life_template = repo / "templates/life-v0.01"
+        if args.mode == "candidate":
+            stage_committed_life_template(
+                repo, payload / "templates/life-v0.01", args.source_commit, args.source_date_epoch,
+            )
+        else:
+            copy_safe(life_template, payload / "templates/life-v0.01",
+                      boundary=life_template, source_date_epoch=args.source_date_epoch)
         script_sources = {
             repo / "viventium_v0_4" / "shared" / "compiled_prompt_contract.py": payload / "runtime" / "shared" / "compiled_prompt_contract.py",
             repo / "scripts" / "viventium" / "life_bootstrap.py": payload / "runtime" / "scripts" / "life_bootstrap.py",

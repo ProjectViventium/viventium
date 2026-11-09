@@ -1,5 +1,7 @@
 # Connected tools and search
 
+SearXNG, Firecrawl, and Microsoft 365 are opt-in. Use `integrations.web_search.enabled` with the desired search and scraper providers, or `integrations.ms365.enabled`. Disabling either integration keeps its configuration and stored data available for later use.
+
 ## User promise
 
 Main and supported clients can use the owner's authorized tools and current-information search and
@@ -31,6 +33,13 @@ connections or waive owner authorization and capability parity in xPerfect.
   never reports operational failure as evidence that nothing exists.
 - Runtime exposes typed capability and results. Models choose semantically when and how to use them;
   no prompt-keyword intent router is allowed.
+
+**TOOLS-MEDIA-001:** Local image and video generation is opt-in. Viventium registers its separate
+image and video tools through the existing native MCP configuration for delegated host workers.
+The module owns installed model choices and writes results to the authorized worker workspace.
+xPerfect owns execution, and the initiating channel uses the existing attachment delivery path.
+The setting does not change the execution mode or add tools to the coordinator. See the
+[local media module](../../../viventium_v0_4/MCPs/local-media/README.md) for setup.
 
 ## Owners and QA
 

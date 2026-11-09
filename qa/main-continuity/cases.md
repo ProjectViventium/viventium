@@ -69,6 +69,12 @@ under two real epochs. Distinguish proven retired source from unproven missing s
 assembly. Compare old/proposed prompts on that distinction; deterministic annotation alone is not
 semantic proof. A large legacy record without within-record progress remains an open capacity gate.
 
+Native budget receipt recovery must cover an authenticated result slower than 500 ms and several
+slow callback rows before the last completed admission. Both keep the exact observed capacity;
+owner, model, authority and result-identity mismatches still reject it. Cancellation releases the
+turn promptly, and unavailable results use the existing transport timeout before discovery fallback.
+Selected local evidence: [handoff and context recovery report](reports/2026-11-05-native-handoff-context-recovery.md).
+
 Normal Main carrier coverage must use whole source beyond the turn-context limit, then a new
 conversation and reload. Verify original Message IDs through the actual SDK and native admission,
 not only the compactor. Include more than 128 visible messages, identical repeated text after pruning,
@@ -112,3 +118,18 @@ Main continuity is not complete while any applicable real user path is `NOT RUN`
 `BLOCKED`, or `FAIL`, or while the exact nested source/pin/build/install chain is unproved.
 
 Supporting release regressions: `tests/release/test_queen_turn_diagnostics.py`. These automated checks do not replace the user-path acceptance above.
+
+## Responsive older-context admission
+
+The current policy in requirement 56 supersedes the historical compact-before-reply behavior for
+older accepted continuity. Keep the current request and whole newest sources within the selected
+carrier. A temporary gap must remain explicit when it affects the answer. Original older sources
+stay saved and available only through authorized retrieval. Source-resolution failure, pending
+backlog and omitted loaded pending turns each start independent existing idle maintenance. Busy
+chat must not reset its first timer indefinitely.
+
+Prove a normal Queen reply while a real compactor is in flight, with separate native sessions and
+no shared-capacity wait attributed to compaction. Preserve current identity, preferences and source
+exclusions. Recover an existing completed file without rerunning its effects, then reload. A correct
+current answer does not prove complete recall of omitted older details. If the current required
+source or minimal truthful disclosure cannot fit, preserve the typed admission failure.

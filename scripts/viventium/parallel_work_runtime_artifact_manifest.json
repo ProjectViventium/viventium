@@ -326,6 +326,11 @@
       "kind": "file",
       "path": "viventium_v0_4/telegram-viventium/TelegramVivBot/utils/tr026_local_qa.py",
       "trackedOnly": false
+    },
+    {
+      "kind": "file",
+      "path": "viventium_v0_4/xPerfect/runtime_phase1/src/workers_projects_runtime/claude_conversation.py",
+      "trackedOnly": false
     }
   ]
 }

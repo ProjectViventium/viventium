@@ -1,0 +1,207 @@
+{
+  "date": "2026-11-08",
+  "qa_mode": "blast-radius",
+  "scope": "local candidate; exact Claude Code claude-opus-5 Low; signed-in native plan quota",
+  "comparison_warning": "Channel clocks differ from the frozen-frame inference matrix. Small sample; no percentile or universal latency claim.",
+  "telegram": [
+    {
+      "case": "short arithmetic A",
+      "queue_s": 0.282,
+      "native_duration_s": 3.524,
+      "native_first_text_s": 3.346,
+      "result": "correct"
+    },
+    {
+      "case": "short arithmetic B",
+      "queue_s": 0.527,
+      "native_duration_s": 3.288,
+      "native_first_text_s": 3.257,
+      "result": "correct; same native process as A"
+    },
+    {
+      "case": "two independent local artifacts",
+      "queue_s": 1.496,
+      "native_duration_s": 16.194,
+      "native_first_text_s": 7.109,
+      "result": "both files automatically delivered once; compatibility dispatcher"
+    }
+  ],
+  "voice": [
+    {
+      "case": "short arithmetic A",
+      "queue_s": 0.231355,
+      "native_duration_s": 2.906,
+      "gateway_reported_e2e_s": 8.399165,
+      "result": "correct visible reply and active RTC speech"
+    },
+    {
+      "case": "long story",
+      "queue_s": 0.231304,
+      "native_duration_s": 14.41,
+      "gateway_reported_e2e_s": 18.292886,
+      "result": "speaking observed; interrupted by microphone input"
+    },
+    {
+      "case": "interrupt and new short arithmetic",
+      "queue_s": 0.261645,
+      "native_duration_s": 2.174,
+      "gateway_reported_e2e_s": 7.035776,
+      "result": "correct new reply; same native process and session"
+    }
+  ],
+  "voice_interruption": {
+    "speech_detection_to_agent_listening_ms": 143.053,
+    "method": "Mac synthesized speech through speaker and actual browser microphone while assistant speech active",
+    "limits": "Gateway state evidence and visible browser behavior; no iPhone acoustic-quality claim; terminal hop trace lacks utterance_end."
+  },
+  "before_capacity_fix": {
+    "case": "earlier voice handoff",
+    "queue_s": 25.334807,
+    "cause": "background system continuity shared interactive native admission slots"
+  },
+  "remaining": [
+    "physical iPhone audio and microphone interruption",
+    "consistent saved writing-preference compliance",
+    "full foreground multi-channel saturation",
+    "one-second full-context end-to-end response target"
+  ],
+  "result_callback": {
+    "before_final_lane_fix": {
+      "case": "voice-started local HTML work; call ended before completion",
+      "queue_s": 35.725279,
+      "result": "one result text automatically persisted; downloadable artifact missing"
+    },
+    "after_final_lane_fix": {
+      "case": "Telegram background Python arithmetic",
+      "queue_s": 0.26858,
+      "result": "correct result817 automatically delivered once; maintenance concurrent"
+    },
+    "limits": "Different cases, one sample each. No randomized comparison or full-load priority guarantee."
+  },
+  "retained_native_history_format_study": {
+    "date": "2026-11-08",
+    "model": "Claude Code claude-opus-5",
+    "effort": "low",
+    "route": "existing signed-in native subscription quota; no API key or credits",
+    "method": "Official --resume transcript --fork-session. Each variant retains all original conversation messages and full current authority. Each measured turn uses the same process as its preceding identical warm-up. Built-in action tools are disabled; three source-validated MCP tools return synthetic receipts only.",
+    "sample_count": 3,
+    "repetitions_per_variant_per_case": 1,
+    "samples": [
+      {
+        "case": "short arithmetic",
+        "baseline_validated_final_s": 2.213,
+        "candidate_validated_final_s": 2.05,
+        "baseline_model_round_trips": 1,
+        "candidate_model_round_trips": 1,
+        "baseline_native_input_tokens": 364472,
+        "candidate_native_input_tokens": 384132,
+        "schema_and_routing_result": "pass; voice eligible except explicit text-only case"
+      },
+      {
+        "case": "explicit text-only answer",
+        "baseline_validated_final_s": 2.141,
+        "candidate_validated_final_s": 2.133,
+        "baseline_model_round_trips": 1,
+        "candidate_model_round_trips": 1,
+        "baseline_native_input_tokens": 364478,
+        "candidate_native_input_tokens": 384138,
+        "schema_and_routing_result": "pass; voice eligible except explicit text-only case"
+      },
+      {
+        "case": "one background acceptance flag",
+        "baseline_validated_final_s": 7.031,
+        "candidate_validated_final_s": 5.894,
+        "baseline_model_round_trips": 3,
+        "candidate_model_round_trips": 2,
+        "baseline_native_input_tokens": 364489,
+        "candidate_native_input_tokens": 384149,
+        "schema_and_routing_result": "pass; voice eligible except explicit text-only case",
+        "baseline_acceptance_flag_s": 1.662,
+        "candidate_acceptance_flag_s": 1.628
+      }
+    ],
+    "history_integrity": "All 59 original user/assistant message identities remained in every fork. Source transcript unchanged. No credential files written. No history trimming.",
+    "occupancy_caveat": "The baseline retains five native output-style instruction snapshots. Changing authority adds a sixth full snapshot through the official CLI, increasing actual input by about 19,660 tokens. This is an observed authority-change effect, not an equal-token benchmark.",
+    "decision": "Do not apply the prototype. Short-answer differences are small; one handoff loses a redundant model round trip, but overall quality and latency improvement is unproved. Both handoff acknowledgements remain too long.",
+    "limits": "Supporting native inference evidence only. No actual Worker execution, task completion, browser/Telegram/Voice acceptance, iPhone audio, first audible timing, percentile or universal latency claim."
+  },
+  "initial_stage_remaining": [
+    "native coordinator admission and current-context inheritance",
+    "minimal single-flag end-to-end latency",
+    "A/B/C exact steering and restart acceptance on new topology",
+    "iPhone hardware audio quality",
+    "call-end file publication and literal voice markup in linked chat",
+    "full foreground multi-channel contention acceptance"
+  ],
+  "current_native_integration": {
+    "date": "2026-11-08",
+    "route": "original-source flag through existing native coordinator and High Workers",
+    "web": {
+      "overlapping_high_workers": 3,
+      "independent_arithmetic_reply": "correct",
+      "native_reply_s_approx": 21,
+      "steer_a_only": "passed; both B run identities and start times unchanged",
+      "automatic_csv_download": "all 5000 rows verified; matching Worker artifact"
+    },
+    "telegram": {
+      "first_flag_only": true,
+      "high_worker_completed": true,
+      "automatic_file_delivery": "one HTML file, visible once without follow-up"
+    },
+    "voice_after_hangup": {
+      "high_worker_completed_after_call_end": true,
+      "automatic_linked_chat_file": true,
+      "download_bytes": 5372,
+      "download_matches_worker_artifact": true,
+      "retained_after_stack_recovery": true
+    },
+    "fresh_voice_usage": {
+      "input_mode": "typed in actual call",
+      "reply": "correct",
+      "gateway_dispatch_to_audio_output_s": 10.036,
+      "samples": 1,
+      "actual_cli_last_prompt_tokens": 766717,
+      "persisted_last_prompt_tokens": 766717,
+      "actual_cli_aggregate_input_tokens": 1533391,
+      "measurement_scope": "last-response occupancy is separate from aggregate run accounting"
+    },
+    "limits": "Supporting real local channel evidence. Typed-input audio output is not physical microphone, first-audible or iPhone quality proof. Safe HTML preview disables scripts; static visual QA does not prove downloaded-file interaction.",
+    "delivery_repair_acceptance": {
+      "goal_result_recovery": "original saved Main text and identity; one actual Telegram receipt; no regeneration",
+      "direct_native_turn": "fresh automatic result once; original source and real run, no fabricated goal",
+      "accepted_intent_only": "saved answer automatically delivered; unstarted goal remains unstarted",
+      "shared_core_browser_connection": {
+        "real_agents": 2,
+        "one_initial_consent": true,
+        "background_operations": true,
+        "draft_preserved": true,
+        "independent_page_facts_match": true,
+        "global_focus_claim": false
+      },
+      "channel_schema": "two retained Telegram replies recovered once through normal maintenance after strict source-union repair",
+      "active_browser_voice": {
+        "input_mode": "typed in real call",
+        "independent_answer": "64",
+        "native_execution_overlap_s": 2.575,
+        "checked_page_title_delivered_once": true,
+        "tts_audio_duration_s": 7.35,
+        "tts_first_audio_s": 0.2876,
+        "genuine_completion_receipt": true,
+        "web_projection_settled": true,
+        "normal_call_end": true,
+        "old_ended_call_result_replayed_into_new_call": false
+      },
+      "schedule_after_maintenance": "next real occurrence completed and delivered once; no manual run; following clock unchanged",
+      "operational_intervention": "local producer/receiver rollout mismatch required one authenticated resend of original still-valid events; rejected Native audit unchanged. Fresh cases separately prove automatic delivery.",
+      "privacy": "raw prompts, IDs, hashes, captures, logs, accounts and personal context remain private",
+      "measurement_limits": "Browser RTC output and its completion receipt do not prove physical iPhone acoustics or microphone barge-in. Counts overlap older banks; no aggregate independent-test total."
+    }
+  },
+  "pre_repair_remaining": [
+    "same-Worker earlier-upload recovery and returned totals files",
+    "persistent Chrome connection on two real Workers, including scope and consent",
+    "fresh accepted work through full restart",
+    "physical iPhone audio and microphone interruption",
+    "full foreground multi-channel contention acceptance"
+  ]
+}

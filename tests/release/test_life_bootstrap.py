@@ -51,6 +51,21 @@ def test_canonical_projects_template_is_tracked_for_clean_installs() -> None:
         assert tracked.returncode == 0, f"clean installs would omit {relative_path}"
 
 
+def test_bootstrap_rejects_worktree_location_without_printing_it(tmp_path: Path) -> None:
+    checkout = tmp_path / "private-fixture-checkout"
+    checkout.mkdir()
+    (checkout / ".git").write_text("gitdir: /synthetic/worktrees/check")
+    target = checkout / "workspace"
+    result = subprocess.run([
+        sys.executable, MODULE_SPEC.origin, "--life-dir", str(target),
+        "--state-file", str(tmp_path / "state.json"),
+    ], capture_output=True, text=True)
+    assert result.returncode == 2
+    assert "Check the selected folder" in result.stderr
+    assert "private-fixture-checkout" not in result.stdout + result.stderr
+    assert not target.exists()
+
+
 def test_public_research_life_projects_fixture_is_not_hidden_by_projects_ignore() -> None:
     fixture_root = REPO_ROOT / "docs" / "research_and_future_plans" / "v0.5" / "test-Life-v0.01"
     template_root = life_bootstrap.DEFAULT_TEMPLATE_DIR

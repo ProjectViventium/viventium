@@ -157,6 +157,28 @@ def test_unconfigured_livekit_api_endpoint_keeps_managed_local_default() -> None
     config = minimal_compile_config()
     env = config_compiler.render_runtime_env(config, config_compiler.build_agent_assignments(config))
     assert env["LIVEKIT_API_HOST"] == "http://localhost:7888"
+    assert env["VIVENTIUM_LIVEKIT_RUNTIME"] == "docker"
+
+
+def test_explicit_native_livekit_compiles_without_changing_call_endpoint_or_keys() -> None:
+    config = minimal_compile_config()
+    before = config_compiler.render_runtime_env(config, config_compiler.build_agent_assignments(config))
+    config["runtime"]["network"] = {"livekit_runtime": "native"}
+    after = config_compiler.render_runtime_env(config, config_compiler.build_agent_assignments(config))
+    assert after["VIVENTIUM_LIVEKIT_RUNTIME"] == "native"
+    for key in ("LIVEKIT_API_HOST", "LIVEKIT_URL", "LIVEKIT_API_KEY", "LIVEKIT_API_SECRET"):
+        assert after[key] == before[key]
+
+
+@pytest.mark.parametrize("network", [
+    {"livekit_runtime": "unverified"},
+    {"livekit_runtime": "native", "livekit_api_host": "https://voice.example.test"},
+])
+def test_native_livekit_selection_rejects_unsupported_or_ambiguous_runtime(network: dict) -> None:
+    config = minimal_compile_config()
+    config["runtime"]["network"] = network
+    with pytest.raises(SystemExit, match="runtime.network.livekit_runtime"):
+        config_compiler.render_runtime_env(config, config_compiler.build_agent_assignments(config))
 
 
 @pytest.mark.parametrize("endpoint", ["wss://voice.example.test", "http://user:secret@voice.example.test", "http://voice.example.test?token=synthetic", "http://voice.example.test#fragment", "http://voice.example.test:invalid", "http://", "http://voice.example.test", "https://voice.example.test/prefix"])
@@ -3145,6 +3167,7 @@ def test_config_compiler_minimal(tmp_path: Path) -> None:
     assert librechat_yaml["memory"]["readProfile"]["keyLimits"]["preferences"] == 600
     assert prompt_bundle["prompt_count"] >= 50
     assert "main.conscious_agent" in prompt_bundle["prompts"]
+    assert "main.continuity_availability" in prompt_bundle["prompts"]
     assert prompt_bundle["prompts"]["main.identity"]["content_hash"]
     assert summary["prompt_registry"]["prompt_count"] == prompt_bundle["prompt_count"]
     assert (
@@ -3446,7 +3469,19 @@ def test_render_runtime_env_emits_glasshive_launch_env_only_when_enabled(tmp_pat
         config_compiler.build_agent_assignments(default_host_config),
     )
     assert default_host_env["GLASSHIVE_HOST_WORKERS_ENABLED"] == "true"
+    # Local host access must not accidentally activate Native's broader
+    # enterprise authentication guard through a legacy migration flag.
+    for local_env in (default_host_env, config_compiler.render_native_runtime_env(
+        default_host_config, default_host_env,
+    )):
+        assert local_env.get("GLASSHIVE_SECURITY_MODE", "").strip().lower() != "multi_user"
+        for flag in ("GLASSHIVE_ENTERPRISE_MODE", "WPR_ENTERPRISE_MODE"):
+            assert local_env.get(flag, "").strip().lower() not in {"1", "true", "yes", "on", "enabled"}
     assert default_host_env["GLASSHIVE_PROTECTED_SOURCE_ROOTS"] == str(app_support_root)
+    assert default_host_env["GLASSHIVE_PROTECTED_ARTIFACT_ROOTS"] == default_host_env["VIVENTIUM_LIFE_DIR"]
+    assert "GLASSHIVE_PROTECTED_ARTIFACT_ROOTS" not in config_compiler.render_native_runtime_env(
+        default_host_config, default_host_env,
+    )
     assert default_host_env["WPR_HOST_WORKSPACE_ROOT"] == "~/viventium"
     assert default_host_env["GLASSHIVE_DEFAULT_WORKER_PROFILE"] == "codex-cli"
     assert default_host_env["GLASSHIVE_DEFAULT_EXECUTION_MODE"] == "host"
@@ -12465,3 +12500,97 @@ def test_xperfect_scheduled_wake_keeps_legacy_management_but_one_create_clock(sc
     assert policy["schedule_update"]["access"] == "write"
     assert policy["schedule_delete"]["access"] == "write"
     assert policy["schedule_list"]["access"] == "content_read"
+
+
+def test_lan_https_is_explicit_and_preserves_the_selected_public_edge():
+    config = minimal_compile_config()
+    config['voice'] = {'mode': 'local'}
+    config['runtime']['network'] = {'remote_call_mode': 'public_https_edge', 'lan_https': True}
+    env = config_compiler.render_runtime_env(config, config_compiler.build_agent_assignments(config))
+    assert env['VIVENTIUM_LAN_HTTPS'] == 'true'
+    assert env['VIVENTIUM_LAN_PLAYGROUND_HTTPS_PORT'] == '8443'
+    assert env['VIVENTIUM_LAN_LIVEKIT_HTTPS_PORT'] == '8444'
+    assert env['VIVENTIUM_REMOTE_CALL_MODE'] == 'public_https_edge'
+    config['runtime']['network']['lan_https'] = False
+    env = config_compiler.render_runtime_env(config, config_compiler.build_agent_assignments(config))
+    assert 'VIVENTIUM_LAN_HTTPS' not in env
+
+
+@pytest.mark.parametrize('ports', [(18443, 18444), (1024, 65535)])
+def test_lan_listener_ports_are_configurable(ports):
+    config = minimal_compile_config()
+    config['voice'] = {'mode': 'local'}
+    config['runtime']['network'] = {'remote_call_mode': 'public_https_edge', 'lan_https': True,
+        'lan_playground_https_port': ports[0], 'lan_livekit_https_port': ports[1]}
+    env = config_compiler.render_runtime_env(config, config_compiler.build_agent_assignments(config))
+    assert env['VIVENTIUM_LAN_PLAYGROUND_HTTPS_PORT'] == str(ports[0])
+    assert env['VIVENTIUM_LAN_LIVEKIT_HTTPS_PORT'] == str(ports[1])
+
+
+@pytest.mark.parametrize('ports', [(0, 8444), (443, 8444), (8443, 65536), (8443, 8443), (True, 8444)])
+def test_lan_listener_ports_reject_invalid_or_conflicting_configuration(ports):
+    config = minimal_compile_config()
+    config['voice'] = {'mode': 'local'}
+    config['runtime']['network'] = {'remote_call_mode': 'public_https_edge', 'lan_https': True,
+        'lan_playground_https_port': ports[0], 'lan_livekit_https_port': ports[1]}
+    with pytest.raises(SystemExit):
+        config_compiler.render_runtime_env(config, config_compiler.build_agent_assignments(config))
+
+
+@pytest.mark.parametrize('mode,voice', [('disabled', 'local'), ('public_https_edge', 'disabled')])
+def test_lan_https_rejects_an_unavailable_server_or_disabled_voice(mode, voice):
+    config = minimal_compile_config()
+    config['voice'] = {'mode': voice}
+    config['runtime']['network'] = {'remote_call_mode': mode, 'lan_https': True}
+    with pytest.raises(SystemExit, match='lan_https requires'):
+        config_compiler.render_runtime_env(config, config_compiler.build_agent_assignments(config))
+
+
+def test_trusted_lan_https_compiles_one_dns_owner_without_changing_voice(monkeypatch, tmp_path):
+    config = minimal_compile_config()
+    config["voice"] = {"mode": "local"}
+    config["runtime"]["extra_env"] = {"VIVENTIUM_LAN_DNS_TOKEN": "synthetic-token"}
+    config["runtime"]["network"] = {"remote_call_mode": "public_https_edge", "lan_https": True,
+        "lan_domain": "lan.example.test", "lan_dns": {"zone": "example.test", "provider": "godaddy",
+        "api_token": "keychain://synthetic-lan-dns"}}
+    monkeypatch.setattr(config_compiler, "resolve_secret", lambda value: "synthetic-token" if value == "keychain://synthetic-lan-dns" else str(value or ""))
+    env = config_compiler.render_runtime_env(config, config_compiler.build_agent_assignments(config))
+    assert env["VIVENTIUM_LAN_DOMAIN"] == "lan.example.test"
+    assert env["VIVENTIUM_LAN_DNS_ZONE"] == "example.test"
+    assert env["VIVENTIUM_LAN_DNS_PROVIDER"] == "godaddy"
+    assert env["VIVENTIUM_LAN_DNS_SECRET_REF"] == "keychain://synthetic-lan-dns"
+    assert "VIVENTIUM_LAN_DNS_TOKEN" not in env
+    assert "synthetic-token" not in env.values()
+    assert env["VIVENTIUM_REMOTE_CALL_MODE"] == "public_https_edge"
+    config_compiler.render_service_envs(tmp_path, env)
+    telegram_env = (tmp_path / "service-env" / "telegram.config.env").read_text()
+    assert "VIVENTIUM_LAN_DOMAIN=lan.example.test" in telegram_env
+    assert "VIVENTIUM_LAN_DNS_TOKEN" not in telegram_env
+    assert "synthetic-token" not in telegram_env
+
+
+@pytest.mark.parametrize("domain,zone,provider,token", [
+    ("example.test", "example.test", "godaddy", "keychain://synthetic"),
+    ("lan.other.test", "example.test", "godaddy", "keychain://synthetic"),
+    ("lan.example.test", "example.test", "unsupported", "keychain://synthetic"),
+    ("lan.example.test", "example.test", "godaddy", ""),
+    ("lan.example.test:443", "example.test", "godaddy", "keychain://synthetic"),
+    ("lan.example.test", "example.test", "godaddy", "plaintext-secret"),
+])
+def test_trusted_lan_https_rejects_incomplete_or_unsafe_settings(domain, zone, provider, token):
+    config = minimal_compile_config(); config["voice"] = {"mode": "local"}
+    config["runtime"]["network"] = {"remote_call_mode": "public_https_edge", "lan_https": True,
+        "lan_domain": domain, "lan_dns": {"zone": zone, "provider": provider, "api_token": token}}
+    with pytest.raises(SystemExit):
+        config_compiler.render_runtime_env(config, config_compiler.build_agent_assignments(config))
+
+
+@pytest.mark.parametrize('surface', ['public_client_origin', 'public_api_origin', 'public_playground_origin', 'public_livekit_url', 'public_glasshive_origin'])
+def test_trusted_lan_cannot_overwrite_a_public_surface(surface):
+    config = minimal_compile_config()
+    config['voice'] = {'mode': 'local'}
+    config['runtime']['network'] = {'remote_call_mode': 'public_https_edge', 'lan_https': True,
+        'lan_domain': 'lan.example.test', 'lan_dns': {'zone': 'example.test', 'provider': 'godaddy',
+        'api_token': 'keychain://synthetic'}, surface: 'https://playground.lan.example.test'}
+    with pytest.raises(SystemExit, match='must not reuse'):
+        config_compiler.render_runtime_env(config, config_compiler.build_agent_assignments(config))

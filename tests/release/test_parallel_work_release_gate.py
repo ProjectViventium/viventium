@@ -896,6 +896,8 @@ def _write_release_identity_fixture(
             "<p>Fixture invitation</p>\n",
         "viventium_v0_4/xPerfect/runtime_phase1/src/workers_projects_runtime/api.py":
             "# fixture\n",
+        "viventium_v0_4/xPerfect/runtime_phase1/src/workers_projects_runtime/claude_conversation.py":
+            "# synthetic conversation runtime fixture\n",
         "viventium_v0_4/xPerfect/runtime_phase1/src/workers_projects_runtime/local_qa_service_ack.py":
             "# fixture\n",
         "viventium_v0_4/telegram-viventium/TelegramVivBot/bot.py": "# fixture\n",

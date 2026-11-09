@@ -98,6 +98,12 @@ It records successful functional paths and the unmet fast-voice target. The
 and [Queen/worker contract](requirements_and_learnings/55_Parallel_Work_Orchestration.md#locked-queen-bee-and-worker-bee-user-experience)
 define the simple cross-channel flow and A/B/C execution guardrails.
 
+The [approved-flow regression map](../qa/parallel-orchestrator/cases.md#approved-flow-regression-map)
+links the shared Should / fixes diagram to behavioral tests and real-channel QA. The
+[Should-flow acceptance report](../qa/parallel-orchestrator/reports/2026-10-23-should-flow-acceptance.md)
+records the later loaded repairs and 24 October follow-up, including explicit remaining limits.
+Use these entrypoints for that flow; older configuration and release results retain their dates.
+
 Earlier scoped Voice/Telegram repair results are in the
 [2026-10-03 acceptance report](../qa/modern-playground-voice/reports/2026-10-03-voice-and-telegram-acceptance.md),
 grouped by requirement, user path and test owner. Its current model, recall, streaming, generated-file

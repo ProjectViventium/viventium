@@ -2155,18 +2155,22 @@ async def _finish_telegram_preparation(guard, state, failure_code=""):
 
 
 async def _resolve_prepared_voice_input(context, guard, **kwargs):
-    if kwargs.get("voice_error_text"):
-        notice_code = getattr(kwargs["voice_error_text"], "error_code", "transcription_failed")
+    notice = kwargs.get("voice_error_text")
+    fatal = notice and not getattr(notice, "continues", False)
+    if fatal:
+        notice_code = getattr(notice, "error_code", "transcription_failed")
         await _finish_telegram_preparation(
             guard, "cancelled" if notice_code == "no_speech" else "failed", notice_code,
         )
-    has_presentation = kwargs.get("voice_error_text") or (
+    has_presentation = notice or (
         kwargs.get("message") is None and kwargs.get("voice_text")
         and kwargs.get("show_transcription", True)
     )
     current = await guard.is_current() if has_presentation else True
-    if kwargs.get("voice_error_text") and not current:
+    if fatal and not current:
         return None, True
+    if not current:
+        kwargs["voice_error_text"] = None
     kwargs["show_transcription"] = bool(kwargs.get("show_transcription", True) and current)
     try:
         return await _with_source_ordered_context_bot(
@@ -2177,7 +2181,7 @@ async def _resolve_prepared_voice_input(context, guard, **kwargs):
     except _StaleTelegramSourceOrder:
         # Presentation may become stale while Telegram sends the transcription. The original
         # prepared input is still owned and must reach Core under its original source identity.
-        if kwargs.get("voice_error_text"):
+        if fatal:
             return None, True
         return _prepared_voice_text(kwargs.get("message"), kwargs.get("voice_text")), False
 
@@ -2432,7 +2436,9 @@ async def _resolve_voice_input_message(
             text=voice_error_text,
             reply_to_message_id=messageid,
         )
-        return None, True
+        if not getattr(voice_error_text, "continues", False):
+            return None, True
+        return _prepared_voice_text(message, voice_text), False
 
     if message is None and voice_text and show_transcription:
         transcription_display = f"🎤 Transcription:\n> {voice_text}"
@@ -2532,12 +2538,15 @@ def _main_menu_buttons(
     convo_id,
     *,
     call_url=None,
+    local_call_url="",
     fetch_call_url=True,
     parallel_available=False,
 ):
     button_kwargs = {"fetch_call_url": fetch_call_url}
     if call_url is not None:
         button_kwargs["call_url"] = call_url
+    if local_call_url:
+        button_kwargs["local_call_url"] = local_call_url
     rows = [
         list(row)
         for row in update_first_buttons_message(convo_id, **button_kwargs)
@@ -3235,7 +3244,7 @@ async def _preflight_captioned_transcription_failure(update, context, ingress_gu
     local_guard = ingress_guard or _local_telegram_source_guard(update, context)
     message_info = _unpack_message_info(await GetMesageInfo(update, context))
     voice_error_text = message_info[12]
-    if not voice_error_text:
+    if not voice_error_text or getattr(voice_error_text, "continues", False):
         return message_info, False
 
     async def send_error(send_context):
@@ -3368,16 +3377,28 @@ async def _process_media_group_entries(key, entries):
         convo_id,
         _file_url,
         reply_to_message_file_content,
-        voice_text,
-        voice_error_text,
+        _voice_text,
+        _voice_error_text,
         _file_data_list,
         _file_error_list,
     ) = primary_info
 
     all_files = []
     all_errors = []
-    for _entry, info in parsed:
-        all_files.extend(info[13] or [])
+    caption_bindings = []
+    for source_index, (_entry, info) in enumerate(parsed, start=1):
+        caption = str(info[0] if info[0] is not None else info[1] or "")
+        source_files = info[13] or []
+        offset = len(all_files)
+        all_files.extend({**item, "caption": caption} if caption.strip() else item
+                         for item in source_files)
+        if caption.strip():
+            caption_bindings.extend(
+                (offset + index, item.get("filename") or "file", caption)
+                for index, item in enumerate(source_files, start=1)
+            )
+            if not source_files:
+                caption_bindings.append((source_index, "file", caption))
         all_errors.extend(info[14] or [])
     source_sequence = max(
         (int(info[4]) for _entry, info in parsed if str(info[4] or "").isdigit()),
@@ -3405,26 +3426,32 @@ async def _process_media_group_entries(key, entries):
         len(all_errors),
     )
 
-    if voice_error_text:
-        await _resolve_prepared_voice_input(
-            primary_entry["context"], ingress_guard,
-            chatid=chatid,
-            messageid=messageid,
-            message_thread_id=message_thread_id,
-            message=message,
-            voice_text=voice_text,
-            voice_error_text=voice_error_text,
-            show_transcription=False,
-        )
-        return
-
     if all_errors:
         await _send_prepared_attachment_error(
             primary_entry["context"], ingress_guard, chatid, message_thread_id, messageid, all_errors,
         )
         return
 
-    text = message or rawtext or voice_text or ""
+    transcripts = []
+    for entry, info in parsed:
+        if info[12]:
+            _, failed = await _resolve_prepared_voice_input(
+                entry["context"], ingress_guard,
+                chatid=chatid, messageid=info[4], message_thread_id=message_thread_id,
+                message=info[0], voice_text=info[11], voice_error_text=info[12],
+                show_transcription=False,
+            )
+            if failed:
+                return
+        if info[11]:
+            transcripts.append(info[11])
+    caption_text = message or rawtext
+    if len({caption for _index, _name, caption in caption_bindings}) > 1:
+        caption_text = "\n\n".join(
+            f"Attachment {index} ({filename}):\n{caption}"
+            for index, filename, caption in caption_bindings
+        )
+    text = _prepared_voice_text(caption_text, "\n\n".join(transcripts)) or ""
     if update_message and update_message.chat.type in ['group', 'supergroup'] and text:
         sender_name = update_message.from_user.first_name
         text = f"{sender_name}: {text}"
@@ -3697,7 +3724,7 @@ async def _command_bot_prepared(update, context, title, has_command, ingress_gua
             # === VIVENTIUM END ===
 
             # Prepend sender name for group chats to provide identity context
-            if update_message.chat.type in ['group', 'supergroup']:
+            if message and update_message.chat.type in ['group', 'supergroup']:
                 sender_name = update_message.from_user.first_name
                 # Clean name to avoid Markdown conflicts if needed, but simple prepend is usually safe
                 # We use a clear format "Name: Message" (Standard script format, no brackets to avoid LLM confusion)
@@ -3816,7 +3843,7 @@ async def refresh_call_button_message(
         call_url = str(call_link.get("url") or "").strip()
         if not call_url:
             return
-        await context.bot.edit_message_text(
+        message_args = dict(
             chat_id=chatid,
             message_id=message_id,
             text=info_message_md,
@@ -3824,6 +3851,7 @@ async def refresh_call_button_message(
                 _main_menu_buttons(
                     convo_id,
                     call_url=call_url,
+                    local_call_url=call_link.get("local_url", ""),
                     fetch_call_url=False,
                     parallel_available=parallel_available,
                 )
@@ -3831,12 +3859,22 @@ async def refresh_call_button_message(
             parse_mode='MarkdownV2',
             disable_web_page_preview=True,
         )
+        try:
+            await context.bot.edit_message_text(**message_args)
+        except BadRequest:
+            if not call_link.get("local_url"):
+                raise
+            message_args["reply_markup"] = InlineKeyboardMarkup(_main_menu_buttons(
+                convo_id, call_url=call_url if call_url != call_link.get("local_url") else "", fetch_call_url=False,
+                parallel_available=parallel_available,
+            ))
+            await context.bot.edit_message_text(**message_args)
     except Exception as e:
-        logger.debug("Deferred Telegram call button refresh skipped: %s", e)
+        logger.debug("Deferred Telegram call button refresh skipped: %s", type(e).__name__)
     finally:
         _PENDING_INFO_CALL_REFRESHES.discard(key)
 
-from telegram.error import Forbidden, TelegramError
+from telegram.error import BadRequest, Forbidden, TelegramError
 async def _getViventiumResponse(
     update_message,
     context,
@@ -5824,18 +5862,6 @@ async def _handle_file_prepared(update, context, ingress_guard):
     ):
         return
     message, rawtext, image_url, chatid, messageid, reply_to_message_text, update_message, message_thread_id, convo_id, file_url, reply_to_message_file_content, voice_text, voice_error_text, file_data_list, file_error_list = _unpack_message_info(await GetMesageInfo(update, context))
-    if voice_error_text:
-        await _resolve_prepared_voice_input(
-            context, ingress_guard,
-            chatid=chatid,
-            messageid=messageid,
-            message_thread_id=message_thread_id,
-            message=message,
-            voice_text=voice_text,
-            voice_error_text=voice_error_text,
-            show_transcription=False,
-        )
-        return
     if file_error_list:
         await _send_prepared_attachment_error(
             context, ingress_guard, chatid, message_thread_id, messageid, file_error_list,
@@ -5846,8 +5872,14 @@ async def _handle_file_prepared(update, context, ingress_guard):
     engine = Users.get_config(convo_id, "engine")  # Default value used for document extraction only
 
     text = rawtext
-    if not text and voice_text:
-        text = voice_text
+    if voice_text or voice_error_text:
+        text, failed = await _resolve_prepared_voice_input(
+            context, ingress_guard, chatid=chatid, messageid=messageid,
+            message_thread_id=message_thread_id, message=text,
+            voice_text=voice_text, voice_error_text=voice_error_text,
+        )
+        if failed:
+            return
 
     if getattr(config, "VIVENTIUM_TELEGRAM_FILE_TEXT_FALLBACK", False) and (file_url or image_url):
         engine_type, _ = get_engine({"base_url": api_url}, endpoint=None, original_model=engine)
@@ -6034,7 +6066,18 @@ async def call(update, context):
     _, _, _, chatid, user_message_id, _, _, message_thread_id, convo_id, _, _, _, _, _, _ = _unpack_message_info(await GetMesageInfo(
         update, context
     ))
-    call_link = get_telegram_call_link_result(convo_id)
+    args = getattr(context, "args", None) or []
+    if args and args not in (["local"], ["lan"], ["public"]):
+        await context.bot.send_message(
+            chat_id=chatid, message_thread_id=message_thread_id,
+            text="Use /call to see the available ways to call.",
+        )
+        return
+    local_call = args in (["local"], ["lan"])
+    call_link = await asyncio.to_thread(
+        get_telegram_call_link_result, convo_id,
+        launch_target="local" if local_call else "public" if args == ["public"] else "auto",
+    )
     call_url = str(call_link.get("url") or "").strip()
 
     if not call_url:
@@ -6044,8 +6087,11 @@ async def call(update, context):
             )
         elif call_link.get("public_url_required"):
             error_text = (
-                "Telegram calls need a public Viventium voice URL. This local install is still using localhost."
+                "Calling from another Wi-Fi network or mobile data is not ready. "
+                "For a local call, connect your phone to the same Wi-Fi as the Viventium computer and use /call lan."
             )
+        elif call_link.get("local_url_required"):
+            error_text = "Same-Wi-Fi calling is not ready. Keep the Viventium computer awake and connected to Wi-Fi, then try /call again."
         else:
             error_text = (
                 "I couldn't create the call link right now. Please try again in a moment."
@@ -6064,21 +6110,34 @@ async def call(update, context):
         schedule_delete_message(update, context, [message.message_id, user_message_id])
         return
 
-    reply_markup = InlineKeyboardMarkup(
-        [[InlineKeyboardButton("Call Viventium", url=call_url)]]
+    local_url = str(call_link.get("local_url") or "").strip()
+    public_url = str(call_link.get("public_url") or "").strip()
+    if not public_url and call_url != local_url and not local_call:
+        public_url = call_url
+    buttons = []
+    if local_url and args != ["public"]:
+        buttons.append([InlineKeyboardButton("Same Wi-Fi", url=local_url)])
+    if public_url and not local_call:
+        buttons.append([InlineKeyboardButton("Other Wi-Fi or mobile data", url=public_url)])
+    text = "Choose how to call. Same Wi-Fi means your phone and the Viventium computer are connected to the same Wi-Fi network."
+    if not public_url:
+        text += " Calling from another Wi-Fi network or mobile data is not ready."
+    message_args = dict(
+        chat_id=chatid, message_thread_id=message_thread_id,
+        text=escape(text, italic=False),
+        reply_markup=InlineKeyboardMarkup(buttons), parse_mode='MarkdownV2',
+        disable_web_page_preview=True, read_timeout=600,
     )
-    message = await context.bot.send_message(
-        chat_id=chatid,
-        message_thread_id=message_thread_id,
-        text=escape(
-            "Tap below to open the live Viventium call for your linked account.",
-            italic=False,
-        ),
-        reply_markup=reply_markup,
-        parse_mode='MarkdownV2',
-        disable_web_page_preview=True,
-        read_timeout=600,
-    )
+    try:
+        message = await context.bot.send_message(**message_args)
+    except BadRequest:
+        logger.warning("Telegram call controls rejected; offering the same links as text")
+        message_args["text"] = text + "\n\n" + "\n".join(
+            f"{row[0].text}: {row[0].url}" for row in buttons
+        )
+        message_args["parse_mode"] = None
+        message_args["reply_markup"] = None
+        message = await context.bot.send_message(**message_args)
     schedule_delete_message(update, context, [user_message_id])
 
 @decorators.GroupAuthorization
@@ -6248,7 +6307,7 @@ def _write_telegram_ready_marker() -> bool:
 async def _refresh_telegram_bot_metadata(application: Application) -> None:
     try:
         await application.bot.set_my_commands([
-            BotCommand('call', 'Open a live Viventium call'),
+            BotCommand('call', 'Choose how to call Viventium'),
             BotCommand('cancel', 'Cancel a verified stalled reply'),
             BotCommand('info', 'Basic information'),
             BotCommand('reset', 'Reset the bot'),

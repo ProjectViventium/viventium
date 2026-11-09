@@ -1,5 +1,13 @@
 # Prompt Workbench QA
 
+## Case IDs and compatibility
+
+Current Workbench QA uses `PWB-NNN` and `PWB-UC-NNN`; `PW-NNN` remains the Parallel Work
+product-requirement namespace. Within dated Workbench evidence, legacy `PW-NNN` and `PW-UC-NNN`
+labels mean the same-numbered current Workbench case. The existing `run_pw_*` filenames and
+`PW-047` runner receipt identifier remain compatibility names; they do not declare Parallel Work
+requirements. Existing case anchors remain valid. New Workbench references use `PWB-*`.
+
 ## Scope
 
 Prompt Workbench is the local developer/QA surface for understanding and reconciling Viventium
@@ -57,9 +65,9 @@ formerly cited for the 2026-05-22 rendered-flow, scheduling-config, scheduled-Gl
 Connected-Accounts, and sidebar/diff/sidecar claims are not present in this repository. Those
 claims are historical context only and are not current release evidence.
 
-Current truth lives in [`cases.md`](cases.md): `PW-046` is installed-pass evidence, `PW-047` is
-`NOT RUN / PRE-GATE`, `PW-048` is `PARTIAL`, `PW-049` is a pre-gate pass that is not release
-readiness, and `PW-050` is `PARTIAL` with its
+Current truth lives in [`cases.md`](cases.md): `PWB-046` is installed-pass evidence, `PWB-047` is
+`NOT RUN / PRE-GATE`, `PWB-048` is `PARTIAL`, `PWB-049` is a pre-gate pass that is not release
+readiness, and `PWB-050` is `PARTIAL` with its
 [`2026-08-28` report](reports/2026-08-28-nonterminal-view-steer-receipt-truth.md). Do not claim the
 full prompt source tree or Workbench release gate is clean until every current case has valid,
 linked evidence.
@@ -68,4 +76,4 @@ The 2026-05-16 pass intentionally did not run reviewed live sync or live exact-m
 verified the safe no-live preview and dry-run paths plus the exact-model adapter command shape.
 The 2026-08-28 retry4 regression now has source-level guards for canonical nonterminal
 `View / Steer <task>` labels and per-execution hashed receipt evidence. Installed compilation,
-activation, and one exact-model rerun remain pending; see `PW-050`.
+activation, and one exact-model rerun remain pending; see `PWB-050`.

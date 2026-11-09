@@ -330,12 +330,20 @@
   2. Click `Start chat` exactly once.
   3. Confirm the primary button changes to startup progress and is disabled while connection is in
      flight.
-  4. Confirm the room connects and the microphone publishes automatically after room connect.
+  4. Confirm microphone preflight/permission finishes before dispatch and ICE connection. Connect
+     the room with SDK microphone publication disabled; stop every temporary preflight track
+     immediately before the SDK enables its sole published microphone after connection. Repeat
+     with a slow permission prompt: no dispatch may consume the worker's owner-wait window while
+     the user decides.
   5. Inspect LiveKit logs for user microphone track publish and publisher worker assignment.
   6. Inspect call-session DB state for active job/worker evidence when a full live call is run.
+  7. Deny capture, leave while permission is pending, and fail connection after capture. Require a
+     classified error and stopped unpublished/late tracks, with no orphan dispatch. A saved muted
+     call must remain muted; prove its media route separately on a second device.
 - Expected Result: The first click owns the whole startup. The UI never requires a second Start chat
   click. The temporary pre-connect muted state is not presented as the call default; after connect,
-  the microphone is enabled automatically or a clear microphone permission error is shown.
+  an ordinary unmuted call enables the microphone automatically or shows a clear permission error.
+  An explicitly saved muted call remains muted.
 - Forbidden Result: a second Start chat click is needed; duplicate `/api/connection-details`
   requests race each other; the call lands connected but muted without a permission error; public QA
   artifacts contain real call-session ids, participant ids, local usernames, or secret-bearing URLs.

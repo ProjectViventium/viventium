@@ -238,7 +238,7 @@ cleanup
 
 def _livekit_startup_block() -> str:
     launcher = _read("viventium_v0_4/viventium-librechat-start.sh")
-    return launcher.split("# LiveKit server (Docker)", maxsplit=1)[1].split(
+    return launcher.split("# LiveKit server (explicit managed runtime, or configured external endpoint)", maxsplit=1)[1].split(
         "# Prepare the local LibreChat runtime files", maxsplit=1
     )[0]
 

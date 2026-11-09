@@ -1,5 +1,25 @@
 # Stable Dev Runtime Cases
 
+## SDR-019: Redis command failure shows attention without restarting live services
+
+- Requirement: `50_Stable_Dev_Runtime.md`, managed dependency readiness and lifecycle ownership.
+- User action: Inspect status when the configured Redis endpoint refuses connections or accepts
+  connections without answering, then restore the same endpoint and inspect status again.
+- Expected result: With either active Redis flag enabled, a bounded command probe reports the
+  dependency unavailable. Core HTTP and the bot may remain alive; CLI reports their affected
+  readiness and the helper shows attention. A restored command reply clears that dependency
+  failure. Disabled Redis requires no listener; a configured private Unix socket takes precedence
+  over a stale TCP URI. Probe credentials stay out of command arguments and status output.
+  When the local services remain alive, the actual helper reconciler records no launch attempt
+  and submits no restart. A missing local service retains its existing owner-bound recovery.
+- Forbidden result: A listening port alone reports Redis ready; a dependency outage grants stop
+  authority over a live Core, bot or worker; a health probe changes stored data; PING is reported
+  as proof that a source-order write or Telegram reply completed.
+- Evidence: Synthetic real TCP/Unix command failure and recovery, configured-consumer checks,
+  helper source/build identity, live status, and the separate exact input/delivery user path.
+- Last Run: NOT RUN — cataloged 2026-11-08; candidate-bound acceptance remains pending. The
+  Docker storage-full incident is causal evidence for this case, not a passing recovery result.
+
 ## SDR-015: Restart Recovers Stopped Docker Before Teardown
 
 - Requirement: `capabilities/runtime-install-release.md`, lifecycle control; Telegram bridge API readiness.
@@ -337,7 +357,11 @@ Supporting release regressions: `tests/release/test_helper_hash_consumers.py`, `
   replacement. Unrelated runtimes and standalone workers keep their identities.
 - **Diagnostics:** Nonempty prior logs survive restart within the bounded private generation
   limit; empty startup logs do not evict useful failures. Source, built, installed and active
-  helper identity agree before acceptance. Refused linked log/history uses the private bounded
+  helper identity agree before acceptance. A bundle-only refresh unloads the running helper's
+  validated job before activation, then restores that exact job once; no old mapped executable
+  or second manually opened helper remains. Failed activation restores the old bundle before
+  its job resumes, and an initially stopped helper stays stopped.
+  Refused linked log/history uses the private bounded
   alternate log without modifying evidence; an unsafe parent remains blocked. For helper config
   storage I/O failure, only a fresh trusted same-running-revision permits bounded memory retry;
   unsafe authority or newer Stop blocks it. Deliberate uninstall remains absent on normal launch.
@@ -361,3 +385,5 @@ Supporting release regressions: `tests/release/test_helper_hash_consumers.py`, `
   installed OS-job, hidden UI, recovery and real-channel checks.
 
 Recovery checkpoint and regression lessons: [owned runtime and channel recovery](reports/2026-10-24-channel-recovery.md).
+
+Additional runtime-owner regressions: `tests/release/test_macos_helper_login_item_timeout.py` checks bounded login-item removal with a synthetic executable only. `tests/release/test_native_livekit_runtime.py` checks Native platform, artifact, listener ownership and network configuration. `tests/release/test_native_mongo_restart.py` checks selected database reuse, restart and failure without starting optional services. These checks do not replace installed helper, database or physical audio acceptance.

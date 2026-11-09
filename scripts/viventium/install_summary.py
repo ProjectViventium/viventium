@@ -758,6 +758,14 @@ def remote_access_status_and_detail(
     last_error = str(public_state.get("last_error") or "").strip()
     if last_error:
         return "Action Required", f"{remote_access_label(remote_call_mode)} inactive: {last_error}"
+    if public_state.get("lan_only"):
+        if not (probe_live and stack_should_be_live):
+            return "Configured", "Last startup selected local network calling. Check live status before calling."
+        from remote_call_tunnel import state_is_healthy
+
+        if not state_is_healthy(public_state):
+            return "Action Required", "Local network calling is unavailable. Restart Viventium on this network."
+        return "LAN Only", "Public access is unavailable on this network. For a local call, use /call lan in Telegram."
 
     if probe_live and stack_should_be_live:
         public_state = observe_public_edge_dns(public_state)
@@ -2248,6 +2256,8 @@ def build_next_steps(
             "Remote access could not start on this run. Fix the blocker shown in "
             f"[cyan]bin/viventium status[/cyan] and then rerun [cyan]bin/viventium start[/cyan]. ({remote_error})"
         )
+    elif public_state.get("lan_only"):
+        next_steps.append("For a local call, connect both devices to the same network and send /call lan in Telegram.")
     elif (public_state.get("public_dns") or {}).get("status") in {"mismatch", "unavailable"}:
         next_steps.append(
             "Verify the public DNS records shown by [cyan]bin/viventium status[/cyan]. "

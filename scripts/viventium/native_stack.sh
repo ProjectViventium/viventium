@@ -123,9 +123,17 @@ fi
 LIVEKIT_NODE_IP="${LIVEKIT_NODE_IP:-$(detect_livekit_node_ip)}"
 LIVEKIT_CFG_DIR="${VIVENTIUM_LIVEKIT_CFG_DIR:-$PROFILE_STATE_DIR/livekit}"
 LIVEKIT_CFG_FILE="$LIVEKIT_CFG_DIR/livekit.yaml"
-LIVEKIT_PID_FILE="$NATIVE_STATE_DIR/livekit.pid"
-LIVEKIT_META_FILE="$NATIVE_STATE_DIR/livekit.runtime.env"
-LIVEKIT_LOG_FILE="$NATIVE_LOG_DIR/livekit.log"
+LIVEKIT_PID_FILE="$LIVEKIT_CFG_DIR/livekit.pid"
+LIVEKIT_META_FILE="$LIVEKIT_CFG_DIR/livekit.runtime.env"
+LIVEKIT_LOG_FILE="${VIVENTIUM_NATIVE_LIVEKIT_LOG_FILE:-$NATIVE_LOG_DIR/livekit.log}"
+LIVEKIT_NATIVE_VERSION="1.13.4"
+LIVEKIT_NATIVE_BINARY="$APP_SUPPORT_DIR/runtime-tools/livekit/$LIVEKIT_NATIVE_VERSION/arm64/livekit-server"
+LIVEKIT_NATIVE_BINARY_SHA256="8de8444a92f665d0845f507983c5ca6b25eb53ddd0d562e906f290f944c53e7f"
+LIVEKIT_NATIVE_BOTTLE_SHA256="0d5e31f024fb395cd384cd49988872f677cd806a5bcd592e65d26153400235dc"
+if [[ "$(uname -s)" == "Darwin" && "$(sw_vers -productVersion | cut -d. -f1)" -lt 26 ]]; then
+  LIVEKIT_NATIVE_BINARY_SHA256="91055ce4a0b46eacb7a11cc3e169cb4d9c7d1afe1fa799a07e0e3d87bdc26f83"
+  LIVEKIT_NATIVE_BOTTLE_SHA256="62165c8e8df47514e86b93eb453d439441398ff9f57b69397ddd09045a20ab3e"
+fi
 LIVEKIT_TURN_DOMAIN="${LIVEKIT_TURN_DOMAIN:-}"
 LIVEKIT_TURN_TLS_PORT="${LIVEKIT_TURN_TLS_PORT:-}"
 LIVEKIT_TURN_CERT_FILE="${LIVEKIT_TURN_CERT_FILE:-}"
@@ -547,15 +555,18 @@ LIVEKIT_TURN_DOMAIN=${turn_domain}
 LIVEKIT_TURN_TLS_PORT=${turn_tls_port}
 LIVEKIT_TURN_CERT_FILE=${turn_cert_file}
 LIVEKIT_TURN_KEY_FILE=${turn_key_file}
+LIVEKIT_BINARY_SHA256=${LIVEKIT_NATIVE_BINARY_SHA256}
+LIVEKIT_CONFIG_SHA256=$(shasum -a 256 "$LIVEKIT_CFG_FILE" | awk '{print $1}')
 EOF
 }
 
 livekit_meta_matches_expected() {
-  if [[ ! -f "$LIVEKIT_META_FILE" ]]; then
+  if [[ ! -f "$LIVEKIT_META_FILE" || -L "$LIVEKIT_META_FILE" ]]; then
     return 1
   fi
   local actual_node_ip actual_http_port actual_tcp_port actual_udp_port
   local actual_turn_domain actual_turn_tls_port actual_turn_cert_file actual_turn_key_file
+  local actual_binary_hash actual_config_hash
   actual_node_ip="$(grep '^LIVEKIT_NODE_IP=' "$LIVEKIT_META_FILE" | head -1 | cut -d= -f2- || true)"
   actual_http_port="$(grep '^LIVEKIT_HTTP_PORT=' "$LIVEKIT_META_FILE" | head -1 | cut -d= -f2- || true)"
   actual_tcp_port="$(grep '^LIVEKIT_TCP_PORT=' "$LIVEKIT_META_FILE" | head -1 | cut -d= -f2- || true)"
@@ -564,6 +575,8 @@ livekit_meta_matches_expected() {
   actual_turn_tls_port="$(grep '^LIVEKIT_TURN_TLS_PORT=' "$LIVEKIT_META_FILE" | head -1 | cut -d= -f2- || true)"
   actual_turn_cert_file="$(grep '^LIVEKIT_TURN_CERT_FILE=' "$LIVEKIT_META_FILE" | head -1 | cut -d= -f2- || true)"
   actual_turn_key_file="$(grep '^LIVEKIT_TURN_KEY_FILE=' "$LIVEKIT_META_FILE" | head -1 | cut -d= -f2- || true)"
+  actual_binary_hash="$(grep '^LIVEKIT_BINARY_SHA256=' "$LIVEKIT_META_FILE" | cut -d= -f2- || true)"
+  actual_config_hash="$(grep '^LIVEKIT_CONFIG_SHA256=' "$LIVEKIT_META_FILE" | cut -d= -f2- || true)"
   local expected_turn_domain="${LIVEKIT_TURN_DOMAIN:-}"
   local expected_turn_tls_port="${LIVEKIT_TURN_TLS_PORT:-}"
   local expected_turn_cert_file="${LIVEKIT_TURN_CERT_FILE:-}"
@@ -575,7 +588,9 @@ livekit_meta_matches_expected() {
     [[ "$actual_turn_domain" == "$expected_turn_domain" ]] &&
     [[ "$actual_turn_tls_port" == "$expected_turn_tls_port" ]] &&
     [[ "$actual_turn_cert_file" == "$expected_turn_cert_file" ]] &&
-    [[ "$actual_turn_key_file" == "$expected_turn_key_file" ]]
+    [[ "$actual_turn_key_file" == "$expected_turn_key_file" ]] &&
+    [[ "$actual_binary_hash" == "$LIVEKIT_NATIVE_BINARY_SHA256" ]] &&
+    [[ "$actual_config_hash" == "$(shasum -a 256 "$LIVEKIT_CFG_FILE" | awk '{print $1}')" ]]
 }
 
 livekit_command_matches_expected() {
@@ -583,12 +598,12 @@ livekit_command_matches_expected() {
   local command_line
   command_line="$(process_command_line "$pid")"
   [[ -n "$command_line" ]] || return 1
-  if ! process_executable_basename_matches "$pid" "livekit-server" &&
-    ! process_executable_basename_matches "$pid" "livekit"; then
-    return 1
-  fi
   command_line_has_option_value "$command_line" "--config" "$LIVEKIT_CFG_FILE" || return 1
-  command_line_has_option_value "$command_line" "--node-ip" "$LIVEKIT_NODE_IP" || return 1
+  local running_path pinned_path
+  running_path="$(process_executable_path "$pid")" || return 1
+  pinned_path="$(canonical_existing_path "$LIVEKIT_NATIVE_BINARY")" || return 1
+  [[ "$running_path" == "$pinned_path" ]] || return 1
+  command_line_has_option_value "$command_line" "--node-ip" "${LIVEKIT_STOP_NODE_IP:-$LIVEKIT_NODE_IP}" || return 1
 }
 
 managed_livekit_listener_pid() {
@@ -614,6 +629,10 @@ managed_livekit_listener_pid() {
 }
 
 stop_livekit() {
+  local LIVEKIT_STOP_NODE_IP="${LIVEKIT_NODE_IP}"
+  if [[ -f "$LIVEKIT_META_FILE" && ! -L "$LIVEKIT_META_FILE" ]]; then
+    LIVEKIT_STOP_NODE_IP="$(grep '^LIVEKIT_NODE_IP=' "$LIVEKIT_META_FILE" | head -1 | cut -d= -f2- || true)"
+  fi
   stop_pid_file_if_matches "$LIVEKIT_PID_FILE" "LiveKit" livekit_command_matches_expected
   local pid
   pid="$(managed_livekit_listener_pid || true)"
@@ -910,9 +929,60 @@ validate_native_livekit_startup() {
   if ! native_livekit_start_requested; then
     return 0
   fi
-  echo "[native] ERROR: Native LiveKit startup is not a verified release path." >&2
-  echo "[native] Run bin/viventium start so Voice uses the exact Docker runtime or a configured external endpoint, or disable Voice." >&2
-  return 1
+  if [[ "${VIVENTIUM_LIVEKIT_RUNTIME:-docker}" != "native" || "${VIVENTIUM_NATIVE_LIVEKIT_LATE_START:-0}" != "1" ]]; then
+    echo "[native] ERROR: Native LiveKit startup is not a verified release path unless explicitly selected and started after the network edge." >&2
+    echo "[native] Set runtime.network.livekit_runtime=native and use bin/viventium start; early bootstrap must skip LiveKit." >&2
+    return 1
+  fi
+  if [[ "$(uname -s)" != "Darwin" || "$(uname -m)" != "arm64" || "$(sw_vers -productVersion | cut -d. -f1)" -lt 15 ]]; then
+    echo "[native] ERROR: Pinned native LiveKit requires macOS 15 or newer on ARM64; select Docker on this platform." >&2
+    return 1
+  fi
+}
+
+prepare_pinned_livekit_binary() {
+  # Official Homebrew formula 7b9fd9d360e33a06934ae5854394becdf5faa985.
+  # Download only its exact bottle, never a PATH binary or an unpinned upgrade.
+  python3 - "$LIVEKIT_NATIVE_BINARY" "$LIVEKIT_NATIVE_BINARY_SHA256" "$LIVEKIT_NATIVE_BOTTLE_SHA256" <<'PY'
+import hashlib, io, json, os, pathlib, subprocess, sys, tarfile, tempfile, urllib.request
+target = pathlib.Path(sys.argv[1])
+binary_hash, bottle_hash = sys.argv[2:4]
+for parent in (target, *target.parents):
+    if parent.is_symlink():
+        raise SystemExit("Native LiveKit cache must not contain symlinks")
+if target.exists():
+    if not target.is_file() or hashlib.sha256(target.read_bytes()).hexdigest() != binary_hash:
+        raise SystemExit("Native LiveKit cache identity failed; preserve it and repair the pinned artifact")
+else:
+    token_url = "https://ghcr.io/token?service=ghcr.io&scope=repository:homebrew/core/livekit:pull"
+    token = json.load(urllib.request.urlopen(token_url, timeout=30))["token"]
+    request = urllib.request.Request("https://ghcr.io/v2/homebrew/core/livekit/blobs/sha256:" + bottle_hash,
+        headers={"Authorization": "Bearer " + token})
+    data = urllib.request.urlopen(request, timeout=30).read(100_000_001)
+    if len(data) > 100_000_000 or hashlib.sha256(data).hexdigest() != bottle_hash:
+        raise SystemExit("Native LiveKit bottle checksum failed")
+    with tarfile.open(fileobj=io.BytesIO(data), mode="r:gz") as archive:
+        matches = [m for m in archive.getmembers() if m.name == "livekit/1.13.4/bin/livekit-server" and m.isfile()]
+        if len(matches) != 1 or matches[0].size > 100_000_000:
+            raise SystemExit("Native LiveKit bottle executable is missing or invalid")
+        binary = archive.extractfile(matches[0]).read()
+    if hashlib.sha256(binary).hexdigest() != binary_hash:
+        raise SystemExit("Native LiveKit executable checksum failed")
+    target.parent.mkdir(parents=True, exist_ok=True)
+    fd, temporary = tempfile.mkstemp(prefix=".livekit-", dir=target.parent)
+    try:
+        with os.fdopen(fd, "wb") as out:
+            out.write(binary)
+            os.fchmod(out.fileno(), 0o755)
+        os.replace(temporary, target)
+    finally:
+        if os.path.exists(temporary):
+            os.unlink(temporary)
+version = subprocess.check_output([str(target), "--version"], text=True, timeout=10).strip()
+if version != "livekit-server version 1.13.4":
+    raise SystemExit("Native LiveKit version does not match the pinned release")
+print(target)
+PY
 }
 
 start_livekit() {
@@ -925,10 +995,50 @@ start_livekit() {
     echo "[native] Voice disabled; skipping native LiveKit"
     return 0
   fi
-  validate_native_livekit_startup
+  validate_native_livekit_startup || return 1
+  local binary pid
+  binary="$(prepare_pinned_livekit_binary)" || return 1
+  if pid="$(managed_livekit_listener_pid)"; then
+    if ! livekit_meta_matches_expected; then
+      echo "[native] ERROR: LiveKit receipt differs from the selected configuration; use a normal restart." >&2
+      return 1
+    fi
+    echo "[native] Reusing pinned LiveKit (pid: $pid)"
+    echo "VIVENTIUM_NATIVE_LIVEKIT_STARTED=0"
+    return 0
+  fi
+  if port_listening "$LIVEKIT_HTTP_PORT" || port_listening "$LIVEKIT_TCP_PORT"; then
+    echo "[native] ERROR: LiveKit ports have an unowned listener; refusing to replace or adopt it." >&2
+    return 1
+  fi
+  if [[ ! -f "$LIVEKIT_CFG_FILE" || -L "$LIVEKIT_CFG_FILE" ]]; then
+    echo "[native] ERROR: Native LiveKit needs the launcher's generated configuration after edge startup." >&2
+    return 1
+  fi
+  mkdir -p "$(dirname "$LIVEKIT_LOG_FILE")"
+  LIVEKIT_LOG_FILE="$(viventium_preserve_runtime_log "$LIVEKIT_LOG_FILE")" || return 1
+  (umask 077; nohup "$binary" --config "$LIVEKIT_CFG_FILE" --node-ip "$LIVEKIT_NODE_IP" >"$LIVEKIT_LOG_FILE" 2>&1 &
+    write_pid "$!" "$LIVEKIT_PID_FILE")
+  pid="$(cat "$LIVEKIT_PID_FILE")"
+  if ! wait_for_port "$LIVEKIT_HTTP_PORT" "LiveKit" || ! livekit_command_matches_expected "$pid"; then
+    stop_livekit
+    return 1
+  fi
+  (umask 077; write_livekit_runtime_meta)
+  echo "VIVENTIUM_NATIVE_LIVEKIT_STARTED=1"
 }
 
 case "${1:-}" in
+  prepare-livekit-only)
+    validate_native_livekit_startup
+    prepare_pinned_livekit_binary
+    ;;
+  start-livekit-only)
+    start_livekit
+    ;;
+  stop-livekit-only)
+    stop_livekit
+    ;;
   start-mongo-only)
     start_mongo_bridge
     ;;
@@ -952,7 +1062,7 @@ case "${1:-}" in
     seal_native_mongo_engine_identity_after_stop
     ;;
   *)
-    echo "Usage: $0 <start|stop|start-mongo-only|stop-mongo-only>" >&2
+    echo "Usage: $0 <start|stop|start-mongo-only|stop-mongo-only|prepare-livekit-only|start-livekit-only|stop-livekit-only>" >&2
     exit 1
     ;;
 esac

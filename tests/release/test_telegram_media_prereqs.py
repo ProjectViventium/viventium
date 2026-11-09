@@ -230,6 +230,8 @@ def test_detached_telegram_start_uses_user_launchd_job() -> None:
     assert '--candidate-launch-script "$telegram_launch_script"' in launch_fragment
     assert "VIVENTIUM_TELEGRAM_RECONNECT_GRACE_S" in launch_fragment
     assert "VIVENTIUM_TELEGRAM_EMPTY_RESPONSE_MESSAGE" in launch_fragment
+    assert "VIVENTIUM_LAN_DOMAIN" in launch_fragment
+    assert "VIVENTIUM_LAN_DNS_TOKEN" not in launch_fragment
     assert "local telegram_clean_env=(" in script_text
     assert "local telegram_launch_program=(" in script_text
     assert "env -i" in script_text

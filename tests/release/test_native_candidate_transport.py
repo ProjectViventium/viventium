@@ -50,22 +50,29 @@ def candidate_snapshot(candidate: Path) -> list[tuple[str, str, int]]:
     return snapshot
 
 
-def test_exact_transport_round_trip_preserves_hidden_files_modes_and_digest(tmp_path: Path) -> None:
-    transport = load_transport()
-    candidate = candidate_fixture(tmp_path / "source")
-    archive = tmp_path / "transport" / "candidate.tar"
-    digest = tmp_path / "transport" / "candidate.tar.sha256"
+@pytest.mark.parametrize("umask", [0o022, 0o077])
+def test_exact_transport_round_trip_preserves_hidden_files_modes_and_digest(tmp_path: Path, umask: int) -> None:
+    previous_umask = os.umask(umask)
+    try:
+        transport = load_transport()
+        candidate = candidate_fixture(tmp_path / "source")
+        original_tree = candidate_snapshot(candidate)
+        archive = tmp_path / "transport" / "candidate.tar"
+        digest = tmp_path / "transport" / "candidate.tar.sha256"
 
-    transport.pack(candidate, archive, digest)
-    expected = hashlib.sha256(archive.read_bytes()).hexdigest()
-    assert digest.read_text(encoding="utf-8") == f"{expected}\n"
+        transport.pack(candidate, archive, digest)
+        expected = hashlib.sha256(archive.read_bytes()).hexdigest()
+        assert digest.read_text(encoding="utf-8") == f"{expected}\n"
 
-    output = tmp_path / "unpacked"
-    extracted = transport.unpack(archive, digest, output)
-    assert extracted == output / "candidate"
-    assert (extracted / "payload/runtime/librechat/node_modules/.package-lock.json").is_file()
-    assert (extracted / "payload/bin/viventium-native-install").stat().st_mode & 0o777 == 0o755
-    assert (extracted / "bootstrap/ViventiumBootstrap.app/Contents/Info.plist").stat().st_mode & 0o777 == 0o644
+        output = tmp_path / "unpacked"
+        extracted = transport.unpack(archive, digest, output)
+        assert extracted == output / "candidate"
+        assert candidate_snapshot(extracted) == original_tree
+        assert (extracted / "payload/runtime/librechat/node_modules/.package-lock.json").is_file()
+        assert (extracted / "payload/bin/viventium-native-install").stat().st_mode & 0o777 == 0o755
+        assert (extracted / "bootstrap/ViventiumBootstrap.app/Contents/Info.plist").stat().st_mode & 0o777 == 0o644
+    finally:
+        os.umask(previous_umask)
 
 
 def test_transport_archive_is_reproducible_across_source_mtimes(tmp_path: Path) -> None:

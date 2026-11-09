@@ -243,7 +243,8 @@ def _make_runtime_repo(root: Path) -> None:
     _write(bot / "utils" / "__init__.py", "")
     _write(bot / "utils" / "singleton.py", "SYNTHETIC = True\n")
     _write(bot / "utils" / "telegram_preparation.py", "SYNTHETIC = True\n")
-    for name in ("telegram_audio.py", "telegram_stt.py", "telegram_vad.py", "stt_env.py", "tts.py"):
+    for name in ("telegram_audio.py", "telegram_stt.py", "telegram_vad.py", "telegram_video.py",
+                 "stt_env.py", "tts.py"):
         _write(bot / "utils" / name, "SYNTHETIC = True\n")
     _write(bot / "aient" / "aient" / "__init__.py", "")
     _write(bot / "md2tgmd" / "setup.py", "from setuptools import setup\nsetup()\n")
@@ -1455,6 +1456,7 @@ def test_current_receiver_inventory_includes_declared_new_dependencies_only(
         "viventium_v0_4/telegram-viventium/TelegramVivBot/utils/telegram_audio.py",
         "viventium_v0_4/telegram-viventium/TelegramVivBot/utils/telegram_stt.py",
         "viventium_v0_4/telegram-viventium/TelegramVivBot/utils/telegram_vad.py",
+        "viventium_v0_4/telegram-viventium/TelegramVivBot/utils/telegram_video.py",
     }
     private = repo / "viventium_v0_4/telegram-viventium/TelegramVivBot/private_untracked.py"
     _write(private, "PRIVATE = True\n")

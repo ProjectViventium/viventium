@@ -85,6 +85,16 @@ One app. One connection. Always on. Keep the product capability; hide its machin
 5. **No capability loss.** Hide implementation detail; do not remove useful capability.
 6. **Calm truth.** Show current state and failure clearly, without noise, false health, or hidden fallback.
 
+These proposed integration constraints extend the concept. The
+[approved cognitive-system vision](../../../architecture/cognitive-system.md) and current feature
+owners still govern product truth. These constraints are not delivered backend integration.
+
+7. **Replaceable engines.** Soul Face owns presentation. Typed frontend ports and backend ports separate it from any AI system or application host. Adapters translate existing contracts; LibreChat-specific types, credentials, and model policy stay outside the face. A supported engine can change without rebuilding the interface. Unsupported capabilities remain explicit.
+8. **Reuse before retirement.** Connect the face to the existing authenticated Viventium backend first. Keep working accounts, conversations, memory, files, background cognition, xPerfect, and channel mechanisms behind adapters. Retire LibreChat's ordinary UI before its backend; retain useful libraries and data until the replacement preserves the used features.
+9. **No avoidable adapter overhead.** Use direct module calls inside a host and existing streaming at necessary process boundaries. An adapter must not add a proxy service, model pass, polling loop, duplicate persistence, or full-history reload without a demonstrated need. Zero added network hops is a design goal; literal zero latency is not a promise. Compare like-for-like user flows before claiming a speed gain.
+10. **Real state, one owner.** The product face renders backend-owned conversation, work, connection, and Feelings state. Browser storage may hold view preferences, not a second production memory or authority. Prototype replies and connection states remain synthetic until replaced by real adapters.
+11. **Parity before removal.** Replacing a backend preserves the affected user's exact account, model, context, files, tools, cancellation, recovery, and durable results. UI independence is not backend independence. Do not replace working systems or add services merely to remove a name.
+
 ## Accessibility & Inclusion
 
 The concept must support keyboard use, visible focus, screen-reader labels, readable contrast, reduced motion, reduced transparency, and text as an alternative to voice.

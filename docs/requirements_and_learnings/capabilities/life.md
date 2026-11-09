@@ -34,6 +34,12 @@ does not scan or ingest the user's files merely because setup named them.
 - A recorded intention is not a live connector, imported corpus, or authorization receipt.
 - Paths are validated and owner-scoped and do not enter public docs, logs, process arguments, or
   provider prompts.
+- Personal identity files and their previews belong in the owner’s private identity area. On a
+  Life-backed workspace, managed file listings, links, downloads and delivery exclude Life files.
+  Selecting Life as the conversation workspace keeps the established local access contract.
+- New Life selections stay outside Git checkouts. Existing local folders can retain their own
+  history, which must stay private. Publication checks reject personal workspace paths and known
+  path metadata. They cannot infer the origin of edited or renamed material from text alone.
 - Future ingestion requires its own explicit authorization, typed connection state, failure and
   recovery behavior, and real user QA.
 

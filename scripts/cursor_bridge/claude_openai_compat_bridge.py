@@ -15,13 +15,13 @@ from urllib.parse import urlparse
 
 HOST = os.environ.get("CURSOR_BRIDGE_HOST", "127.0.0.1")
 PORT = int(os.environ.get("CURSOR_BRIDGE_PORT", "18081"))
-CLAUDE_MODEL = os.environ.get("CURSOR_BRIDGE_CLAUDE_MODEL", "claude-opus-5")
+CLAUDE_MODEL = os.environ.get("CURSOR_BRIDGE_CLAUDE_MODEL", "claude-opus-5-5")
 CLAUDE_EFFORT = os.environ.get("CURSOR_BRIDGE_CLAUDE_EFFORT", "xhigh")
 CLAUDE_OPENAI_MODEL_ID = os.environ.get(
     "CURSOR_BRIDGE_CLAUDE_OPENAI_MODEL_ID",
     os.environ.get("CURSOR_BRIDGE_OPENAI_MODEL_ID", "SUBSCRIPTION OPUS"),
 )
-CODEX_MODEL = os.environ.get("CURSOR_BRIDGE_CODEX_MODEL", "gpt-5.4")
+CODEX_MODEL = os.environ.get("CURSOR_BRIDGE_CODEX_MODEL", "gpt-6.1-sol")
 CODEX_REASONING_EFFORT = os.environ.get("CURSOR_BRIDGE_CODEX_REASONING_EFFORT", "xhigh")
 CODEX_OPENAI_MODEL_ID = os.environ.get(
     "CURSOR_BRIDGE_CODEX_OPENAI_MODEL_ID",

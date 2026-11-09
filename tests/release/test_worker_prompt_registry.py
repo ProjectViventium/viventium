@@ -92,7 +92,8 @@ def test_managed_source_preserves_standalone_mission_frames(tmp_path):
     old['hashes'].pop('conversationFiles')
     actual_conversation = new['hashes'].pop('conversationFiles')
     assert old['hashes'] == new['hashes']
-    registered = render_prompt('worker.conversation_file_delivery', load_prompt_registry(PROMPTS))
+    registered = render_prompt('worker.conversation_file_delivery', load_prompt_registry(PROMPTS),
+        variables={'delivery_roots': json.dumps({'workspace':'unknown','tmpdir':'unknown'}, sort_keys=True)})
     assert actual_conversation == hashlib.sha256((registered.strip() + '\n').encode()).hexdigest()
     assert old['compiledLoaderImported'] is False
     assert new['compiledLoaderImported'] is True
@@ -149,6 +150,7 @@ def test_workbench_exposes_sources_and_exact_consumer_relationships(monkeypatch)
         expected_consumers = {'_worker_prompt', consumer}
         if prompt_id == 'worker.native_capability_inventory':
             expected_consumers.add('schedule_run_now')
+            expected_consumers.add('inheritNativeConversationCapabilityInventory')
             schedule_source = BOOTSTRAP.with_name('prompts') / 'schedule-tools.json'
             schedule_rows = [row for row in related if row['selector'] == 'schedule_run_now']
             assert len(schedule_rows) == 1
@@ -161,6 +163,8 @@ def test_workbench_exposes_sources_and_exact_consumer_relationships(monkeypatch)
     assert prompt_service._config_source_path(str(profile.relative_to(ROOT))) == profile.resolve()
     conversation = BOOTSTRAP.with_name('conversation_provider.py')
     assert prompt_service._config_source_path(str(conversation.relative_to(ROOT))) == conversation.resolve()
+    inventory_owner = ROOT / 'viventium_v0_4/LibreChat/packages/api/src/glasshive/nativeConversationInstructions.ts'
+    assert prompt_service._config_source_path(str(inventory_owner.relative_to(ROOT))) == inventory_owner.resolve()
     detail = prompt_service.get_prompt('worker.conversation_file_delivery')
     assert entries['worker.conversation_file_delivery']['ownerLayer'] == 'glasshive_worker'
     assert detail['rendered'].strip() == detail['body'].strip()
@@ -207,8 +211,12 @@ def test_registered_conversation_body_reaches_managed_boundary_without_changing_
     module = ast.parse(BOOTSTRAP.read_text())
     function = next(node for node in module.body if isinstance(node, ast.FunctionDef) and node.name == 'conversation_file_delivery_instructions')
     value = next(node for node in ast.walk(function) if isinstance(node, ast.Return)).value
-    standalone = ast.literal_eval(value.args[1])
-    registered = render_prompt('worker.conversation_file_delivery', registry).strip()
+    literal = next(node.value for node in function.body if isinstance(node, ast.Assign)
+                   and any(isinstance(target, ast.Name) and target.id == 'standalone' for target in node.targets))
+    roots = json.dumps({'workspace':'unknown','tmpdir':'unknown'}, sort_keys=True)
+    standalone = ast.literal_eval(literal).replace('{{delivery_roots}}', roots)
+    registered = render_prompt('worker.conversation_file_delivery', registry,
+        variables={'delivery_roots': roots}).strip()
     managed = probe(write_bundle(tmp_path))
     legacy = probe(managed=False)
     assert managed.returncode == legacy.returncode == 0

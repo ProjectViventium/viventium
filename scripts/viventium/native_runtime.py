@@ -458,6 +458,7 @@ def native_glasshive_transport_environment(
                 runtime_env = {}
             else:
                 raise
+    from life_bootstrap import recorded_life_dir
     database_path = database_path or support / "state/runtime/native/glasshive/runtime.sqlite"
     key = bytes.fromhex(runtime_secrets(support)["CREDS_KEY"])
     token_domains = {
@@ -494,6 +495,7 @@ def native_glasshive_transport_environment(
         "WPR_HOST_WORKSPACE_ROOT": str(support / "state/runtime/native/glasshive/workspaces"),
         "WPR_LIBRECHAT_UPLOADS_ROOT": str(support / "data/uploads"),
         "GLASSHIVE_PROTECTED_SOURCE_ROOTS": str(support),
+        "GLASSHIVE_PROTECTED_ARTIFACT_ROOTS": str(recorded_life_dir(support / "state")),
         "WPR_BOOTSTRAP_SOURCE_ROOTS": os.pathsep.join((
             str(support / "data/uploads"), str(database_path.parent / "managed-files"),
         )),
@@ -839,6 +841,7 @@ NATIVE_FIXED_ENV = {
     "SANDPACK_STATIC_BUNDLER_URL": "http://127.0.0.1:3191/",
 }
 NATIVE_ALLOWED_PLAIN_ENV = {
+    "MCP_PERSISTENT_CONNECTION_SERVERS",
     "WPR_RECURRING_SCHEDULE_OWNER", "WPR_WEBHOOK_ALLOW_LOCAL_HTTP",
     "WPR_WEBHOOK_ALLOWED_PORTS", "WPR_WEBHOOK_ALLOWED_NETWORKS",
     "DEBUG_LOGGING",
@@ -2332,6 +2335,13 @@ def rotate_log(path: Path, *, maximum_bytes: int = 10 * 1024 * 1024, generations
             destination.chmod(0o600)
 
 
+def _validate_managed_log_parent(metadata: os.stat_result) -> None:
+    if (not stat.S_ISDIR(metadata.st_mode) or stat.S_ISLNK(metadata.st_mode)
+            or metadata.st_uid not in {0, os.getuid()}
+            or (metadata.st_mode & 0o022 and not (metadata.st_uid == 0 and metadata.st_mode & stat.S_ISVTX))):
+        raise RuntimeError_("Managed log parent is unsafe")
+
+
 def prepare_runtime_log(path: Path, *, maximum_bytes: int = 10 * 1024 * 1024) -> Path:
     """Preserve diagnostics; use a trusted private alternate for a refused file."""
     path = Path(os.path.abspath(path))
@@ -2339,10 +2349,7 @@ def prepare_runtime_log(path: Path, *, maximum_bytes: int = 10 * 1024 * 1024) ->
         if not os.path.lexists(directory):
             ensure_private_directory(directory)
         metadata = directory.lstat()
-        if (not stat.S_ISDIR(metadata.st_mode) or stat.S_ISLNK(metadata.st_mode)
-                or metadata.st_uid not in {0, os.getuid()}
-                or (metadata.st_mode & 0o022 and not (metadata.st_uid == 0 and metadata.st_mode & stat.S_ISVTX))):
-            raise RuntimeError_("Managed log parent is unsafe")
+        _validate_managed_log_parent(metadata)
     if path.parent.lstat().st_uid != os.getuid():
         raise RuntimeError_("Managed log parent is not owned by this runtime")
     ensure_private_directory(path.parent)
@@ -2357,6 +2364,45 @@ def prepare_runtime_log(path: Path, *, maximum_bytes: int = 10 * 1024 * 1024) ->
         descriptor = os.open(selected, os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0), 0o600)
         os.close(descriptor)
     return selected
+
+
+@contextmanager
+def open_private_runtime_log(path: Path, *, maximum_bytes: int = 10 * 1024 * 1024):
+    """Open the preserved log by private directory handles, with no link redirection."""
+    selected = prepare_runtime_log(path, maximum_bytes=maximum_bytes)
+    directory_flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
+    parent = os.open(selected.anchor, directory_flags)
+    descriptor = None
+    try:
+        _validate_managed_log_parent(os.fstat(parent))
+        for part in selected.parent.parts[1:]:
+            child = os.open(part, directory_flags, dir_fd=parent)
+            os.close(parent)
+            parent = child
+            _validate_managed_log_parent(os.fstat(parent))
+        if os.fstat(parent).st_uid != os.getuid():
+            raise RuntimeError_("Managed log parent is not owned by this runtime")
+        descriptor = os.open(selected.name, os.O_WRONLY | os.O_APPEND | os.O_NOFOLLOW | os.O_NONBLOCK,
+                             dir_fd=parent)
+        metadata = os.fstat(descriptor)
+        leaf = os.stat(selected.name, dir_fd=parent, follow_symlinks=False)
+        parent_metadata = os.fstat(parent)
+        current_parent = selected.parent.lstat()
+        if (not stat.S_ISREG(metadata.st_mode) or metadata.st_uid != os.getuid()
+                or metadata.st_nlink != 1 or stat.S_IMODE(metadata.st_mode) != 0o600
+                or not stat.S_ISREG(leaf.st_mode)
+                or (metadata.st_dev, metadata.st_ino) != (leaf.st_dev, leaf.st_ino)
+                or not stat.S_ISDIR(current_parent.st_mode)
+                or (parent_metadata.st_dev, parent_metadata.st_ino)
+                != (current_parent.st_dev, current_parent.st_ino)):
+            raise RuntimeError_("Managed log changed or is unsafe")
+        with os.fdopen(descriptor, "ab", buffering=0) as handle:
+            descriptor = None
+            yield selected, handle
+    finally:
+        if descriptor is not None:
+            os.close(descriptor)
+        os.close(parent)
 
 
 def semantic_http_ready(

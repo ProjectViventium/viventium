@@ -69,6 +69,10 @@ internals.
   intent proof. An explicit Start
   records its new choice once before committed recovery; a later Stop must survive finalization.
   Automatic, preserved-intent and writer-disabled starts cannot renew intent to bypass Stop.
+
+- Reload managed services through the canonical runtime lifecycle. A manually detached replacement
+  can be healthy while failing the launcher's process-group ownership check; updating its PID file
+  alone does not preserve ownership and can trigger full-stack recovery.
 - Broad checkout or process-pattern cleanup requires verified ownership of the selected runtime
   process group. A missing or removed group receipt cannot authorize a same-checkout sweep.
   Legacy recovery remains limited to configured service ports and owned PID files; another

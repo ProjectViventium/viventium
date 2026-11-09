@@ -74,6 +74,14 @@ truthful Main presentation without losing or repeating durable work.
 
 - **CC-048:** A Telegram voice-note transcript remains source input, preserves receipt order and file
   semantics, and receives one truthful unavailable response when transcription fails.
+- Recovery carries every accepted current source through the existing ordered conversation path.
+  A recovery flag must not skip source linking. Repair a missing unpublished parent only with
+  trusted retained-input and owned ancestry evidence, through the existing native source fence.
+  Keep the original source ledger intact; never weaken the complete-context admission check.
+- This also applies to one retained source. Preserve its valid original or already repaired
+  parent. If the original parent was never saved, the existing conversation head is usable only
+  with complete owner-scoped ancestry that excludes the retained source. Deleted, foreign, cyclic
+  or descendant anchors remain unavailable. Recovery must not add a healthy-turn history scan.
 
 ### Attachment-only input
 
@@ -117,10 +125,20 @@ truthful Main presentation without losing or repeating durable work.
   the existing read-only work facade. Preserve the full output and accepted input. A retained
   terminal result does not prove that a later correction or current run is complete. Reading
   a result must not launch, retry, steer, or alter its delivery state.
+- Retained result-file inventory reads only evidence that contains files. Check its accepted
+  callbacks in one batch against the exact owner, origin, work, run, attempt, callback, result
+  revision/digest, and accepted operation/generation tuple. Do not add a courier row cap. An
+  invalid legacy row grants no access and does not hide valid sibling files. Foreign scope remains
+  rejected. Explicitly selecting or publishing a file still requires its current accepted-result
+  fence; inventory visibility does not grant publication authority.
 - **PW-109:** If an origin disappears, useful completion uses its governed exact-owner continuation
   and never recreates the deleted origin.
 - **PW-110:** Callback completion survives stream close, updates authoritative Active Work state
   immediately, and is durably adjudicated once as sent or silent.
+- A newly completed delegated run retains its callback obligation before file publication.
+  If a selected file is unavailable, Main still receives the completion, verified files, and
+  explicit file failure evidence. Recovery uses the exact stored completion without rerunning
+  work or replaying legacy runs merely because they lack a terminal callback.
 - Independent conversation can be answered before unrelated worker launches settle. Launch status
   still requires a successful receipt; accepted work remains pending until its own completion.
 - Failed optional follow-up synthesis must not turn raw internal insights into another Main

@@ -36,14 +36,14 @@
       "path": "viventium_v0_4/agent-starter-react",
       "origin": "https://github.com/ProjectViventium/agent-starter-react.git",
       "upstream": "https://github.com/livekit-examples/agent-starter-react.git",
-      "ref": "61877e859615fd0160c1cdee8454036bae891ccd"
+      "ref": "b3e8172890657a967348046b15003395fcc692fa"
     },
     {
       "name": "xPerfect",
       "path": "viventium_v0_4/xPerfect",
       "origin": "https://github.com/xPerfectAI/xPerfect.git",
       "upstream": "",
-      "ref": "07dac785b8d5398dc5722b16e7d89784fe43a07e"
+      "ref": "9e039c61a3dd59f7af6e075b3fabe13b8cf7f545"
     },
     {
       "name": "Viventium-Health",

@@ -141,6 +141,11 @@ also shape delivery through controls the selected TTS provider really supports.
 - Make code dynamic - **avoid hardcoding things**
 - **MOST IMPORTANTLY**: **SEPARATION OF CONCERNS PRINCIPLE MUST BE FOLLOWED AT ALL TIMES** to maintain a clear modular design so the project does not turn into entangled spaghetti code
 
+Apply the lean sequence: question the requirement and its user outcome; delete what is
+unnecessary; simplify the retained mechanism; shorten feedback; automate only the stable process.
+Preserve privacy, authorization, durability, compatibility, and required user-path proof. Keep one
+owner and link to it. See [minimal truth](#minimal-truth).
+
 ### 1.1 No Unnecessary Learning Or Effort For New Users
 
 - The normal path must be immediately usable without product training or technical setup choices.

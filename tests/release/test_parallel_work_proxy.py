@@ -251,3 +251,72 @@ def test_launcher_recognizes_compose_up_after_global_project_options():
     assert '"--project-name"|"-p"|"--file"|"-f"' in launcher
     assert '[[ "$compose_command" == "up" ]]' in launcher
     assert 'timeout_seconds="$compose_up_timeout"' in launcher
+
+
+def test_native_context_and_schedule_routes_stay_exact_and_broker_only():
+    module = _proxy_module()
+    for path in ('/v1/native/context/', '/v1/native/schedules/'):
+        assert module.route_for('broker', path) == path
+        assert module.route_for('provider', path) is None
+        assert module.route_for('broker', path + '?target=other') is None
+    for path in ('/health', '/v1/workers', '/v1/native/peers/', '/v1/native/context/../workers'):
+        assert module.route_for('broker', path) is None
+
+
+def test_native_context_proxy_relays_only_the_exact_scoped_request(monkeypatch):
+    import http.client
+    import threading
+    from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+    module = _proxy_module()
+    received = []
+    selected = []
+
+    class Runtime(BaseHTTPRequestHandler):
+        def log_message(self, *_args):
+            pass
+        def do_POST(self):
+            body = self.rfile.read(int(self.headers['Content-Length']))
+            received.append((self.path, dict(self.headers), body))
+            payload = b'{"jsonrpc":"2.0","id":1,"result":{"tools":[]}}'
+            self.send_response(200)
+            self.send_header('Content-Type', 'application/json')
+            self.send_header('Content-Length', str(len(payload)))
+            self.end_headers()
+            self.wfile.write(payload)
+
+    runtime = ThreadingHTTPServer(('127.0.0.1', 0), Runtime)
+    proxy = ThreadingHTTPServer(('127.0.0.1', 0), module.ProxyHandler)
+    monkeypatch.setattr(module, '_configuration', lambda: ('broker', '127.0.0.1', 9))
+    def upstream(setting):
+        selected.append(setting)
+        return '127.0.0.1', runtime.server_port
+    monkeypatch.setattr(module, '_upstream', upstream)
+    threads = [threading.Thread(target=server.serve_forever, daemon=True) for server in (runtime, proxy)]
+    for thread in threads:
+        thread.start()
+    try:
+        connection = http.client.HTTPConnection('127.0.0.1', proxy.server_port, timeout=3)
+        body = b'{"jsonrpc":"2.0","id":1,"method":"tools/list"}'
+        connection.request('POST', '/v1/native/context/', body, {
+            'Authorization': 'Bearer synthetic-context-grant',
+            'Content-Type': 'application/json', 'MCP-Protocol-Version': '2025-06-18',
+            'Cookie': 'must-not-forward',
+        })
+        response = connection.getresponse()
+        assert response.status == 200
+        assert b'"tools":[]' in response.read()
+        connection.close()
+        assert selected == ['GLASSHIVE_NATIVE_RUNTIME_UPSTREAM']
+        path, headers, actual = received[0]
+        assert path == '/v1/native/context/' and actual == body
+        assert headers['Authorization'] == 'Bearer synthetic-context-grant'
+        assert headers['Host'] == f'127.0.0.1:{runtime.server_port}'
+        assert headers['MCP-Protocol-Version'] == '2025-06-18'
+        assert 'Cookie' not in headers
+    finally:
+        for server in (proxy, runtime):
+            server.shutdown()
+            server.server_close()
+        for thread in threads:
+            thread.join(3)

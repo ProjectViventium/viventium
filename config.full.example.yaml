@@ -278,10 +278,16 @@ voice:
     speed: 1.12
     instructions: Speak naturally with clear pacing. Keep the delivery conversational, grounded, and human. Avoid robotic emphasis or exaggerated pauses.
 integrations:
+  chrome_devtools:
+    # Optional owner-only access to signed-in Chrome. Chrome asks before connecting.
+    enabled: false
+  local_media:
+    # Optional path to a provisioned media TOML on the native host. Blank keeps the tools off.
+    config: ""
   health:
     enabled: true
     # Optional metadata-only connector status projection. Raw health evidence stays in App Support.
-    life_projection_dir: ~/Documents/Viventium/Life/Health/Wearables/WHOOP
+    life_projection_dir: ""
   glasshive:
     enabled: true
     # New app wakes use the generic xPerfect clock. Existing Cortex schedules are not migrated automatically.
@@ -478,6 +484,11 @@ integrations:
     #       worker-owner@example.com: [browser-login-alias@example.com]
   code_interpreter:
     enabled: false
+  web_search:
+    # Optional LibreChat search and scraping services.
+    enabled: false
+    search_provider: searxng
+    scraper_provider: firecrawl
   telegram:
     enabled: true
     secret_ref: keychain://viventium/telegram_bot_token
@@ -515,7 +526,7 @@ integrations:
     refresh_token:
       secret_ref: keychain://viventium/google_refresh_token
   ms365:
-    enabled: true
+    enabled: false
     client_id: your-ms365-client-id
     tenant_id: your-ms365-tenant-id
     business_email: you@example.com

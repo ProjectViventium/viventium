@@ -63,6 +63,10 @@ This document defines what belongs in public, private personal, and private ente
 - The empty canonical LIFE template is public-safe product scaffolding and may ship with the public
   installer. Personalized LIFE content is private user data and must never enter source control,
   release artifacts, QA fixtures, support bundles, or public screenshots.
+- A Native publisher stages the canonical template from the selected commit. Its final verifier
+  checks candidate paths and bytes. The managed Git helper checks the index and each outgoing
+  commit before pushing the reviewed revision. The outgoing check uses the same secret and private-path policy as the index, including files introduced and later removed. Commit/ref metadata is checked too. Raw local evidence named `*.private.*` or `*-private.*` stays excluded even when its contents contain no token. Keep raw Git, private repository history and
+  any independent packaging tooling inside the same confidentiality boundary.
 - LIFE contains user-authored working files only. GlassHive transcripts, context manifests, session
   state, tool evidence, activity logs, broker grants, and harness configuration live under private
   App Support state with owner-only permissions.
@@ -106,6 +110,9 @@ This document defines what belongs in public, private personal, and private ente
 - Public-facing docs for FSL repos must say source-available / Fair Source today, not OSI open
   source before the future Apache-2.0 conversion date applies.
 - The public surface must use a license matrix; it must not claim a single blanket license over every component.
+- Provider-identification artwork in the Fast Queen guide is listed separately in the
+  [license matrix](../../LICENSE-MATRIX.md). Its [asset attribution](../architecture/assets/fast-queen/README.md)
+  identifies the third-party marks; the code license does not grant trademark rights.
 
 ### Easy Install Native Runtime Candidates
 

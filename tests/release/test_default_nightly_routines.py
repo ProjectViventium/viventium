@@ -6,6 +6,7 @@ from pathlib import Path
 import subprocess
 import sys
 
+import pytest
 import yaml
 
 
@@ -345,7 +346,8 @@ def test_cli_write_preserves_first_seen_personalization_and_noop_is_byte_exact(
     assert config_path.stat().st_mode & 0o777 == 0o640
 
 
-def test_claude_auth_detection_fails_closed_on_malformed_status(monkeypatch) -> None:
+@pytest.mark.parametrize("status", ["Not logged in", "null", "[]", '"logged in"', "true", "1", "{}"])
+def test_claude_auth_detection_fails_closed_on_malformed_status(monkeypatch, status) -> None:
     spec = importlib.util.spec_from_file_location("host_cli_auth", HOST_CLI_AUTH_PATH)
     assert spec and spec.loader
     module = importlib.util.module_from_spec(spec)
@@ -353,9 +355,28 @@ def test_claude_auth_detection_fails_closed_on_malformed_status(monkeypatch) -> 
 
     class Completed:
         returncode = 0
-        stdout = "Not logged in"
+        stdout = status
 
     monkeypatch.setattr(module, "host_cli_command", lambda command: "/usr/local/bin/claude" if command == "claude" else "")
     monkeypatch.setattr(module, "run_status", lambda *_args, **_kwargs: Completed())
 
     assert module.host_cli_auth_ready("claude") is False
+
+
+@pytest.mark.parametrize("logged_in", [True, False])
+def test_claude_auth_detection_preserves_valid_login_state(tmp_path, monkeypatch, logged_in) -> None:
+    spec = importlib.util.spec_from_file_location("host_cli_auth_control", HOST_CLI_AUTH_PATH)
+    assert spec and spec.loader
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    executable = tmp_path / "synthetic-claude"
+    status = '{"loggedIn":true}' if logged_in else '{"loggedIn":false}'
+    executable.write_text(
+        '#!/bin/sh\n[ "$#" -eq 2 ] && [ "$1" = auth ] && [ "$2" = status ] || exit 64\n'
+        f"printf '%s\\n' '{status}'\n"
+    )
+    executable.chmod(0o755)
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setattr(module, "host_cli_command", lambda command: str(executable) if command == "claude" else "")
+
+    assert module.host_cli_auth_ready("claude") is logged_in

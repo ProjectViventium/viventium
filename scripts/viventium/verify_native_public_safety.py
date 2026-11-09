@@ -10,6 +10,11 @@ import stat
 import sys
 from pathlib import Path
 
+from public_life_boundary import (
+    PACKAGED_LIFE_FILES, PrivateFingerprintError, PrivateIdentityFingerprints,
+    personal_workspace_path, personal_workspace_reference,
+)
+
 
 class PublicSafetyError(RuntimeError):
     pass
@@ -29,12 +34,16 @@ FORBIDDEN_ENV_FILE_NAMES = {
     "runtime.local.env",
 }
 FORBIDDEN_ENV_FILE_PREFIXES = (".env.viventium-",)
+PACKAGED_LIFE_DIRECTORIES = frozenset(
+    directory for filename in PACKAGED_LIFE_FILES for directory in Path(filename).parents
+)
 OWNED_SURFACES = (
     Path("payload/apps"),
     Path("payload/bin"),
     Path("payload/release-metadata"),
     Path("payload/runtime/defaults"),
     Path("payload/runtime/scripts"),
+    Path("payload/templates/life-v0.01"),
     Path("bootstrap"),
 )
 THIRD_PARTY_RUNTIME_SURFACES = (
@@ -76,6 +85,10 @@ def candidate_files(root: Path) -> list[Path]:
             metadata = path.lstat()
         except OSError as error:
             raise PublicSafetyError(f"candidate changed while scanning: {relative}") from error
+        if personal_workspace_path(relative.as_posix(), PACKAGED_LIFE_FILES) and not (
+            relative in PACKAGED_LIFE_DIRECTORIES and stat.S_ISDIR(metadata.st_mode)
+        ):
+            raise PublicSafetyError("personal workspace data in candidate")
         if stat.S_ISLNK(metadata.st_mode):
             raise PublicSafetyError(f"forbidden symlink artifact: {relative}")
         if stat.S_ISDIR(metadata.st_mode):
@@ -123,13 +136,13 @@ def scan_patterns(path: Path, patterns: tuple[tuple[str, re.Pattern[bytes]], ...
 
 
 def scan_exact_prefixes(path: Path, prefixes: tuple[bytes, ...]) -> bool:
-    if not prefixes:
-        return False
-    overlap = max(len(prefix) for prefix in prefixes) - 1
+    overlap = max(OVERLAP_SIZE, max(map(len, prefixes), default=0) - 1)
     tail = b""
     with path.open("rb") as handle:
         while chunk := handle.read(CHUNK_SIZE):
             data = tail + chunk
+            if personal_workspace_reference(data):
+                raise PublicSafetyError("personal workspace metadata in candidate")
             if any(prefix in data for prefix in prefixes):
                 return True
             tail = data[-overlap:] if overlap else b""
@@ -145,10 +158,14 @@ def verify(root: Path, forbidden_prefixes: list[str]) -> dict[str, object]:
         if prefix.strip().rstrip("/")
     )
     findings: list[str] = []
+    fingerprints = PrivateIdentityFingerprints()
     scanned_bytes = 0
     for path in files:
         relative = path.relative_to(root)
-        scanned_bytes += path.stat().st_size
+        size = path.stat().st_size
+        scanned_bytes += size
+        if fingerprints.matches_file(path, size):
+            raise PublicSafetyError("private identity bytes in candidate")
         if (
             any(part in FORBIDDEN_ENV_DIRECTORY_NAMES for part in relative.parts)
             or relative.name in FORBIDDEN_ENV_FILE_NAMES
@@ -192,7 +209,7 @@ def main(argv: list[str] | None = None) -> int:
     args = parser().parse_args(argv)
     try:
         result = verify(args.candidate_root, args.forbid_prefix)
-    except (OSError, PublicSafetyError) as error:
+    except (OSError, PrivateFingerprintError, PublicSafetyError) as error:
         print(f"Native public-safety verification failed:\n{error}", file=sys.stderr)
         return 2
     print(json.dumps(result, sort_keys=True, separators=(",", ":")))

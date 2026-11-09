@@ -22,11 +22,9 @@ if str(BOT_DIR) not in sys.path:
 MD2TGMD_SRC_DIR = str(BOT_DIR / "md2tgmd" / "src")
 sys.path[:] = [path for path in sys.path if path != MD2TGMD_SRC_DIR]
 
-_fake_pil = types.ModuleType("PIL")
-_fake_pil_image = types.ModuleType("PIL.Image")
-_fake_pil.Image = _fake_pil_image
-sys.modules.setdefault("PIL", _fake_pil)
-sys.modules.setdefault("PIL.Image", _fake_pil_image)
+# Pillow is a declared receiver dependency. Keep the real package available to
+# adjacent video-frame tests instead of poisoning the shared module cache.
+from PIL import Image  # noqa: E402,F401
 
 # Some lightweight utility tests install a minimal `config` stub in sys.modules.
 # This module imports the real bot, so clear that stub before bot import.
@@ -693,6 +691,25 @@ def test_call_button_refresh_does_not_overwrite_after_preferences_navigation(mon
         assert context.bot.edits == []
     finally:
         tg_bot._PENDING_INFO_CALL_REFRESHES.clear()
+
+
+@pytest.mark.asyncio
+async def test_call_button_refresh_preserves_public_button_and_does_not_log_launch_tokens(monkeypatch, caplog):
+    from unittest.mock import AsyncMock
+    public = 'https://voice.example.test/call-bootstrap#viventiumCallLaunch=' + 'L' * 43
+    local = 'http://127.0.0.1:3300/call-bootstrap#viventiumCallLaunch=' + 'L' * 43
+    monkeypatch.setattr(tg_bot, 'get_telegram_call_link_result', lambda _: {'url': public, 'local_url': local})
+    edit = AsyncMock(side_effect=[tg_bot.BadRequest('Invalid URL ' + local), tg_bot.BadRequest('Invalid URL ' + local)])
+    context = types.SimpleNamespace(bot=types.SimpleNamespace(edit_message_text=edit))
+    tg_bot._mark_info_call_refresh('chat-1', 1001)
+    with caplog.at_level('DEBUG'):
+        await tg_bot.refresh_call_button_message(context, 'chat-1', 1001, 'chat-1:user-1', 'Viventium')
+    assert edit.call_count == 2
+    buttons = [b for row in edit.call_args.kwargs['reply_markup'].inline_keyboard for b in row]
+    assert any(b.text == 'Other Wi-Fi or mobile data' and b.url == public for b in buttons)
+    assert all(b.text != 'Same Wi-Fi' for b in buttons)
+    assert local not in caplog.text
+    assert 'L' * 43 not in caplog.text
 
 
 @pytest.mark.parametrize("include_audio", [False, True])
@@ -7904,3 +7921,71 @@ def test_text_only_reply_preserves_provider_tag_in_multiline_code_and_strips_pro
     assert any(html.escape(literal) in value for value in displays)
     assert all(value.count("&lt;soft&gt;") == 1 for value in displays if "literal" in value)
     assert all("<soft>" not in value for value in displays)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('args', [[], ['local'], ['lan']])
+@pytest.mark.parametrize('reject_local', [False, True])
+async def test_call_command_reuses_linked_launch_choices_without_blocking_handlers(monkeypatch, args, reject_local):
+    import threading
+    from unittest.mock import AsyncMock
+    main_thread = threading.get_ident()
+    targets = []
+    public = 'https://voice.example.test/call-bootstrap?callSessionId=call-1#viventiumCallLaunch=' + 'L' * 43
+    local = 'https://192.168.1.20:8443/call-bootstrap?callSessionId=call-1#viventiumCallLaunch=' + 'L' * 43
+    def fetch(key, *, launch_target='public'):
+        assert threading.get_ident() != main_thread
+        assert key == '111:111'
+        targets.append(launch_target)
+        return {'url': local if launch_target == 'local' else public, 'local_url': local}
+    async def info(*_):
+        return (None, None, None, 111, 77, None, None, 7, '111:111', None, None, None, None, None, None)
+    monkeypatch.setattr(tg_bot, 'GetMesageInfo', info)
+    monkeypatch.setattr(tg_bot, 'get_telegram_call_link_result', fetch)
+    monkeypatch.setattr(tg_bot, 'schedule_delete_message', lambda *a, **k: None)
+    monkeypatch.setattr(tg_bot.decorators, 'get_update_ids', lambda _: ('111', '111:111', 7))
+    monkeypatch.setattr(tg_bot.decorators.config, 'GROUP_LIST', None)
+    monkeypatch.setattr(tg_bot.decorators.config, 'whitelist', None)
+    monkeypatch.setattr(tg_bot.decorators.config, 'BLACK_LIST', None)
+    send = AsyncMock(return_value=_Msg(78))
+    if reject_local:
+        send.side_effect = [tg_bot.BadRequest('Wrong HTTP URL'), _Msg(78)]
+    context = types.SimpleNamespace(args=args, bot=types.SimpleNamespace(send_message=send))
+    await tg_bot.call(types.SimpleNamespace(), context)
+    sent = context.bot.send_message.call_args.kwargs
+    buttons = sent['reply_markup'].inline_keyboard if sent['reply_markup'] else []
+    expected = [('Same Wi-Fi', local)] if args else [('Same Wi-Fi', local), ('Other Wi-Fi or mobile data', public)]
+    if reject_local:
+        expected = []
+        assert local in sent['text']
+        if not args:
+            assert public in sent['text']
+        assert send.call_count == 2
+    assert [(row[0].text, row[0].url) for row in buttons] == expected
+    assert sent['chat_id'] == 111
+    assert sent['message_thread_id'] == 7
+    assert targets == ['local' if args else 'auto']
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('result,expected', [
+    ({'link_required': True}, 'not linked'),
+    ({'public_url_required': True}, '/call lan'),
+    ({}, "couldn't create"),
+])
+async def test_call_command_keeps_failures_distinct_without_a_dead_button(monkeypatch, result, expected):
+    from unittest.mock import AsyncMock
+    async def info(*_):
+        return (None, None, None, 111, 77, None, None, None, '111:111', None, None, None, None, None, None)
+    monkeypatch.setattr(tg_bot, 'GetMesageInfo', info)
+    monkeypatch.setattr(tg_bot, 'get_telegram_call_link_result', lambda *a, **k: result)
+    monkeypatch.setattr(tg_bot, 'schedule_delete_message', lambda *a, **k: None)
+    monkeypatch.setattr(tg_bot.decorators, 'get_update_ids', lambda _: ('111', '111:111', None))
+    monkeypatch.setattr(tg_bot.decorators.config, 'GROUP_LIST', None)
+    monkeypatch.setattr(tg_bot.decorators.config, 'whitelist', None)
+    monkeypatch.setattr(tg_bot.decorators.config, 'BLACK_LIST', None)
+    context = types.SimpleNamespace(args=[], bot=types.SimpleNamespace(send_message=AsyncMock(return_value=_Msg(78))))
+    await tg_bot.call(types.SimpleNamespace(), context)
+    sent = context.bot.send_message.call_args.kwargs
+    assert expected in sent['text']
+    assert 'reply_markup' not in sent

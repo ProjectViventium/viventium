@@ -8,6 +8,14 @@ cancellation, reconnect/persistence, post-call memory boundaries, and extended-c
 
 ## Latest scoped result
 
+The [2026-11-05 local reliability repair](reports/2026-11-05-local-reliability.md) records restored
+LAN access, stable-address implementation, compact sound controls, long-history recovery and
+current Main/worker proof. Speaker, interruption, latency and off-network acceptance remain open.
+
+The [2026-10-30 phone call access and audio report](reports/2026-10-30-phone-call-access-and-audio.md)
+records the trusted LAN and native server repairs, actual LAN media evidence and the open
+phone-speaker crackle issue. Its narrow pass results do not close the full voice journey.
+
 The [2026-10-03 Voice and Telegram acceptance](reports/2026-10-03-voice-and-telegram-acceptance.md)
 records current defaults, saved voice selectors, spoken recall, early streamed speech and one
 worker completion through actual browser audio and durable settlement. Overall acceptance is

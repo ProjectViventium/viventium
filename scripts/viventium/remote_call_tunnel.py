@@ -13,6 +13,7 @@ import signal
 import socket
 import subprocess
 import sys
+import tempfile
 import time
 import urllib.error
 import urllib.parse
@@ -79,6 +80,81 @@ COMMON_BINARY_PATHS: dict[str, tuple[str, ...]] = {
         "/usr/bin/openssl",
     ),
 }
+
+CADDY_LAN_DNS_MODULES = {
+    "godaddy": "github.com/caddy-dns/godaddy@28a114504e60db1ebd1d1b4533e56d1fdd17dbed",
+    "cloudflare": "github.com/caddy-dns/cloudflare@a8737d095ad5a48ca031cea6ab704057dbc2d250",
+}
+CADDY_DYNAMIC_DNS_MODULE = "github.com/mholt/caddy-dynamicdns@67d107a42c0279f6e6d58a6afe646745c8b44f78"
+
+
+def resolve_lan_dns_token() -> str:
+    reference = os.environ.get("VIVENTIUM_LAN_DNS_SECRET_REF", "").strip()
+    if not reference.startswith("keychain://") or not reference[len("keychain://"):]:
+        raise RuntimeError("LAN DNS requires a Keychain credential reference")
+    result = subprocess.run(
+        ["security", "find-generic-password", "-s", reference[len("keychain://"):], "-w"],
+        capture_output=True, text=True, timeout=8,
+    )
+    if result.returncode != 0 or not result.stdout.strip():
+        raise RuntimeError("LAN DNS credential is unavailable in Keychain")
+    return result.stdout.strip()
+
+
+def lan_dns_settings() -> dict[str, str]:
+    domain = os.environ.get("VIVENTIUM_LAN_DOMAIN", "").strip().lower().rstrip(".")
+    if not domain:
+        return {}
+    zone = os.environ.get("VIVENTIUM_LAN_DNS_ZONE", "").strip().lower().rstrip(".")
+    provider = os.environ.get("VIVENTIUM_LAN_DNS_PROVIDER", "").strip()
+    for name in (domain, zone):
+        if not name or any(not label or len(label) > 63 or label.startswith("-") or label.endswith("-")
+                           or not label.isascii() or not label.replace("-", "").isalnum()
+                           for label in name.split(".")):
+            raise RuntimeError("LAN DNS configuration requires plain DNS names")
+    if not domain.endswith("." + zone) or provider not in CADDY_LAN_DNS_MODULES:
+        raise RuntimeError("Trusted LAN HTTPS requires a dedicated DNS subdomain, provider and credential")
+    token = resolve_lan_dns_token()
+    return {"domain": domain, "zone": zone, "provider": provider,
+            "configuration_digest": hashlib.sha256(json.dumps([domain, zone, provider, token]).encode()).hexdigest()}
+
+
+def ensure_lan_caddy(caddy_bin: str, settings: dict[str, str], state_dir: Path, auto_install: bool) -> str:
+    required = {"dynamic_dns", f"dns.providers.{settings['provider']}"}
+    def has_modules(binary):
+        result = subprocess.run([str(binary), "list-modules"], capture_output=True, text=True, timeout=10)
+        return result.returncode == 0 and required.issubset(set(result.stdout.splitlines()))
+    if has_modules(caddy_bin):
+        return caddy_bin
+    packages = [CADDY_LAN_DNS_MODULES[settings["provider"]], CADDY_DYNAMIC_DNS_MODULE]
+    version = subprocess.run([caddy_bin, "version"], capture_output=True, text=True, check=True, timeout=10).stdout.split()[0]
+    digest = hashlib.sha256(json.dumps([version, packages]).encode()).hexdigest()[:20]
+    tools_dir = state_dir / "tools"
+    target = tools_dir / f"caddy-lan-{digest}"
+    receipt_path = target.with_suffix(".json")
+    if target.is_file() and receipt_path.is_file():
+        try:
+            receipt = json.loads(receipt_path.read_text())
+            if receipt["sha256"] == hashlib.sha256(target.read_bytes()).hexdigest() and receipt["packages"] == packages and has_modules(target):
+                return str(target)
+        except (OSError, ValueError, KeyError):
+            pass
+    if not auto_install:
+        raise RuntimeError("Trusted LAN HTTPS requires Caddy DNS and dynamic-DNS modules; enable dependency installation")
+    tools_dir.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory(prefix="caddy-lan-", dir=tools_dir) as temporary:
+        candidate = Path(temporary) / "caddy"
+        shutil.copy2(caddy_bin, candidate)
+        result = subprocess.run([str(candidate), "add-package", *packages], capture_output=True, text=True, timeout=240)
+        if result.returncode != 0 or not has_modules(candidate):
+            raise RuntimeError("Caddy could not install its native LAN DNS modules; the public edge remains available")
+        receipt = {
+            "version": subprocess.run([str(candidate), "version"], capture_output=True, text=True, check=True, timeout=10).stdout.strip(),
+            "sha256": hashlib.sha256(candidate.read_bytes()).hexdigest(), "packages": packages,
+        }
+        os.replace(candidate, target)
+        receipt_path.write_text(json.dumps(receipt, indent=2) + "\n")
+    return str(target)
 
 
 class PublicEdgeWanError(RuntimeError):
@@ -190,6 +266,9 @@ def parse_args() -> argparse.Namespace:
     start.add_argument("--public-glasshive-origin", default="")
     start.add_argument("--livekit-node-ip", default="")
     start.add_argument("--caddy-data-dir", default="")
+    start.add_argument("--lan-https", action="store_true")
+    start.add_argument("--lan-playground-https-port", type=int, default=8443)
+    start.add_argument("--lan-livekit-https-port", type=int, default=8444)
     start.add_argument("--upnp-lease-seconds", type=int, default=DEFAULT_PUBLIC_EDGE_UPNP_LEASE_SECONDS)
     start.add_argument(
         "--timeout-seconds",
@@ -207,6 +286,9 @@ def parse_args() -> argparse.Namespace:
     refresh.add_argument("--state-file", required=True)
     refresh.add_argument("--upnp-lease-seconds", type=int, default=DEFAULT_PUBLIC_EDGE_UPNP_LEASE_SECONDS)
 
+    ready = subparsers.add_parser("lan-ready", help="Publish the reconciled LAN runtime identity")
+    ready.add_argument("--state-file", required=True)
+    ready.add_argument("--lan-ip", required=True)
     return parser.parse_args()
 
 
@@ -224,7 +306,15 @@ def load_state(path: Path) -> dict[str, Any]:
 
 def save_state(path: Path, data: dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(data, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    # Readers in long-lived API/playground processes must see one complete identity.
+    with tempfile.NamedTemporaryFile(mode="w", dir=path.parent, prefix=path.name + ".", delete=False) as out:
+        temporary = Path(out.name)
+        try:
+            out.write(json.dumps(data, indent=2, sort_keys=True) + "\n")
+            out.flush()
+            os.replace(temporary, path)
+        finally:
+            temporary.unlink(missing_ok=True)
 
 
 def run_checked(
@@ -563,6 +653,15 @@ def state_is_healthy(state: dict[str, Any], *, assigned_ipv4s: set[str] | None =
     if state.get("last_error") or state.get("last_error_code"):
         return False
     provider = str(state.get("provider") or "").strip()
+    if provider == "public_https_edge" and state.get("lan_only"):
+        assigned = assigned_local_ipv4s() if assigned_ipv4s is None else assigned_ipv4s
+        lan = state.get("lan") or {}
+        targets = state.get("lan_targets") or []
+        return bool(
+            lan.get("tls_verified") and lan.get("ip") in assigned and len(targets) == 2
+            and pid_is_running((state.get("caddy") or {}).get("pid"))
+            and all(probe_local_endpoint(target) for target in targets)
+        )
     surfaces = list(iter_surfaces(state))
     if not provider or not surfaces:
         return False
@@ -627,6 +726,20 @@ def state_matches_requested_public_edge_surfaces(
     args: argparse.Namespace,
     state: dict[str, Any],
 ) -> bool:
+    lan = state.get("lan") or {}
+    if bool(lan) != bool(getattr(args, "lan_https", False)):
+        return False
+    if lan and (not lan.get("tls_verified") or str(lan.get("ip") or "") not in assigned_local_ipv4s()):
+        return False
+    if lan:
+        try:
+            if lan.get("dns", {}) != lan_dns_settings():
+                return False
+            if tuple(urllib.parse.urlparse(lan.get(key, "")).port for key in
+                     ("playground_url", "livekit_url")) != lan_listener_ports(args):
+                return False
+        except (RuntimeError, ValueError, OSError, subprocess.SubprocessError):
+            return False
     requested_ports = {
         "client": int(getattr(args, "client_port", 0) or 0),
         "api": int(getattr(args, "api_port", 0) or 0),
@@ -1140,9 +1253,9 @@ def resolve_public_edge_livekit_cert_pair(data_dir: Path, hostname: str) -> tupl
     return None
 
 
-def pick_free_port() -> int:
+def pick_free_port(host: str = "127.0.0.1") -> int:
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
-        sock.bind(("127.0.0.1", 0))
+        sock.bind((host, 0))
         sock.listen(1)
         return int(sock.getsockname()[1])
 
@@ -1300,10 +1413,13 @@ def render_caddyfile(
     http_port: int | None = None,
     https_port: int | None = None,
     well_known_bodies: dict[str, str] | None = None,
+    lan_surfaces: list[tuple[str, int]] | None = None,
+    lan_dns: dict[str, str] | None = None,
+    lan_ip: str = "",
 ) -> str:
     lines = [
         "{",
-        f"    admin 127.0.0.1:{admin_port}",
+        f"    admin 127.0.0.1:{admin_port}" if admin_port > 0 else "    admin off",
         "    log {",
         "        format filter {",
         '            request>uri regexp "^(/(?:r|v1/link-refs)/)[^/?]+(.*)$" "${1}<redacted>${2}"',
@@ -1316,6 +1432,29 @@ def render_caddyfile(
         lines.append(f"    http_port {http_port}")
     if https_port:
         lines.append(f"    https_port {https_port}")
+    if lan_surfaces and lan_dns:
+        relative = lan_dns["domain"][:-(len(lan_dns["zone"]) + 1)]
+        lines.extend([
+            "    persist_config off",
+            "    dynamic_dns {",
+            f"        provider {lan_dns['provider']} {{env.VIVENTIUM_LAN_DNS_TOKEN}}",
+            "        domains {",
+            f"            {lan_dns['zone']} playground.{relative} livekit.{relative}",
+            "        }",
+            f"        ip_source static {lan_ip}",
+            "        versions ipv4",
+            "        ttl 10m",
+            "    }",
+        ])
+    elif lan_surfaces:
+        lines.extend([
+            "    skip_install_trust",
+            "    pki {",
+            "        ca viventium-lan {",
+            '            name "Viventium local calls"',
+            "        }",
+            "    }",
+        ])
     lines.extend(
         [
             "}",
@@ -1344,7 +1483,110 @@ def render_caddyfile(
                 "",
             ]
         )
+    for site_address, upstream_port in lan_surfaces or []:
+        parsed = urllib.parse.urlparse(site_address)
+        address = ipaddress.ip_address(lan_ip if lan_dns else parsed.hostname or "")
+        if parsed.scheme != "https" or address.version != 4 or not any(
+            address in ipaddress.ip_network(network) for network in ("10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16")
+        ) or not parsed.port or parsed.username or parsed.password:
+            raise RuntimeError("LAN HTTPS requires an assigned private IPv4 address and explicit port")
+        if lan_dns and parsed.hostname not in {f"playground.{lan_dns['domain']}", f"livekit.{lan_dns['domain']}"}:
+            raise RuntimeError("LAN HTTPS hostname does not match its configured DNS domain")
+        lines.extend([
+            f"{site_address} {{",
+            f"    bind {address}",
+            "    tls {",
+            *([f"        dns {lan_dns['provider']} {{env.VIVENTIUM_LAN_DNS_TOKEN}}",
+               "        propagation_delay 30s"] if lan_dns else [
+                "        issuer internal {", "            ca viventium-lan", "        }",
+            ]),
+            "    }",
+            f"    reverse_proxy 127.0.0.1:{upstream_port}",
+            "}",
+            "",
+        ])
     return "\n".join(lines).rstrip() + "\n"
+
+
+def fresh_lan_dns_addresses(hostname: str) -> set[str]:
+    """Ask the network resolver directly when the OS still holds an older answer."""
+    dig = resolve_binary("dig")
+    if not dig:
+        return set()
+    addresses: set[str] = set()
+    fqdn = hostname.rstrip(".") + "."
+    for kind in ("A", "AAAA"):
+        result = run_checked(
+            [dig, "+time=1", "+tries=1", "+noall", "+comments", "+answer", fqdn, kind],
+            timeout_seconds=2,
+        )
+        output = result.stdout or ""
+        if result.returncode or not re.search(r"status: NOERROR,", output):
+            return set()
+        for line in output.splitlines():
+            if not line or line.startswith(";"):
+                continue
+            fields = line.split()
+            if len(fields) != 5 or fields[0].lower() != fqdn.lower() or fields[3] != kind:
+                return set()
+            addresses.add(str(ipaddress.ip_address(fields[4])))
+    return addresses
+
+
+def verify_lan_tls(lan: dict[str, Any], data_dir: Path) -> dict[str, Any]:
+    if lan.get("dns"):
+        context = ssl.create_default_context()
+        targets = [urllib.parse.urlparse(lan[key]) for key in ("playground_url", "livekit_url")]
+        # Let native ACME finish before our first DNS lookup can cache a missing A record.
+        issuance_deadline = time.monotonic() + 120
+        deadline = issuance_deadline
+        certificate_root = data_dir / "caddy" / "certificates"
+        while not all(any(certificate_root.glob(f"*/{target.hostname}/{target.hostname}.crt")) for target in targets):
+            if time.monotonic() >= deadline:
+                raise RuntimeError("LAN certificate issuance did not complete; public access is retained")
+            time.sleep(1)
+        deadline = time.monotonic() + 5
+        while True:
+            try:
+                for target in targets:
+                    try:
+                        addresses = {
+                            entry[4][0] for entry in socket.getaddrinfo(
+                                target.hostname, target.port, type=socket.SOCK_STREAM,
+                            )
+                        }
+                    except socket.gaierror:
+                        addresses = set()
+                    if addresses != {lan["ip"]}:
+                        try:
+                            fresh_addresses = fresh_lan_dns_addresses(target.hostname)
+                        except (OSError, ValueError, subprocess.SubprocessError):
+                            fresh_addresses = set()
+                        if fresh_addresses != {lan["ip"]}:
+                            raise RuntimeError("LAN DNS does not resolve exclusively to the detected host address")
+                    with socket.create_connection((lan["ip"], target.port), timeout=2) as connection:
+                        with context.wrap_socket(connection, server_hostname=target.hostname):
+                            pass
+                return {**lan, "tls_verified": True}
+            except (OSError, RuntimeError, ssl.SSLError) as exc:
+                if isinstance(exc, ssl.SSLCertVerificationError) and exc.verify_code == 10:
+                    deadline = max(deadline, issuance_deadline)
+                if time.monotonic() >= deadline:
+                    raise
+                time.sleep(1)
+    ca_file = data_dir / "caddy" / "pki" / "authorities" / "viventium-lan" / "root.crt"
+    deadline = time.monotonic() + 5
+    while not ca_file.is_file() and time.monotonic() < deadline:
+        time.sleep(0.05)
+    context = ssl.create_default_context(cafile=str(ca_file))
+    for key in ("playground_url", "livekit_url"):
+        target = urllib.parse.urlparse(lan[key])
+        with socket.create_connection((target.hostname, target.port), timeout=2) as connection:
+            # IP-address verification omits TLS SNI, matching a phone's bare-IP request.
+            with context.wrap_socket(connection, server_hostname=target.hostname):
+                pass
+    ca_der = ssl.PEM_cert_to_DER_cert(ca_file.read_text(encoding="ascii"))
+    return {**lan, "ca_file": str(ca_file), "ca_sha256": hashlib.sha256(ca_der).hexdigest(), "tls_verified": True}
 
 
 def start_caddy_process(
@@ -1353,12 +1595,17 @@ def start_caddy_process(
     config_path: Path,
     data_dir: Path,
     log_file: Path,
+    lan_dns: dict[str, str] | None = None,
 ) -> int:
     log_file.parent.mkdir(parents=True, exist_ok=True)
     env = os.environ.copy()
+    env.pop("VIVENTIUM_LAN_DNS_TOKEN", None)
+    if lan_dns:
+        env["VIVENTIUM_LAN_DNS_TOKEN"] = resolve_lan_dns_token()
     env["XDG_DATA_HOME"] = str(data_dir)
     env["HOME"] = str(data_dir)
-    with log_file.open("w", encoding="utf-8") as handle:
+    # Preserve the failing DNS/TLS attempt when recovery starts the public-only edge.
+    with log_file.open("a", encoding="utf-8") as handle:
         process = subprocess.Popen(
             [caddy_bin, "run", "--config", str(config_path), "--adapter", "caddyfile"],
             stdout=handle,
@@ -1783,6 +2030,73 @@ def start_netbird(args: argparse.Namespace, *, state_path: Path, log_dir: Path) 
     )
 
 
+def lan_listener_ports(args) -> tuple[int, int]:
+    ports = tuple(getattr(args, name, default) for name, default in (
+        ("lan_playground_https_port", 8443), ("lan_livekit_https_port", 8444)))
+    if any(type(port) is not int or not 1024 <= port <= 65535 for port in ports):
+        raise RuntimeError("LAN HTTPS listener ports must be integers between 1024 and 65535")
+    if ports[0] == ports[1]:
+        raise RuntimeError("LAN call listener ports must be distinct")
+    return ports
+
+
+def prepare_lan_sites(args, caddy_bin, lan_ip, state_path, public_hosts=()):
+    if args.playground_port <= 0 or args.livekit_port <= 0:
+        raise RuntimeError("LAN calls require the existing Playground and LiveKit surfaces")
+    if lan_ip not in assigned_local_ipv4s():
+        raise RuntimeError("LAN calls require an assigned private LAN address")
+    lan_dns = lan_dns_settings()
+    if lan_dns:
+        if {f"playground.{lan_dns['domain']}", f"livekit.{lan_dns['domain']}"} & set(public_hosts):
+            raise RuntimeError("LAN DNS names must not reuse public hostnames")
+        caddy_bin = ensure_lan_caddy(caddy_bin, lan_dns, state_path.parent, args.auto_install)
+    playground_port, livekit_port = lan_listener_ports(args)
+    lan = {
+        "ip": lan_ip,
+        "playground_url": f"https://{'playground.' + lan_dns['domain'] if lan_dns else lan_ip}:{playground_port}",
+        "livekit_url": f"wss://{'livekit.' + lan_dns['domain'] if lan_dns else lan_ip}:{livekit_port}",
+        "requires_client_trust": not bool(lan_dns),
+        **({"dns": lan_dns} if lan_dns else {}),
+    }
+    return caddy_bin, lan, [
+        (lan["playground_url"], args.playground_port),
+        (lan["livekit_url"].replace("wss://", "https://", 1), args.livekit_port),
+    ]
+
+
+def start_lan_only_edge(args, *, state_path, log_dir, caddy_bin, public_error):
+    lan_ip = detect_lan_ipv4()
+    public_hosts = {
+        urllib.parse.urlparse(getattr(args, key, "") or "").hostname
+        for key in ("public_client_origin", "public_api_origin", "public_playground_origin",
+                    "public_livekit_url", "public_glasshive_origin")
+    }
+    caddy_bin, lan, sites = prepare_lan_sites(args, caddy_bin, lan_ip, state_path, public_hosts)
+    data_dir = Path(args.caddy_data_dir).expanduser() if args.caddy_data_dir else state_path.parent / "caddy"
+    data_dir.mkdir(parents=True, exist_ok=True)
+    config_path = state_path.with_suffix(".Caddyfile")
+    config_path.write_text(render_caddyfile(
+        admin_port=0, surfaces=[], http_port=pick_free_port(),
+        lan_surfaces=sites, lan_dns=lan.get("dns"), lan_ip=lan_ip,
+    ), encoding="utf-8")
+    pid = start_caddy_process(
+        caddy_bin, config_path=config_path, data_dir=data_dir,
+        log_file=log_dir / "remote-call-public-caddy.log", lan_dns=lan.get("dns"),
+    )
+    try:
+        lan = verify_lan_tls(lan, data_dir)
+    except Exception:
+        stop_pid(pid)
+        raise
+    return build_state("public_https_edge", {}, livekit_node_ip=lan_ip, extras={
+        "lan_only": True, "public_error": str(public_error),
+        "lan": lan, "lan_ip": lan_ip,
+        "lan_playground_url": lan["playground_url"], "lan_livekit_url": lan["livekit_url"],
+        "lan_targets": [surface_target_url(args.playground_port), surface_target_url(args.livekit_port)],
+        "caddy": {"pid": pid, "config_path": str(config_path), "data_dir": str(data_dir)},
+    })
+
+
 def start_public_https_edge(
     args: argparse.Namespace,
     *,
@@ -1816,13 +2130,21 @@ def start_public_https_edge(
     lan_ip = str(upnp_state.get("local_ip") or "").strip() or detect_lan_ipv4()
     if not lan_ip:
         raise RuntimeError("Unable to determine the local LAN IPv4 address for router port forwarding")
-    public_ip = discover_public_ipv4(upnpc_bin or None)
-    if (
-        str(upnp_state.get("external_ip") or "").strip() == public_ip
-        and (int(getattr(args, "livekit_tcp_port", 0) or 0) > 0 or int(getattr(args, "livekit_udp_port", 0) or 0) > 0)
-    ):
-        validate_local_public_media_address(
-            str(args.livekit_node_ip or "").strip(), public_ip, lan_ip, livekit_port=int(args.livekit_port or 0),
+    lan_requested = getattr(args, "lan_https", False)
+    try:
+        public_ip = discover_public_ipv4(upnpc_bin or None)
+        if (
+            (lan_requested or str(upnp_state.get("external_ip") or "").strip() == public_ip)
+            and (int(getattr(args, "livekit_tcp_port", 0) or 0) > 0 or int(getattr(args, "livekit_udp_port", 0) or 0) > 0)
+        ):
+            validate_local_public_media_address(
+                str(args.livekit_node_ip or "").strip(), public_ip, lan_ip, livekit_port=int(args.livekit_port or 0),
+            )
+    except RuntimeError as exc:
+        if not lan_requested:
+            raise
+        return start_lan_only_edge(
+            args, state_path=state_path, log_dir=log_dir, caddy_bin=caddy_bin, public_error=exc,
         )
 
     surfaces: dict[str, dict[str, Any]] = {}
@@ -1913,7 +2235,7 @@ def start_public_https_edge(
             )
         site_targets[host] = upstream_port
 
-    admin_port = pick_caddy_admin_port()
+    admin_port = 0
     internal_http_port = pick_free_port()
     internal_https_port = pick_free_port()
     data_dir = Path(args.caddy_data_dir).expanduser() if args.caddy_data_dir else state_path.parent / "caddy"
@@ -1929,17 +2251,34 @@ def start_public_https_edge(
             public_playground_url=public_playground_url,
         )
     config_path = state_path.with_suffix(".Caddyfile")
-    config_path.write_text(
-        render_caddyfile(
-            admin_port=admin_port,
-            surfaces=caddy_sites,
-            tls_internal=False,
-            http_port=internal_http_port,
-            https_port=internal_https_port,
-            well_known_bodies=well_known_bodies,
-        ),
-        encoding="utf-8",
-    )
+    lan_surfaces: list[tuple[str, int]] = []
+    lan: dict[str, Any] = {}
+    lan_error = ""
+    lan_dns: dict[str, str] = {}
+    try:
+        if getattr(args, "lan_https", False):
+            caddy_bin, lan, lan_surfaces = prepare_lan_sites(args, caddy_bin, lan_ip, state_path, caddy_hosts)
+            lan_dns = lan.get("dns", {})
+    except (OSError, RuntimeError, ValueError, subprocess.SubprocessError) as exc:
+        lan_error = f"LAN HTTPS is unavailable: {exc}"
+        lan, lan_surfaces = {}, []
+
+    def write_caddy_config(selected_lan_surfaces):
+        config_path.write_text(render_caddyfile(
+            admin_port=admin_port, surfaces=caddy_sites, tls_internal=False,
+            http_port=internal_http_port, https_port=internal_https_port,
+            well_known_bodies=well_known_bodies, lan_surfaces=selected_lan_surfaces,
+            lan_dns=lan_dns if selected_lan_surfaces else None, lan_ip=lan_ip,
+        ), encoding="utf-8")
+
+    try:
+        write_caddy_config(lan_surfaces)
+    except (RuntimeError, ValueError) as exc:
+        if not lan_surfaces:
+            raise
+        lan_error = f"LAN HTTPS is unavailable: {exc}"
+        lan, lan_surfaces = {}, []
+        write_caddy_config([])
 
     port_mappings: list[dict[str, Any]] = []
     if upnpc_bin:
@@ -2046,12 +2385,28 @@ def start_public_https_edge(
     livekit_turn_cert_file = ""
     livekit_turn_key_file = ""
     try:
-        caddy_pid = start_caddy_process(
-            caddy_bin,
-            config_path=config_path,
-            data_dir=data_dir,
-            log_file=log_dir / "remote-call-public-caddy.log",
-        )
+        try:
+            caddy_pid = start_caddy_process(
+                caddy_bin,
+                config_path=config_path,
+                data_dir=data_dir,
+                log_file=log_dir / "remote-call-public-caddy.log",
+                lan_dns=lan_dns if lan_surfaces else None,
+            )
+        except Exception as exc:
+            if not lan_surfaces:
+                raise
+            if caddy_pid:
+                stop_pid(caddy_pid)
+            lan_error = f"LAN HTTPS is unavailable: {exc}"
+            lan, lan_surfaces = {}, []
+            write_caddy_config([])
+            caddy_pid = start_caddy_process(
+                caddy_bin,
+                config_path=config_path,
+                data_dir=data_dir,
+                log_file=log_dir / "remote-call-public-caddy.log",
+            )
         wait_for_public_caddy_hosts(
             caddy_hosts,
             https_port=internal_https_port,
@@ -2060,7 +2415,22 @@ def start_public_https_edge(
         cert_pair = resolve_public_edge_livekit_cert_pair(data_dir, livekit_host)
         if cert_pair:
             livekit_turn_cert_file, livekit_turn_key_file = cert_pair
-    except Exception:
+        if lan:
+            try:
+                lan = verify_lan_tls(lan, data_dir)
+            except (OSError, RuntimeError, ValueError, ssl.SSLError) as exc:
+                lan_error = f"LAN HTTPS is unavailable: {exc}"
+                stop_pid(caddy_pid)
+                lan, lan_surfaces = {}, []
+                write_caddy_config([])
+                caddy_pid = start_caddy_process(
+                    caddy_bin, config_path=config_path, data_dir=data_dir,
+                    log_file=log_dir / "remote-call-public-caddy.log",
+                )
+                wait_for_public_caddy_hosts(
+                    caddy_hosts, https_port=internal_https_port, timeout_seconds=args.timeout_seconds,
+                )
+    except Exception as exc:
         if caddy_pid:
             stop_pid(caddy_pid)
         for mapping in port_mappings:
@@ -2072,6 +2442,11 @@ def start_public_https_edge(
                 )
             except Exception:
                 continue
+        if lan_surfaces:
+            return start_lan_only_edge(
+                args, state_path=state_path, log_dir=log_dir,
+                caddy_bin=caddy_bin, public_error=exc,
+            )
         raise
     node_ip = str(args.livekit_node_ip or "").strip() or lan_ip
     state = build_state(
@@ -2080,6 +2455,8 @@ def start_public_https_edge(
         livekit_node_ip=node_ip,
         extras={
             "public_ip": public_ip,
+            **({"lan_error": lan_error} if lan_error else {}),
+            **({"lan": lan, "lan_ip": lan["ip"], "lan_playground_url": lan["playground_url"], "lan_livekit_url": lan["livekit_url"]} if lan else {}),
             "trust_note": manual_note,
             "router": {
                 "local_ip": lan_ip,
@@ -2088,7 +2465,10 @@ def start_public_https_edge(
             },
             "caddy": {
                 "pid": caddy_pid,
-                "admin_port": admin_port,
+                "binary": caddy_bin,
+                **({"build": json.loads(Path(caddy_bin).with_suffix(".json").read_text())}
+                   if Path(caddy_bin).with_suffix(".json").is_file() else {}),
+                "admin_port": 0,
                 "config_path": str(config_path),
                 "data_dir": str(data_dir),
                 "http_port": internal_http_port,
@@ -2226,6 +2606,8 @@ def cmd_start(args: argparse.Namespace) -> int:
             raise
 
         state = observe_public_edge_dns(state, force=True)
+        if state.get("lan_ip"):
+            state["lan_runtime_ready"] = False
         save_state(state_path, state)
         print(json.dumps(state))
         return 0
@@ -2234,6 +2616,22 @@ def cmd_start(args: argparse.Namespace) -> int:
             fcntl.flock(lock_handle.fileno(), fcntl.LOCK_UN)
         finally:
             lock_handle.close()
+
+
+def cmd_lan_ready(args: argparse.Namespace) -> int:
+    state_path = Path(args.state_file)
+    lock_handle = with_lock(state_path.with_suffix(".lock"))
+    try:
+        state = load_state(state_path)
+        if (not state or state.get("lan_ip") != args.lan_ip
+                or args.lan_ip not in assigned_local_ipv4s() or not state_is_healthy(state)):
+            raise RuntimeError("LAN identity changed before runtime readiness")
+        state["lan_runtime_ready"] = True
+        save_state(state_path, state)
+        return 0
+    finally:
+        fcntl.flock(lock_handle.fileno(), fcntl.LOCK_UN)
+        lock_handle.close()
 
 
 def cmd_stop(args: argparse.Namespace) -> int:
@@ -2325,6 +2723,8 @@ def main() -> int:
         return cmd_stop(args)
     if args.command == "status":
         return cmd_status(args)
+    if args.command == "lan-ready":
+        return cmd_lan_ready(args)
     if args.command == "refresh-mappings":
         return cmd_refresh_mappings(args)
     raise RuntimeError(f"Unsupported command: {args.command}")

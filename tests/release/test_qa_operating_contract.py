@@ -361,11 +361,34 @@ def _load_release_test_owners() -> dict[str, dict[str, str]]:
 
 def _is_git_ignored(path: Path) -> bool:
     result = subprocess.run(
-        ["git", "check-ignore", "--quiet", _relative(path)],
+        ["git", "check-ignore", "--no-index", "--quiet", _relative(path)],
         cwd=ROOT,
         check=False,
     )
     return result.returncode == 0
+
+
+@pytest.mark.parametrize("tracked", [False, True])
+def test_qa_life_ignore_boundary_does_not_depend_on_index(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, tracked: bool,
+) -> None:
+    ignore_rules = (ROOT / ".gitignore").read_bytes()
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    subprocess.run(["git", "init", "-q", str(repo)], check=True)
+    (repo / ".gitignore").write_bytes(ignore_rules)
+    canonical = repo / "qa/life/cases.yaml"
+    private = repo / "qa" / "life" / "private-fixture.md"
+    for path in (canonical, private):
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("Synthetic fixture.\n", encoding="utf-8")
+    if tracked:
+        subprocess.run(
+            ["git", "-C", str(repo), "add", "--force", "qa/life"], check=True,
+        )
+    monkeypatch.setitem(globals(), "ROOT", repo)
+    assert not _is_git_ignored(canonical)
+    assert _is_git_ignored(private)
 
 
 def _is_git_tracked(path: Path) -> bool:
@@ -1585,8 +1608,8 @@ def test_requirement_source_coverage_ledger_is_private_safe_and_resolves() -> No
         "markers_in_untracked_current_files": 11,
         "existing_case_catalog_date_resets": 0,
         "current_marker_as_of": date(2026, 9, 25),
-        "current_recent_marker_total": 264,
-        "post_initial_audit_recent_marker_delta": 178,
+        "current_recent_marker_total": 267,
+        "post_initial_audit_recent_marker_delta": 181,
         "current_stale_triage_marker_total": 168,
         "current_total_stale_marker_delta_after_initial_audit": 4,
         "method": "read_only_current_marker_comparison_against_head",
@@ -1977,7 +2000,7 @@ def test_current_alignment_regressions_stay_reconciled() -> None:
         "57_GlassHive_User_Control_Plane_and_Persistent_Workspaces.md",
         "58_Anti_Sycophancy_and_Truth_Seeking.md",
         "SCHED-023",
-        "PW-050",
+        "PWB-050",
         "PERI-014",
     ]:
         assert term in map_text
