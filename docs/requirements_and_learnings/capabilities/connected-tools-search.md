@@ -35,11 +35,14 @@ connections or waive owner authorization and capability parity in xPerfect.
   no prompt-keyword intent router is allowed.
 
 **TOOLS-MEDIA-001:** Local image and video generation is opt-in. Viventium registers its separate
-image and video tools through the existing native MCP configuration for delegated host workers.
-The module owns installed model choices and writes results to the authorized worker workspace.
-xPerfect owns execution, and the initiating channel uses the existing attachment delivery path.
-The setting does not change the execution mode or add tools to the coordinator. See the
-[local media module](../../../viventium_v0_4/MCPs/local-media/README.md) for setup.
+image and video tools through the existing native MCP configuration for authorized background host
+workers, through both delegated launches and native handoffs. Project the same connection at their
+shared bootstrap boundary using the typed worker role and host execution scope. Speaking Main,
+result-only callbacks, disabled configurations and Docker workers retain their capability boundaries.
+The module owns installed model choices and writes new results to the authorized worker output area.
+Protected source references are not attached. xPerfect owns execution, and the initiating channel
+uses the existing owner-scoped attachment delivery path. The setting does not change execution mode.
+See the [local media module](../../../viventium_v0_4/MCPs/local-media/README.md) for setup.
 
 ## Owners and QA
 

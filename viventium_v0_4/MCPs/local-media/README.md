@@ -52,9 +52,10 @@ VIVENTIUM_LOCAL_MEDIA_CONFIG=/absolute/path/to/media.toml bin/viventium start
 ```
 
 For a saved setting, set `integrations.local_media.config` in Viventium's configuration. A blank
-setting keeps it off. Restart to change the registration. The switch adds the tools to new
-delegated host workers in Parallel mode. It does not change execution mode or grant local access
-to Docker workers. Leave the current worker and delivery settings in place.
+setting keeps it off. Restart to change the registration. The switch adds the same tools to
+authorized background host workers through both delegated launches and native handoffs. Speaking
+Main and result-only callbacks do not gain these action tools. It does not change execution mode
+or grant local access to Docker workers. Leave the current worker and delivery settings in place.
 
 Ask for the file in chat. For example: “Make me a quick square draft of a red teapot by a rainy
 window and send the PNG here.” A finished file uses the normal chat attachment path. Telegram

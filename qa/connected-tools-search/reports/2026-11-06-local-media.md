@@ -40,6 +40,42 @@ renderer was a synthetic test executable; this is not a new model-quality, hardw
 parity run. Earlier real-model observations above retain their date and scope. Raw source traces,
 credentials, model files and generated media remain private.
 
+## Installed native handoff repair, 2026-11-09
+
+QA: critical-path. This section supplements the historical evidence above; it does not renew
+unrelated provider or hardware acceptance.
+
+A normal Telegram request reached a native handoff worker. The worker received the existing opt-in
+image/video MCP connection, generated a reference-based PNG, and published it through the existing
+attachment path. A second request generated a new PNG and a short H.264/AAC MP4 from that PNG.
+An undeclared response deadline interrupted publication after both renders completed. After the
+shared timeout owner was repaired, a normal follow-up resumed the same native session and
+published the two original files without generating them again. Native artifact hashes, stored
+attachments and the sent Telegram outbox agreed. Both files were visible in Telegram; the same
+MP4 bytes played to the end in Chrome without a decoder error.
+
+Affected deterministic checks: 45 media-bootstrap/context checks, 22 invocation/recovery checks,
+25 deadline/polling/admission checks, 9 result-classification checks, 7 current-file-authority
+checks and 7 retained Native-presentation authority checks passed. Causal checks
+failed on the prior implementation. Explicit response budgets, Stop, owner boundaries and
+protected source-reference restrictions remain. One selected legacy batching assertion failed
+against the existing local compiled support package: its per-row reads differ from the current
+source/test expectation. The assertion was not changed; a baseline test rerun was not performed.
+Full fork suites were not run for this repair.
+
+Current-result file authority was then verified through a natural archive request: the worker
+returned a ZIP containing only the two unchanged outputs, Main received the exact three current
+file grants, and three available attachments arrived once each with correct links and no false
+unavailable wording. The initial recovered caption had incorrectly marked available files
+unavailable; its attachments were delivered. A final direct saved-file request then carried both
+original hashes in Main's signed scope, resolved both links, and delivered exactly two available
+attachments in Telegram without new rendering. The existing serial subscription fallback
+completed the same accepted request after primary-provider quota preflight. Native state, stored
+message and channel receipts agreed; both files and video playback were visible on the real
+surface. A parallel foreground response also waited during physical host resource pressure; this
+run does not certify fast foreground latency under that load.
+Raw requests, generated media, operational identifiers and source hashes remain private.
+
 ## Traceability
 
 The [local-media cases](../cases.yaml) and [local media package](../../../viventium_v0_4/MCPs/local-media/README.md) own worker delivery, local scope, cancellation and opt-in configuration.

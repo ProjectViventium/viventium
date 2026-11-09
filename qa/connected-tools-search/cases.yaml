@@ -19,9 +19,9 @@ journeys:
     evidence: [visible final answer, model-visible tool contract, auth state, tool result, fallback result, cleanup proof]
   - id: local-media-worker-delivery
     requirements: [TOOLS-MEDIA-001]
-    userAction: Enable provisioned media locally. Ask in Parallel mode for a quick draft, a reference edit, and a short clip.
+    userAction: Enable provisioned media locally. Through ordinary delegated work and a native handoff, ask for a quick draft, a local reference edit, and a short clip.
     surfaces: [Web, Telegram, native MCP]
-    expectedResult: Workers choose from installed model capabilities, and one copy of each requested file arrives through the existing delivery path.
-    degradedAndRecovery: Blank settings and isolated workers receive no local registration. Missing model files are not offered. A confirmed rejected video can fall back to a document; an unknown send is not retried as a different message.
+    expectedResult: Each authorized host worker receives the configured native media tools, chooses from installed model capabilities, and delivers one copy of each requested new output through the existing path. Protected source references are not attached.
+    degradedAndRecovery: Blank settings, speaking Main, result-only callbacks and isolated workers receive no local registration. Missing model files are not offered. Current verified result-file grants reach Main before synthesis even when its action tools are disabled. No absent response budget becomes an automatic deadline. A confirmed rejected video can fall back to a document; an unknown send is not retried as a different message.
     persistenceAndCleanup: Reload the conversation and retrieve the same file. Keep model downloads and test output outside source control.
     evidence: [compiled opt-in, native worker tool call, artifact hash, stored attachment, browser download, Telegram receipt]
