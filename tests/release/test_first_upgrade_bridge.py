@@ -1210,7 +1210,9 @@ def test_native_stack_mongo_only_bridge_is_internal_and_identity_bound() -> None
     stop_function = source.split("stop_mongo_bridge() {", 1)[1].split(
         "\n}", 1
     )[0]
-    start_case = source.split('case "${1:-}" in', 1)[1].split("  start)", 1)[0]
+    cases = source.split('case "${1:-}" in', 1)[1]
+    start_case = cases.split("  start-mongo-only)", 1)[1].split("    ;;", 1)[0]
+    stop_case = cases.split("  stop-mongo-only)", 1)[1].split("    ;;", 1)[0]
 
     assert "VIVENTIUM_FIRST_UPGRADE_BRIDGE_INTERNAL" in start_function
     assert 'port_listening "$MONGO_PORT"' in start_function
@@ -1219,8 +1221,8 @@ def test_native_stack_mongo_only_bridge_is_internal_and_identity_bound() -> None
     assert "VIVENTIUM_FIRST_UPGRADE_BRIDGE_INTERNAL" in stop_function
     assert '"$actual_pid" != "$expected_pid"' in stop_function
     assert 'mongo_bridge_pid_matches_expected "$expected_pid"' in stop_function
-    assert "start-mongo-only)" in start_case
-    assert "stop-mongo-only)" in start_case
+    assert start_case.strip() == "start_mongo_bridge"
+    assert stop_case.strip() == 'stop_mongo_bridge "${2:-}"'
     assert "start_meili" not in start_case
     assert "start_livekit" not in start_case
 

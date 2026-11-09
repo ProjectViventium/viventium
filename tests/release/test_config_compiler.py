@@ -10119,6 +10119,7 @@ def test_main_agent_mcp_servers_have_reviewed_glasshive_projection_policy() -> N
             "integrations": {
                 "health": {"enabled": True},
                 "scheduling_cortex": {"enabled": True},
+                "chrome_devtools": {"enabled": True},
             }
         },
         {"lc_api_port": 3180},
@@ -10137,19 +10138,33 @@ def test_main_agent_mcp_servers_have_reviewed_glasshive_projection_policy() -> N
 
     assert declared_servers
     for server_name in declared_servers:
-        policy = librechat["mcpServers"][server_name].get("viventiumGlassHive")
+        server = compiled_servers[server_name]
+        policy = server.get("viventiumGlassHive")
         assert policy, f"{server_name} is declared by the main Agent but has no GlassHive policy"
         assert policy["version"] == 1
         assert policy["permitsAutonomousWorker"] is True
-        assert policy["defaultToolAccess"] == "none"
-        assert policy["toolPolicies"]
         declared_tool_names = {
             tool_id.rsplit("_mcp_", 1)[0]
             for tool_id in agents["mainAgent"]["tools"]
             if isinstance(tool_id, str) and tool_id.endswith(f"_mcp_{server_name}")
         }
-        assert declared_tool_names <= set(policy["toolPolicies"])
-        assert compiled_servers[server_name]["viventiumGlassHive"] == policy
+        if not policy.get("toolPolicies"):
+            assert policy["reexportNativeTools"] is True
+            assert policy["nativeServerIds"] == [server_name]
+            assert server["viventiumAccess"] == {"audience": "local_owner"}
+            assert policy["hostAllowed"] is True
+            assert policy["sandboxAllowed"] is False
+            assert policy["defaultToolAccess"] == "content_read"
+            assert policy["contentReadPolicy"] == "require_broker_grant"
+            assert declared_tool_names
+        else:
+            assert policy["defaultToolAccess"] == "none"
+            assert policy["toolPolicies"]
+            assert declared_tool_names <= set(policy["toolPolicies"])
+        if server_name in librechat["mcpServers"]:
+            assert policy == librechat["mcpServers"][server_name]["viventiumGlassHive"]
+        else:
+            assert policy["reexportNativeTools"] is True
 
     conversation_header = "{{LIBRECHAT_BODY_CONVERSATIONID}}"
     assert compiled_servers["scheduling-cortex"]["headers"][

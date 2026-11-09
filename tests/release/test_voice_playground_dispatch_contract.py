@@ -604,8 +604,14 @@ def test_voice_route_preflight_blocks_connection_until_the_exact_saved_route_is_
     assert "hasAuthoritativeRoute" in content
     assert "Preparing your configured voice route..." in content
     assert "Viventium did not switch providers automatically." in content
-    start = content[content.index("const startSession = useCallback(async () => {"):]
-    assert start.index("await fetchCallConnectionDetailsForStart(") < start.index("await session.start(")
+    start = content.split("const startSession = useCallback(async () => {", 1)[1].split("\n  }, [", 1)[0]
+    direct = start.split("if (!shouldDeferMicrophoneUntilConnected) {", 1)[1].split("\n      }", 1)[0]
+    assert "await session.start({ signal: attempt.signal });" in direct
+    assert "return;" in direct
+    deferred = start.split("const microphoneEnabled =", 1)[1]
+    admission = deferred.split("if (expectedCallSessionId) {", 1)[1].split("\n      }", 1)[0]
+    assert "await fetchCallConnectionDetailsForStart(tokenSource, tokenOptions ?? {}, retry);" in admission
+    assert deferred.index("await fetchCallConnectionDetailsForStart(") < deferred.index("await session.start(")
     assert "callSessionIsEndingForTokenSource(expectedCallSessionId)" in start
 
 
@@ -628,10 +634,20 @@ def test_explicit_dispatch_call_connects_room_before_enabling_microphone() -> No
     assert "enabled: false," in content
     assert "setIsMicrophoneStartupPending(true);" in content
     assert "const MICROPHONE_START_TIMEOUT_MS = 15_000;" in content
-    assert "const permissionState = await queryMicrophonePermissionState();" in content
+    start = content.split("const startSession = useCallback(async () => {", 1)[1].split("\n  }, [", 1)[0]
+    deferred = start.split("const microphoneEnabled =", 1)[1]
+    capture = deferred.split("if (microphoneEnabled) {", 1)[1].split("setIsMicrophoneStartupPending(false);", 1)[0]
+    assert "permissionState: await queryMicrophonePermissionState()," in capture
+    assert "capturedTracks = await session.room.localParticipant.createTracks({" in capture
+    assert "disable: stopCapturedTracks," in capture
+    assert deferred.index("createTracks(") < deferred.index("await fetchCallConnectionDetailsForStart(")
+    assert deferred.index("await fetchCallConnectionDetailsForStart(") < deferred.index("await session.start(")
     assert "await enableCallMicrophone({" in content
-    assert "permissionState," in content
-    assert "enable: () => session.room.localParticipant.setMicrophoneEnabled(true)," in content
+    publication = deferred.split("permissionState: 'granted',", 1)[1]
+    assert "await stopCapturedTracks();" in publication
+    assert "const publication = await session.room.localParticipant.setMicrophoneEnabled(true);" in publication
+    assert publication.index("await stopCapturedTracks();") < publication.index("setMicrophoneEnabled(true)")
+    assert deferred.index("await session.start(") < deferred.index("permissionState: 'granted',")
     assert "return session.room.localParticipant.setMicrophoneEnabled(false);" in content
     assert "current !== attempt && current && !current.signal.aborted" in content
     assert "grantedTimeoutMs: MICROPHONE_START_TIMEOUT_MS," in content
@@ -642,7 +658,9 @@ def test_explicit_dispatch_call_connects_room_before_enabling_microphone() -> No
     assert "Turning on mic..." in content
     assert "await session.end().catch((disconnectError) => {" in content
     assert "useConnectionRecovery({" in content
-    assert "start: startSession," in content
+    recovery = content.split("const recoverCall = useCallback(async () => {", 1)[1].split("}, [startCall]);", 1)[0]
+    assert "if (!(await startCall())) throw new Error('Viventium call recovery failed.');" in recovery
+    assert "start: recoverCall," in content
     assert "await startSession();" in content
 
 
@@ -2363,7 +2381,17 @@ def test_connection_details_route_uses_public_livekit_only_for_configured_public
     assert "function requestOrigin(req: Request): string | null {" in content
     assert "const forwardedProto = (req.headers.get('x-forwarded-proto') || '').trim();" in content
     assert "function resolveBrowserLiveKitUrl(req: Request): string | undefined {" in content
-    assert "const publicPlaygroundOrigin = normalizeOrigin(VIVENTIUM_PUBLIC_PLAYGROUND_URL);" in content
+    browser_route = content.split("function resolveBrowserLiveKitUrl(req: Request): string | undefined {", 1)[1].split("function parseCallSessionIdFromAgentMetadata", 1)[0]
+    assert "let publicPlayground = VIVENTIUM_PUBLIC_PLAYGROUND_URL;" in browser_route
+    assert "let publicLivekitUrl = VIVENTIUM_PUBLIC_LIVEKIT_URL;" in browser_route
+    assert "publicPlayground = state.public_playground_url;" in browser_route
+    assert "publicLivekitUrl = state.public_livekit_url;" in browser_route
+    assert "const publicPlaygroundOrigin = normalizeOrigin(publicPlayground);" in browser_route
+    assert "if (publicPlaygroundOrigin && publicLivekitUrl && requestOrigin(req) === publicPlaygroundOrigin) {" in browser_route
+    assert (
+        "if(stateFile&&incomingOrigin===normalizeOrigin(VIVENTIUM_PUBLIC_PLAYGROUND_URL))returnundefined;"
+        in re.sub(r"\s+", "", browser_route)
+    )
     assert "requestOrigin(req) === publicPlaygroundOrigin" in content
     assert "return publicLivekitUrl;" in content
     assert "return NEXT_PUBLIC_LIVEKIT_URL ?? LIVEKIT_URL;" in content

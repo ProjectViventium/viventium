@@ -368,7 +368,8 @@ def test_feelings_runtime_publishes_concurrency_privacy_and_telemetry_contract()
     )[0]
     assert (
         "return pinViventiumDynamicTailLast({\n"
-        "    instructions: registeredPrompt,\n"
+        "    instructions: [mainInstructions, registeredPrompt].filter(Boolean).join('\\n\\n'),\n"
+        "    memory: memoryContext,\n"
         "    capsule: feelingCapsule,\n"
         "  });"
     ) in follow_up_prompt

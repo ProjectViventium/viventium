@@ -132,8 +132,6 @@ GLASSHIVE_ENTERPRISE_WORKER_PROVIDER_ENV_KEYS = {
     "PORTKEY_PROVIDER",
     "PORTKEY_VIRTUAL_KEY",
     "WPR_CLAUDE_CODE_USE_API_KEY",
-    "WPR_OPENAI_API_KEY",
-    "WPR_OPENAI_BASE_URL",
     "XAI_API_KEY",
 }
 # Direct deployment credentials belong to the service, not the native-worker

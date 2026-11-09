@@ -51,7 +51,8 @@ def test_main_exposes_one_atomic_delegation_and_one_canonical_control_plane() ->
         "active_work_action",
     }
     assert main["tool_options"] == {
-        "worker_delegate_once_mcp_glasshive-workers-projects": {"defer_loading": False}
+        "list_pages_mcp_chrome-devtools": {"defer_loading": True},
+        "worker_delegate_once_mcp_glasshive-workers-projects": {"defer_loading": False},
     }
 
 

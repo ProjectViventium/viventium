@@ -107,6 +107,11 @@ Source publication requires the existing CI checks on the exact reviewed head. T
 inference probes remain blocked and are not counted as passes. Source review and deterministic
 checks do not establish installed callback or audible acceptance.
 
+The final CI follow-up corrects the Direct deployment credential projection allowlist and renews
+short manual-dispatch leases before expiry. Eight stale source-contract cases are aligned with
+the reviewed compiler, context, media and voice owners. Only the twelve existing failed cases are
+rerun; the 5,782 passing cases retain their existing evidence for unchanged source.
+
 The [runtime owner](../../../docs/requirements_and_learnings/capabilities/runtime-install-release.md)
 and [runtime cases](../cases.yaml) retain the open installed-candidate, login/upgrade/restart,
 live delivery and physical-call gates. No latency or endurance result is claimed here.
