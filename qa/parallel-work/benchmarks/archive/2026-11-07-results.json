@@ -1,0 +1,801 @@
+{
+  "schema_version": 1,
+  "report_date": "2026-11-07",
+  "scope": "Read-only local subscription benchmarks and source assessment; no runtime switch or paid API inference.",
+  "qa_mode": "blast-radius",
+  "sample_total": 72,
+  "transport_completed": 70,
+  "context_buckets": {
+    "cognition": "About 60k application-instruction characters; full prepared identity, personality, memory and Feelings.",
+    "full": "About 200k application-instruction plus selected conversation characters; same prepared cognition, unchanged original selected history. Additional benchmark instruction and native wrappers are counted by provider token usage."
+  },
+  "methods": {
+    "natural": "First reply text delta for a short natural check-in; tools disabled. Complete model output is measured separately.",
+    "decision": "Compact reply + boolean handoff decision under a benchmark instruction; first delta may be JSON punctuation. Completion is decision readiness, not executed work or durable admission.",
+    "structured_haiku": "Native Claude Code --json-schema with thinking off; native StructuredOutput tool, two turns. No custom JSON repair.",
+    "limits": "Small sequential samples, shared machine/network, mixed native cache hits. Original context preserved; different provider tokenizers and native wrappers mean token counts differ. No p95 or broad fastest-model claim."
+  },
+  "variants": {
+    "openai-native": {
+      "provider": "OpenAI",
+      "route": "Native Codex app-server",
+      "model": "gpt-6.1-sol",
+      "setting": "Low",
+      "funding": "ChatGPT subscription quota",
+      "version": "0.167.0-alpha.3.2"
+    },
+    "openai-legacy-direct": {
+      "provider": "OpenAI",
+      "route": "Saved Connected Accounts, legacy Direct diagnostic",
+      "model": "gpt-6.1-sol",
+      "setting": "Low",
+      "funding": "Existing experimental subscription credential; not official SIWC",
+      "status": "Experimental only; not the supported production recommendation"
+    },
+    "anthropic-opus": {
+      "provider": "Anthropic",
+      "route": "Native Claude Code",
+      "model": "claude-opus-5-5",
+      "setting": "Low",
+      "funding": "Claude plan quota",
+      "version": "2.1.285"
+    },
+    "anthropic-sonnet": {
+      "provider": "Anthropic",
+      "route": "Native Claude Code",
+      "model": "claude-sonnet-5-5",
+      "setting": "Low",
+      "funding": "Claude plan quota",
+      "version": "2.1.285"
+    },
+    "anthropic-haiku-default": {
+      "provider": "Anthropic",
+      "route": "Native Claude Code, installed haiku alias",
+      "model": "claude-haiku-4-5-20251001",
+      "setting": "Low requested, unsupported by this model; thinking remained active",
+      "funding": "Claude plan quota"
+    },
+    "anthropic-haiku-off": {
+      "provider": "Anthropic",
+      "route": "Native Claude Code",
+      "model": "claude-haiku-4-5-20251001",
+      "setting": "MAX_THINKING_TOKENS=0, process only",
+      "funding": "Claude plan quota"
+    },
+    "anthropic-haiku-structured": {
+      "provider": "Anthropic",
+      "route": "Native Claude Code structured output",
+      "model": "claude-haiku-4-5-20251001",
+      "setting": "Thinking off + native --json-schema",
+      "funding": "Claude plan quota"
+    }
+  },
+  "groups": [
+    {
+      "variant": "anthropic-haiku-default",
+      "case": "full_handoff",
+      "attempts": 3,
+      "completed": 3,
+      "first_text": {
+        "n": 3,
+        "median_s": 28.45,
+        "min_s": 23.625,
+        "max_s": 37.349
+      },
+      "completion": {
+        "n": 3,
+        "median_s": 28.714,
+        "min_s": 23.892,
+        "max_s": 37.614
+      },
+      "strict_json": 0,
+      "expected_flag": 0,
+      "no_machinery": 0,
+      "failure_types": {}
+    },
+    {
+      "variant": "anthropic-haiku-default",
+      "case": "full_reply",
+      "attempts": 3,
+      "completed": 3,
+      "first_text": {
+        "n": 3,
+        "median_s": 24.07,
+        "min_s": 20.043,
+        "max_s": 30.645
+      },
+      "completion": {
+        "n": 3,
+        "median_s": 24.316,
+        "min_s": 20.241,
+        "max_s": 30.692
+      },
+      "strict_json": 0,
+      "expected_flag": 0,
+      "no_machinery": 0,
+      "failure_types": {}
+    },
+    {
+      "variant": "anthropic-haiku-off",
+      "case": "full_handoff",
+      "attempts": 3,
+      "completed": 3,
+      "first_text": {
+        "n": 3,
+        "median_s": 1.204,
+        "min_s": 1.137,
+        "max_s": 1.724
+      },
+      "completion": {
+        "n": 3,
+        "median_s": 4.237,
+        "min_s": 4.135,
+        "max_s": 7.342
+      },
+      "strict_json": 0,
+      "expected_flag": 0,
+      "no_machinery": 0,
+      "failure_types": {}
+    },
+    {
+      "variant": "anthropic-haiku-off",
+      "case": "full_natural",
+      "attempts": 3,
+      "completed": 3,
+      "first_text": {
+        "n": 3,
+        "median_s": 1.964,
+        "min_s": 1.727,
+        "max_s": 2.135
+      },
+      "completion": {
+        "n": 3,
+        "median_s": 2.513,
+        "min_s": 2.401,
+        "max_s": 2.647
+      },
+      "strict_json": null,
+      "expected_flag": null,
+      "no_machinery": null,
+      "failure_types": {}
+    },
+    {
+      "variant": "anthropic-haiku-structured",
+      "case": "full_handoff",
+      "attempts": 3,
+      "completed": 3,
+      "first_text": {
+        "n": 1,
+        "median_s": 2.109,
+        "min_s": 2.109,
+        "max_s": 2.109
+      },
+      "completion": {
+        "n": 3,
+        "median_s": 3.037,
+        "min_s": 2.518,
+        "max_s": 6.874
+      },
+      "strict_json": 3,
+      "expected_flag": 3,
+      "no_machinery": 2,
+      "failure_types": {}
+    },
+    {
+      "variant": "anthropic-opus",
+      "case": "cognition_handoff",
+      "attempts": 3,
+      "completed": 3,
+      "first_text": {
+        "n": 3,
+        "median_s": 2.312,
+        "min_s": 2.269,
+        "max_s": 2.335
+      },
+      "completion": {
+        "n": 3,
+        "median_s": 3.894,
+        "min_s": 3.647,
+        "max_s": 3.969
+      },
+      "strict_json": 3,
+      "expected_flag": 3,
+      "no_machinery": 3,
+      "failure_types": {}
+    },
+    {
+      "variant": "anthropic-opus",
+      "case": "cognition_reply",
+      "attempts": 3,
+      "completed": 3,
+      "first_text": {
+        "n": 3,
+        "median_s": 3.23,
+        "min_s": 1.848,
+        "max_s": 3.93
+      },
+      "completion": {
+        "n": 3,
+        "median_s": 3.999,
+        "min_s": 3.223,
+        "max_s": 4.798
+      },
+      "strict_json": 3,
+      "expected_flag": 3,
+      "no_machinery": 3,
+      "failure_types": {}
+    },
+    {
+      "variant": "anthropic-opus",
+      "case": "full_handoff",
+      "attempts": 3,
+      "completed": 3,
+      "first_text": {
+        "n": 3,
+        "median_s": 2.316,
+        "min_s": 2.29,
+        "max_s": 2.475
+      },
+      "completion": {
+        "n": 3,
+        "median_s": 3.72,
+        "min_s": 3.465,
+        "max_s": 3.729
+      },
+      "strict_json": 3,
+      "expected_flag": 3,
+      "no_machinery": 3,
+      "failure_types": {}
+    },
+    {
+      "variant": "anthropic-opus",
+      "case": "full_natural",
+      "attempts": 3,
+      "completed": 3,
+      "first_text": {
+        "n": 3,
+        "median_s": 2.549,
+        "min_s": 2.387,
+        "max_s": 2.792
+      },
+      "completion": {
+        "n": 3,
+        "median_s": 3.348,
+        "min_s": 3.127,
+        "max_s": 3.47
+      },
+      "strict_json": null,
+      "expected_flag": null,
+      "no_machinery": null,
+      "failure_types": {}
+    },
+    {
+      "variant": "anthropic-opus",
+      "case": "full_reply",
+      "attempts": 3,
+      "completed": 3,
+      "first_text": {
+        "n": 3,
+        "median_s": 2.596,
+        "min_s": 2.535,
+        "max_s": 3.873
+      },
+      "completion": {
+        "n": 3,
+        "median_s": 3.657,
+        "min_s": 3.543,
+        "max_s": 4.581
+      },
+      "strict_json": 3,
+      "expected_flag": 3,
+      "no_machinery": 3,
+      "failure_types": {}
+    },
+    {
+      "variant": "anthropic-sonnet",
+      "case": "full_handoff",
+      "attempts": 3,
+      "completed": 3,
+      "first_text": {
+        "n": 3,
+        "median_s": 1.406,
+        "min_s": 1.402,
+        "max_s": 1.601
+      },
+      "completion": {
+        "n": 3,
+        "median_s": 2.775,
+        "min_s": 2.535,
+        "max_s": 2.815
+      },
+      "strict_json": 3,
+      "expected_flag": 3,
+      "no_machinery": 3,
+      "failure_types": {}
+    },
+    {
+      "variant": "anthropic-sonnet",
+      "case": "full_natural",
+      "attempts": 3,
+      "completed": 3,
+      "first_text": {
+        "n": 3,
+        "median_s": 2.29,
+        "min_s": 1.607,
+        "max_s": 3.43
+      },
+      "completion": {
+        "n": 3,
+        "median_s": 3.173,
+        "min_s": 2.66,
+        "max_s": 3.741
+      },
+      "strict_json": null,
+      "expected_flag": null,
+      "no_machinery": null,
+      "failure_types": {}
+    },
+    {
+      "variant": "anthropic-sonnet",
+      "case": "full_reply",
+      "attempts": 3,
+      "completed": 3,
+      "first_text": {
+        "n": 3,
+        "median_s": 2.577,
+        "min_s": 1.75,
+        "max_s": 3.108
+      },
+      "completion": {
+        "n": 3,
+        "median_s": 3.557,
+        "min_s": 2.716,
+        "max_s": 4.077
+      },
+      "strict_json": 3,
+      "expected_flag": 3,
+      "no_machinery": 3,
+      "failure_types": {}
+    },
+    {
+      "variant": "openai-legacy-direct",
+      "case": "cognition_handoff",
+      "attempts": 3,
+      "completed": 3,
+      "first_text": {
+        "n": 3,
+        "median_s": 1.601,
+        "min_s": 1.523,
+        "max_s": 1.741
+      },
+      "completion": {
+        "n": 3,
+        "median_s": 3.273,
+        "min_s": 2.713,
+        "max_s": 3.363
+      },
+      "strict_json": 3,
+      "expected_flag": 3,
+      "no_machinery": 3,
+      "failure_types": {}
+    },
+    {
+      "variant": "openai-legacy-direct",
+      "case": "cognition_reply",
+      "attempts": 3,
+      "completed": 3,
+      "first_text": {
+        "n": 3,
+        "median_s": 2.155,
+        "min_s": 1.158,
+        "max_s": 4.181
+      },
+      "completion": {
+        "n": 3,
+        "median_s": 3.146,
+        "min_s": 1.959,
+        "max_s": 5.17
+      },
+      "strict_json": 3,
+      "expected_flag": 3,
+      "no_machinery": 3,
+      "failure_types": {}
+    },
+    {
+      "variant": "openai-legacy-direct",
+      "case": "full_handoff",
+      "attempts": 3,
+      "completed": 3,
+      "first_text": {
+        "n": 3,
+        "median_s": 2.494,
+        "min_s": 1.693,
+        "max_s": 2.874
+      },
+      "completion": {
+        "n": 3,
+        "median_s": 3.86,
+        "min_s": 2.733,
+        "max_s": 3.965
+      },
+      "strict_json": 3,
+      "expected_flag": 3,
+      "no_machinery": 3,
+      "failure_types": {}
+    },
+    {
+      "variant": "openai-legacy-direct",
+      "case": "full_natural",
+      "attempts": 6,
+      "completed": 4,
+      "first_text": {
+        "n": 4,
+        "median_s": 1.899,
+        "min_s": 1.732,
+        "max_s": 2.061
+      },
+      "completion": {
+        "n": 4,
+        "median_s": 2.563,
+        "min_s": 2.339,
+        "max_s": 2.755
+      },
+      "strict_json": null,
+      "expected_flag": null,
+      "no_machinery": null,
+      "failure_types": {
+        "Error": 2
+      }
+    },
+    {
+      "variant": "openai-legacy-direct",
+      "case": "full_reply",
+      "attempts": 3,
+      "completed": 3,
+      "first_text": {
+        "n": 3,
+        "median_s": 1.685,
+        "min_s": 1.578,
+        "max_s": 3.142
+      },
+      "completion": {
+        "n": 3,
+        "median_s": 3.864,
+        "min_s": 2.464,
+        "max_s": 3.877
+      },
+      "strict_json": 3,
+      "expected_flag": 3,
+      "no_machinery": 3,
+      "failure_types": {}
+    },
+    {
+      "variant": "openai-native",
+      "case": "cognition_handoff",
+      "attempts": 3,
+      "completed": 3,
+      "first_text": {
+        "n": 3,
+        "median_s": 7.372,
+        "min_s": 2.428,
+        "max_s": 9.003
+      },
+      "completion": {
+        "n": 3,
+        "median_s": 7.753,
+        "min_s": 3.299,
+        "max_s": 10.228
+      },
+      "strict_json": 3,
+      "expected_flag": 3,
+      "no_machinery": 3,
+      "failure_types": {}
+    },
+    {
+      "variant": "openai-native",
+      "case": "cognition_reply",
+      "attempts": 3,
+      "completed": 3,
+      "first_text": {
+        "n": 3,
+        "median_s": 8.099,
+        "min_s": 5.912,
+        "max_s": 8.69
+      },
+      "completion": {
+        "n": 3,
+        "median_s": 8.366,
+        "min_s": 6.852,
+        "max_s": 9.416
+      },
+      "strict_json": 3,
+      "expected_flag": 3,
+      "no_machinery": 3,
+      "failure_types": {}
+    },
+    {
+      "variant": "openai-native",
+      "case": "full_handoff",
+      "attempts": 3,
+      "completed": 3,
+      "first_text": {
+        "n": 3,
+        "median_s": 2.921,
+        "min_s": 2.776,
+        "max_s": 3.365
+      },
+      "completion": {
+        "n": 3,
+        "median_s": 4.258,
+        "min_s": 3.947,
+        "max_s": 4.469
+      },
+      "strict_json": 3,
+      "expected_flag": 3,
+      "no_machinery": 3,
+      "failure_types": {}
+    },
+    {
+      "variant": "openai-native",
+      "case": "full_natural",
+      "attempts": 3,
+      "completed": 3,
+      "first_text": {
+        "n": 3,
+        "median_s": 3.131,
+        "min_s": 2.486,
+        "max_s": 3.248
+      },
+      "completion": {
+        "n": 3,
+        "median_s": 3.711,
+        "min_s": 2.985,
+        "max_s": 4.035
+      },
+      "strict_json": null,
+      "expected_flag": null,
+      "no_machinery": null,
+      "failure_types": {}
+    },
+    {
+      "variant": "openai-native",
+      "case": "full_reply",
+      "attempts": 3,
+      "completed": 3,
+      "first_text": {
+        "n": 3,
+        "median_s": 4.446,
+        "min_s": 3.259,
+        "max_s": 9.758
+      },
+      "completion": {
+        "n": 3,
+        "median_s": 4.761,
+        "min_s": 3.897,
+        "max_s": 10.491
+      },
+      "strict_json": 3,
+      "expected_flag": 3,
+      "no_machinery": 3,
+      "failure_types": {}
+    }
+  ],
+  "not_run": [
+    {
+      "route": "Official Sign in with ChatGPT Direct plan usage",
+      "reason": "Needs new app registration, explicit token-use consent and integration; existing saved Codex OAuth is not that grant."
+    },
+    {
+      "route": "OpenAI included API credits",
+      "reason": "Claimed organization, balance and paid-fallback boundary not established. No API-key inference was made."
+    },
+    {
+      "route": "Anthropic included API credits",
+      "reason": "Linked Console organization, balance and paid-fallback boundary not established. No API-key inference was made."
+    },
+    {
+      "route": "Pure Direct Claude with reused claude.ai token",
+      "reason": "No supported general direct-token route established. Use the unmodified native Claude Code / Agent SDK path."
+    },
+    {
+      "route": "Haiku 5.5 native",
+      "reason": "Official docs require Claude Code 2.1.293 or later; installed 2.1.285 was left unchanged."
+    },
+    {
+      "route": "New target Telegram / audible call / parallel execution / restart acceptance",
+      "reason": "New background-coordinator target not implemented in this documentation and benchmark scope. Decision replays do not prove channel delivery."
+    }
+  ],
+  "quality_notes": [
+    "Codex, Opus and legacy Direct each passed 12/12 strict decision probes across the two context sizes. Sonnet passed 6/6 full-frame decision probes. These are narrow format/flag checks, not broad intelligence or executed-work acceptance.",
+    "Prepared context was present; models sometimes referred to historical call details and produced long handoff replies. Presence is not proof of perfect relevance, compact acknowledgments or complete retrieval.",
+    "Haiku 4.5 plain JSON failed strict parsing in all default-thinking and thinking-off decision samples. Native structured output produced a correct boolean in all three trials but one exposed internal workers and two asked for extra permission. It is not a quality-parity recommendation.",
+    "The legacy Direct natural-speech batch had two connection failures. Reinitializing the same configured client yielded three successful rechecks; failures remain included. No root cause or runtime reliability repair is claimed.",
+    "Native CLI cost fields are token-price estimates, not evidence of API billing. Authentication was plan sign-in; API credential environment was excluded from native children."
+  ],
+  "historical": [
+    {
+      "date": "2026-10-21",
+      "label": "Raw API first text; short arithmetic",
+      "context": "Minimal text, no full cognition",
+      "n_per_model": 1,
+      "sol_s": 1.09,
+      "opus_s": 0.92,
+      "grok_s": 1.04,
+      "funding": "API inference; source funding not classified as included credits",
+      "limit": "Provider floor, not product parity."
+    },
+    {
+      "date": "2026-10-21",
+      "label": "Prepared context reply",
+      "context": "About 33k characters, prepared memory/Feelings/roster",
+      "n_per_model": 1,
+      "sol_s": 1.45,
+      "opus_s": 2.04,
+      "grok_s": 3.9,
+      "limit": "Raw API first text; not an audible call."
+    },
+    {
+      "date": "2026-10-21",
+      "label": "Prepared context handoff arguments ready",
+      "context": "About 33k characters",
+      "n_per_model": 1,
+      "sol_s": 3.75,
+      "opus_s": 4.14,
+      "grok_s": 4.92,
+      "limit": "Mock tool arguments, no actual work execution."
+    },
+    {
+      "date": "2026-10-21",
+      "label": "Large historical thread reply",
+      "context": "About 224k characters; older history, cloud tools disabled",
+      "n_per_model": 1,
+      "sol_s": 1.84,
+      "opus_s": 4.85,
+      "grok_s": 12.42,
+      "limit": "Sol correct. Opus copied stale response format; Grok copied stale JSON format. Not equal current-context parity."
+    }
+  ],
+  "historical_voice": {
+    "date": "2026-10-21",
+    "samples": 1,
+    "clock": "Final transcript ready to first active audio; recognition and preparation excluded",
+    "seconds": 18.77,
+    "stages_s": {
+      "model_reply": 6.132,
+      "handoff_and_admission": 1.381,
+      "next_reply_to_tts_accept": 8.761,
+      "tts_accept_to_audio": 0.394,
+      "other_local": 2.102
+    },
+    "status": "Historical regression evidence, not current acceptance."
+  },
+  "prototype_voice": {
+    "date": "2026-11-07",
+    "scope": "Separate minimal voice prototype; synthetic browser voice; no full Viventium cognition. Supporting historical telemetry only, not rerun here.",
+    "groups": [
+      {
+        "profile": "Local model + local speech",
+        "n": 69,
+        "median_s": 2.282,
+        "min_s": 1.507,
+        "max_s": 3.377
+      },
+      {
+        "profile": "Direct cloud model + cloud speech",
+        "n": 11,
+        "median_s": 1.861,
+        "min_s": 1.695,
+        "max_s": 3.533
+      },
+      {
+        "profile": "Local model + cloud speech",
+        "n": 3,
+        "median_s": 0.947,
+        "min_s": 0.819,
+        "max_s": 1.112
+      }
+    ],
+    "selection": "Noninterrupted assistant turns with a recorded e2e_latency, including replies and acknowledgments; not a normal-reply-only distribution. Excludes interrupted turns and missing metrics.",
+    "gaps": "Local unnecessary handoff, premature claims and result confusion reported; some plain host work queues. Cloud prototype used a separate API funding route, not subscription inference. Not evidence for the target full-context system."
+  },
+  "prior_subscription": {
+    "date": "2026-11-07",
+    "attempts": 42,
+    "completed": 32,
+    "unsupported_none": 10,
+    "model": "gpt-6.1-sol",
+    "setting": "Low for completions; none rejected",
+    "limits": "Arithmetic only, not full cognition. Native wrappers add context. Service-tier acceleration not established. Separate historical study; not part of the 72 new attempts.",
+    "short_standard": [
+      {
+        "route": "saved_connected_account_direct",
+        "n": 6,
+        "median_first_text_s": 1.301,
+        "range_s": [
+          1.086,
+          1.407
+        ]
+      },
+      {
+        "route": "native_app_server",
+        "n": 6,
+        "median_first_text_s": 2.414,
+        "range_s": [
+          2.19,
+          3.78
+        ]
+      }
+    ],
+    "synthetic_large": [
+      {
+        "route": "saved_connected_account_direct",
+        "n": 1,
+        "context_bucket": "About 69k synthetic characters; no real cognition",
+        "first_text_s": 1.431
+      },
+      {
+        "route": "native_app_server",
+        "n": 1,
+        "context_bucket": "About 69k synthetic characters; no real cognition",
+        "first_text_s": 2.009
+      }
+    ],
+    "tiers": [
+      {
+        "route": "saved_connected_account_direct",
+        "requested_tier": "default",
+        "n": 3,
+        "median_first_text_s": 1.291,
+        "effective_tier": [
+          "default"
+        ]
+      },
+      {
+        "route": "native_app_server",
+        "requested_tier": "default",
+        "n": 3,
+        "median_first_text_s": 2.349,
+        "effective_tier": [
+          "not echoed"
+        ]
+      },
+      {
+        "route": "saved_connected_account_direct",
+        "requested_tier": "fast",
+        "n": 3,
+        "median_first_text_s": 1.198,
+        "effective_tier": [
+          "default"
+        ]
+      },
+      {
+        "route": "native_app_server",
+        "requested_tier": "fast",
+        "n": 3,
+        "median_first_text_s": 2.286,
+        "effective_tier": [
+          "not echoed"
+        ]
+      },
+      {
+        "route": "saved_connected_account_direct",
+        "requested_tier": "ultrafast",
+        "n": 3,
+        "median_first_text_s": 1.192,
+        "effective_tier": [
+          "default"
+        ]
+      },
+      {
+        "route": "native_app_server",
+        "requested_tier": "ultrafast",
+        "n": 3,
+        "median_first_text_s": 2.543,
+        "effective_tier": [
+          "not echoed"
+        ]
+      }
+    ]
+  }
+}

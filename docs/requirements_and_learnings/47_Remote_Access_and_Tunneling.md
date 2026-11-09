@@ -99,6 +99,46 @@ Public-account safety:
 
 ## Supported Modes
 
+### Travel-call candidate review (2026-11-05)
+
+For an operator requiring free, open-source phone software and a self-hostable network, the
+provisional choice is the existing optional NetBird adapter. It remains off unless configured.
+This is a selection for implementation and real-device evaluation, not a claim that the current
+adapter has passed travel-call acceptance. NetBird's hosted service is a separate, explicit
+operator choice; self-hosting requires a reachable public server. A travelling laptop behind
+arbitrary NAT cannot itself guarantee that prerequisite.
+
+The bounded search covered private meshes, VPNs, routed overlays, reverse tunnels, public TURN,
+and alternate media transports. GPT Pro and an independent Claude review challenged the shortlist.
+No search establishes that every existing or future project was found.
+
+| Candidate or family | Evidence and decision |
+| --- | --- |
+| NetBird | Open-source [iOS client](https://github.com/netbirdio/ios-client) and self-hostable server. [Documented relay fallback](https://docs.netbird.io/about-netbird/ports-and-firewalls) uses WebSocket over TCP/443 when UDP is blocked. Preferred provisional adapter; actual cellular and restricted-network audio remain untested. |
+| Nostr VPN / FIPS | [Open-source phone and desktop clients](https://github.com/mmalmi/nostr-vpn), with WebSocket transit in the current implementation. Credible alternative, not excluded for lacking a relay. Its [FIPS dependency](https://github.com/jmcorgan/fips) labels the protocol unstable; its [security policy](https://github.com/jmcorgan/fips/blob/master/SECURITY.md) says no independent cryptographic audit has occurred. This is about FIPS, not the separate paid-exit feature. Public transit capacity and real call reliability remain unproved. |
+| Cylonix | [Open-source clients and controller](https://github.com/cylonix/cylonix). Retained challenger; a documented end-to-end blocked-UDP path and a complete free self-host deployment were not established in this review. Absence of documentation is not proof of impossibility. |
+| Mycelium | [Open-source mobile client](https://github.com/threefoldtech/mycelium_flutter) and IPv6 overlay. Requires IPv6 media/ingress validation; the reviewed default peers did not establish a TCP/443 travel fallback. |
+| Tailscale / Headscale / AwgScale | Existing Tailscale adapter stays available, but the official Apple GUI is [not fully open source](https://tailscale.com/opensource). Headscale does not change that client licence. A free, normally distributed open-source Apple replacement was not established for AwgScale. |
+| WireGuard / Innernet / Nebula / Tinc / ZeroTier / EasyTier | Reviewed native-client availability, licence and relay constraints. None established the complete free iPhone + Mac + self-hostable + blocked-UDP path better than the shortlist. A free core alone does not prove a free open-source phone application. |
+| OpenZiti / TrustTunnel / Pangolin | Relevant self-hosted alternatives, but require public infrastructure and validation of the phone, Mac and media paths. No proved drop-in improvement over the existing adapter. |
+| Yggdrasil and other routed overlays | Considered; normal iPhone distribution and production media-path evidence remain gates. |
+| frp / rathole / wstunnel / chisel / bore / boringproxy / inlets | Transport building blocks, not a complete phone-to-Mac deployment. Require reachable infrastructure and additional media integration. |
+| Cloudflare / zrok / public TURN services | A working HTTPS/WSS page does not prove LiveKit ICE media. A public TURN server must be reachable from both phone and SFU. Managed relay terms and bandwidth limits are separate from self-hostability. |
+| iroh / libp2p / Hyperswarm / WebTransport | New protocol integration is substantially broader than reusing ordinary IP transport for LiveKit; not selected for this repair. |
+
+The minimal intended travel path keeps LiveKit and the existing browser client. The mesh carries
+ordinary IP traffic; it does not replace the voice protocol or Main/worker architecture. Before
+enabling it, the adapter must publish trusted mesh HTTPS/WSS names, advertise both the current
+LAN and mesh media addresses, and expose readiness separately for each route. The present
+`netbird_selfhosted_mesh` internal-CA/single-address behavior does not yet meet that contract.
+
+Acceptance requires audible two-way calls on cellular and an outbound-UDP-blocked network,
+simultaneous LAN access, disconnect/reconnect, restart, and refusal of an unavailable route.
+TLS interception or a captive portal that blocks the relay remains an explicit network limit.
+Installing clients, enrolling devices, adding DNS names, or creating a hosted account is a
+separate setup action; none is implied by choosing the adapter. For self-hosting, use the
+[current infrastructure requirements](https://docs.netbird.io/selfhosted/selfhosted-quickstart).
+
 ### 1. `disabled`
 
 Use this by default.
@@ -324,6 +364,12 @@ Router lease note:
   interface addresses and an explicitly separate managed LiveKit API endpoint retain their
   existing behavior. This guard does not infer the address of a hosted media service.
 
+- The existing background port-mapping renewer keeps its configured healthy interval. A failed
+  renewal retries after 60 seconds until recovery, then returns to the configured interval.
+  A temporary router/network outage must not add a full normal interval to every recovery
+  attempt. It still checks the saved public address, local target and owned mappings; no new
+  port, permission, DNS update or per-call network probe is implied.
+
 Public DNS observation:
 
 - Startup, mapping refresh and status reuse the existing public-edge state to record an IPv4 DNS
@@ -367,6 +413,96 @@ Hostname guidance:
   - `https://playground.app.example.com`
   - `wss://livekit.app.example.com`
   - `https://glasshive.app.example.com`
+
+LAN IP call entrypoints:
+
+- For no-client-setup LAN calls, configure the existing edge with an owned dedicated DNS subdomain:
+
+  ```yaml
+  runtime:
+    network:
+      remote_call_mode: public_https_edge
+      lan_https: true
+      lan_domain: lan.example.com
+      lan_dns:
+        zone: example.com
+        provider: godaddy
+        api_token: keychain://viventium-lan-dns
+  ```
+
+  `godaddy` uses a key/secret pair separated by `:`; `cloudflare` uses a DNS API token. Use the
+  provider's narrowest available credential. A `keychain://` reference is required. The compiler
+  keeps that reference; only the edge helper resolves it and injects the value into the Caddy child.
+  Other services do not receive it. Caddyfiles contain an environment placeholder, and Caddy config
+  persistence is disabled for this mode, so the resolved credential is not written to its autosave. The existing dependency-install switch permits adding pinned native DNS and dynamic-DNS
+  modules to a separate cached Caddy binary; the installed base binary is preserved. Its actual
+  version, module pins and SHA-256 are recorded, checked before reuse and included in edge status.
+- Native Caddy publishes only `playground.<lan_domain>` and `livekit.<lan_domain>` A records in the
+  specified zone, pointing to the detected private IPv4. Reject names that collide with configured
+  public surfaces. Before initial enablement, inspect the zone and reserve both A names and their
+  two `_acme-challenge` names; existing records or challenge CNAMEs must not be adopted silently.
+  The pinned GoDaddy provider replaces/deletes the whole type/name RRSet, while preserving other
+  DNS names. Its classic key is account-wide; isolation in Caddy does not narrow that credential
+  permission. Prefer a per-zone credential where the provider supports one.
+  It handles certificate DNS validation and renewal itself. DNS-01 uses a native 30-second
+  propagation delay before checking newly written challenge records, with propagation checking
+  enabled. This is certificate setup/renewal work, not a delay added to each call.
+  These dedicated names must be reserved for this installation. Public call records
+  and public router mappings are unchanged. No client certificate, DNS setting, extra app or relay
+  is needed. Server internet/DNS access is needed for initial issuance and renewal.
+- Before publishing either call URL, startup checks both names resolve exclusively to the current
+  LAN address and verifies their certificates with the normal public trust store and hostname.
+  An issuance wait is bounded to 120 seconds before the first DNS lookup; valid cached certificates use
+  a five-second verification window. An expired-certificate handshake receives the bounded
+  120-second native renewal window instead; repeated expiry errors do not extend that deadline. A failed LAN check stops that Caddy process and restarts its
+  public-only configuration, removing LAN listeners and DNS automation. A DNS, credential, module
+  or issuance failure withholds the LAN URLs and preserves public access;
+  it does not silently switch a configured trusted domain to an internal certificate. The edge log
+  retains the failed attempt when public-only recovery starts, so the causal DNS/TLS error remains
+  available for diagnosis.
+- Product target: detect the current LAN address and let another device use the same application
+  and LiveKit through a trusted LAN endpoint, without client certificate/profile file handling.
+  Prefer existing native routing, DNS and TLS mechanisms. A configured trusted hostname resolving
+  to the host's private address is still direct LAN access. Do not replace browser trust with a
+  publicly shared development certificate key, insecure-origin flags or a second call pipeline.
+- The current raw-IP local-CA option below requires explicit client setup and does not meet that
+  no-client-setup acceptance target and is not exported as an automatic Telegram call button.
+  Operators can inspect its URLs in private edge state after an explicit manual trust setup.
+  Keep its implementation evidence separate from a proven phone
+  call. A host-only SDK call may select loopback media even when it uses the LAN HTTPS/WSS URLs.
+- `runtime.network.lan_https: true` adds two optional LAN-only sites to the existing public Caddy
+  edge: one for the Playground and one for LiveKit signaling. Voice must be enabled. The default
+  is off. Public URLs, router mappings, saved models and same-computer loopback access are preserved.
+- Normal startup detects the current private IPv4. Each site binds that address and a stable,
+  configurable unprivileged port: `runtime.network.lan_playground_https_port` (default `8443`)
+  and `runtime.network.lan_livekit_https_port` (default `8444`). The two ports must differ.
+  Restart and network reconciliation must not choose new ports. A listener conflict is a startup
+  error; changing the saved address silently is not recovery. Neither LAN port is added to UPnP
+  or public forwarding. The same-IP/different-port layout is a narrow LAN exception to public
+  mode's unique-hostname rule. Existing installations can save their prior ports in canonical
+  configuration to keep bookmarked links.
+- In raw-IP local-CA mode, the helper records LAN URLs plus the dedicated `viventium-lan` CA
+  certificate path and SHA-256 fingerprint in its existing private state. The issuer key stays on the host. Startup uses Caddy's
+  `skip_install_trust`; installing/trusting the CA on a client requires explicit operator approval.
+  Transfer the public CA certificate through a trusted device-transfer path, verify its fingerprint,
+  and use the device's normal profile/trust controls. Do not bypass a certificate warning.
+- A trusted CA can certify HTTPS identities; its private key must remain protected. Remove its
+  installed profile/trust on a client when LAN calling is no longer needed. Do not publish local
+  certificates, keys, fingerprints or machine addresses in the repository.
+- For the trusted-domain path, runtime exports `VIVENTIUM_LAN_PLAYGROUND_URL` and
+  `VIVENTIUM_LAN_LIVEKIT_URL`. Only requests from
+  the configured LAN Playground origin receive the LAN WSS URL. Public and loopback callers retain
+  their existing routes. If the host's address changes, rebuild the LAN sites through normal startup;
+  stale addresses must not remain available as call buttons.
+- In raw-IP local-CA mode, startup verifies both LAN certificates against the dedicated CA,
+  including the IP address in each certificate, before exporting either URL. Optional LAN address, listener or certificate
+  failures leave the public edge and its existing router mappings available. Public-edge Caddy
+  runs with its admin API disabled; the separate mesh mode keeps its loopback admin API for its
+  existing `caddy trust` workflow.
+- These sites establish secure page and signaling access. Actual LAN media must be accepted using
+  the selected ICE candidate and received audio. A container's internal address, loopback candidate
+  or public-only advertisement is not evidence of direct LAN audio. Use native LiveKit mechanisms;
+  do not add another relay or claim that a URL rewrite fixes media reachability.
 
 Same-network note:
 

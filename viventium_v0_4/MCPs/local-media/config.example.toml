@@ -1,0 +1,19 @@
+# Copy to your private settings. Point each enabled model at installed local files.
+# Only enabled models with their prerequisites present are advertised.
+render_timeout_seconds = 1800
+ffmpeg = "/absolute/path/to/ffmpeg"
+
+[models."qwen-image-2.1"]
+enabled = false
+runtime = "/absolute/path/to/mflux-venv/bin"
+weights = "/absolute/path/to/qwen-image-2-1-mflux-q8"
+
+[models."z-image-turbo"]
+enabled = false
+runtime = "/absolute/path/to/mflux-venv/bin"
+weights = "/absolute/path/to/z-image-turbo-mflux-q8"
+
+[models."minimax-h3"]
+enabled = false
+runtime = "/absolute/path/to/stable-diffusion-cpp/bin"
+weights = "/absolute/path/to/minimax-h3-gguf"

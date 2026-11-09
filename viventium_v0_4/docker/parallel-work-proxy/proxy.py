@@ -25,6 +25,8 @@ ROUTES = {
     },
     "broker": {
         "/mcp": "/api/viventium/glasshive/capabilities/mcp",
+        "/v1/native/context/": "/v1/native/context/",
+        "/v1/native/schedules/": "/v1/native/schedules/",
     },
 }
 FORWARDED_REQUEST_HEADERS = {
@@ -33,6 +35,8 @@ FORWARDED_REQUEST_HEADERS = {
     "anthropic-version": "Anthropic-Version",
     "authorization": "Authorization",
     "content-type": "Content-Type",
+    "mcp-protocol-version": "MCP-Protocol-Version",
+    "mcp-session-id": "Mcp-Session-Id",
 }
 FORWARDED_RESPONSE_HEADERS = {
     "content-type",
@@ -82,7 +86,12 @@ def _configuration() -> tuple[str, str, int]:
     role = str(os.environ.get("VIVENTIUM_PARALLEL_PROXY_ROLE") or "").strip().lower()
     if role not in ROUTES:
         raise RuntimeError("VIVENTIUM_PARALLEL_PROXY_ROLE must be provider or broker")
-    parsed = urlsplit(str(os.environ.get("VIVENTIUM_PARALLEL_PROXY_UPSTREAM") or "").strip())
+    host, port = _upstream("VIVENTIUM_PARALLEL_PROXY_UPSTREAM")
+    return role, host, port
+
+
+def _upstream(setting: str) -> tuple[str, int]:
+    parsed = urlsplit(str(os.environ.get(setting) or "").strip())
     if (
         parsed.scheme != "http"
         or parsed.hostname != "host.docker.internal"
@@ -93,8 +102,8 @@ def _configuration() -> tuple[str, str, int]:
         or parsed.path not in {"", "/"}
         or parsed.port is None
     ):
-        raise RuntimeError("VIVENTIUM_PARALLEL_PROXY_UPSTREAM must be an exact local Core URL")
-    return role, parsed.hostname, parsed.port
+        raise RuntimeError(f"{setting} must be an exact local upstream URL")
+    return parsed.hostname, parsed.port
 
 
 class ProxyHandler(BaseHTTPRequestHandler):
@@ -143,13 +152,25 @@ class ProxyHandler(BaseHTTPRequestHandler):
         if len(body) != content_length:
             self._empty(400)
             return
+        native_route = role == "broker" and upstream_path in {
+            "/v1/native/context/", "/v1/native/schedules/",
+        }
+        if native_route:
+            try:
+                upstream_host, upstream_port = _upstream("GLASSHIVE_NATIVE_RUNTIME_UPSTREAM")
+            except (RuntimeError, ValueError):
+                self._empty(503)
+                return
+        headers = forward_headers(self.headers, content_length=content_length)
+        if native_route:
+            headers["Host"] = f"127.0.0.1:{upstream_port}"
         connection = http.client.HTTPConnection(upstream_host, upstream_port, timeout=720)
         try:
             connection.request(
                 "POST",
                 upstream_path,
                 body=body,
-                headers=forward_headers(self.headers, content_length=content_length),
+                headers=headers,
             )
             upstream = connection.getresponse()
             self.send_response(upstream.status)

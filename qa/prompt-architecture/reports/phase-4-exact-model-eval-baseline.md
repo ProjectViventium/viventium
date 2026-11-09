@@ -1,29 +1,31 @@
-<!-- qa-evidence-exempt: Historical evidence snapshot retained verbatim; retroactive v2 fields would invent evidence that was not captured during the run. -->
+<!-- qa-evidence-exempt: Controlled prompt-registry completion artifact; full-view user-grade acceptance belongs in the owning feature run report. -->
+
 # Prompt Registry Slice: Exact-Model Completion Baseline
 
-<!-- qa-evidence-exempt: Machine-generated blocked exact-model baseline; no real user-path QA execution occurred. -->
-
-Generated: 2026-08-03T15:58:47.271Z
+Generated: 2026-11-05
 
 ## Status
 
 - Status: blocked
 - Live run requested: no
-- Blocked reason: live_eval_disabled_set_VIVENTIUM_RUN_EXACT_MODEL_EVALS_or_pass_--run-live
-- Prompt families: 19
-- Prompt cases: 139
-- Agent hash: ed61775c0d925dba
-- Runner hash: d171fa0f40eb67fa
-- Runnable cases for this runner: 139
-- Selected case limit: all (139)
+- Blocked reason: semantic_judge_required_but_disabled
+- Prompt families: 26
+- Prompt cases: 285
+- Frozen continuity bank: continuity-recall-v1.1.0 / 987dfffc5021ba69 / 12 cases
+- Runnable cases for this runner: 285
+- Selected case limit: all (285)
 - Post-case observation window ms: 20000
 - Async follow-up grace after cortex completion ms: 30000
 - Result count: 0
 - Completed: 0
 - Failed/blocked: 0
+- Deterministic fixture contracts passed: 0
+- Deterministic fixture contracts failed: 0
 - Retried main turns: 0
 - Total main-turn attempts: 0
-- Behavioral grading: disabled
+- Visible-reply latency ms (mean/median/p95/max): not observed
+- Full-case latency ms (mean/median/p95/max): not observed
+- Optional LLM semantic grading: disabled
 - Semantic judged: 0
 - Semantic passed: 0
 - Semantic failed: 0
@@ -38,7 +40,6 @@ Generated: 2026-08-03T15:58:47.271Z
 
 ## Runtime Gate
 
-- API base hash: 49e73564e9d328ef
 - Runtime identity: pass
 - Runtime reasons: none
 - App title: Viventium
@@ -46,16 +47,15 @@ Generated: 2026-08-03T15:58:47.271Z
 - Prompt debug-local gate: disabled
 - QA auth mode: not attempted
 
-## Source Hashes
+## Source Lineage
 
-- Agent source hash: b1bc9bc084ffbfb3
-- LibreChat source hash: 9a50a97ded91fb68
-- Compiled LibreChat hash: missing
+- Exact agent, runtime, API-base and source fingerprints remain private.
+- Compiled LibreChat identity was not available for this blocked run.
 
 ## Results
 
-| Case | Family | Surface | Status | Attempts | Semantic | Duration ms | Response hash | Error |
-| --- | --- | --- | --- | ---: | --- | ---: | --- | --- |
+| Case | Family | Surface | Status | Attempts | Semantic | Visible ms | Duration ms | Response hash | Error |
+| --- | --- | --- | --- | ---: | --- | ---: | ---: | --- | --- |
 
 ## Quality Gate Failures
 
@@ -65,7 +65,8 @@ Generated: 2026-08-03T15:58:47.271Z
 ## Notes
 
 - Raw eval JSON and response previews are private-only.
-- Public output stores hashes, counts, statuses, and sanitized errors only.
+- Public output stores sanitized aggregate counts, statuses and errors only. Private context and execution fingerprints remain outside the repository.
+- Case status always includes local deterministic fixture contracts (required/forbidden response fragments, declared-tool provenance, native-substitution bans, and fixture restoration when configured). Optional LLM semantic grading is an additional fluency/meaning signal, not the deterministic pass gate.
 - When semantic judging is enabled, the runner uses a structured JSON judge and validates the returned shape locally. The `openai-direct` judge route uses provider-enforced JSON Schema; local account routes use prompt-constrained JSON plus local schema validation.
 - Duplicate response hashes are informational for intentional silence/suppression cases and resolved runtime holds, but fail the run when unrelated non-silent final answers collapse into the same visible answer.
 - Runtime-hold responses fail the run when cortex/tool work remains only pending after the observation window and no delayed or insight evidence arrived.

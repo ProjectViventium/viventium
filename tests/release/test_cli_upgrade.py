@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import errno
+import importlib.util
+import signal
 import hashlib
 import json
 import os
@@ -52,6 +54,10 @@ def copy_cli_fixture(repo_root: Path) -> None:
     shutil.copy2(
         REPO_ROOT / "scripts" / "viventium" / "helper_runtime_intent.py",
         repo_root / "scripts" / "viventium" / "helper_runtime_intent.py",
+    )
+    shutil.copy2(
+        REPO_ROOT / "scripts/viventium/native_runtime.py",
+        repo_root / "scripts/viventium/native_runtime.py",
     )
     write_executable(
         repo_root / "scripts" / "viventium" / "viventium_health_runtime.py",
@@ -510,121 +516,101 @@ def test_stack_owner_state_writer_is_atomic_durable_and_private() -> None:
     assert "0o600" in function_def
 
 
+@pytest.mark.parametrize("prior_state", ["live", "dead", "tampered", "stale-start", "successor"])
 def test_stack_owner_transition_restores_prior_live_owner_without_clobbering_successor(
-    tmp_path: Path,
+    live_runtime_owner, prior_state,
 ) -> None:
-    cli_source = (REPO_ROOT / "bin" / "viventium").read_text(encoding="utf-8")
-    capture_function = extract_shell_function(
-        cli_source, "capture_stack_owner_state_for_transition"
-    )
-    reconcile_function = extract_shell_function(
-        cli_source, "reconcile_stack_owner_state_on_exit"
-    )
-    owner_file = tmp_path / "stack-owner.json"
-    owner_file.write_text(
-        json.dumps({"ownerPid": "111", "marker": "prior"}) + "\n",
-        encoding="utf-8",
-    )
+    import select
 
-    completed = subprocess.run(
-        [
-            "bash",
-            "-c",
-            f"""
-set -euo pipefail
-PYTHON_BIN={json.dumps(sys.executable)}
-OWNER_FILE={json.dumps(str(owner_file))}
-stack_owner_state_file() {{ printf '%s\\n' "$OWNER_FILE"; }}
-runtime_owner_process_matches_state() {{
-  [[ "$1" == "$STACK_OWNER_PREVIOUS_STATE_FILE" ]]
-}}
-json_string_field() {{
-  {json.dumps(sys.executable)} - "$1" "$2" <<'PY'
-import json
-import sys
-print(json.load(open(sys.argv[1], encoding="utf-8")).get(sys.argv[2], ""))
-PY
-}}
-{capture_function}
-{reconcile_function}
+    owner = live_runtime_owner
+    # A prior checkout need not implement the new transition action. Its code is
+    # not the authority for validating the current CLI's private snapshot.
+    (owner["repo"] / "scripts/viventium/parallel_work_release_gate.py").write_text("raise SystemExit(77)\n")
+    body = _owner_transition_shell_prelude(owner["support"], owner["state"]) + """
+acquire_cli_lock start
 capture_stack_owner_state_for_transition
-printf '{{"ownerPid":"%s","marker":"transient"}}\\n' "$$" >"$OWNER_FILE"
+[[ -f "$STACK_OWNER_PREVIOUS_STATE_FILE" ]] || exit 31
+runtime_owner_transition_snapshot_matches_state "$STACK_OWNER_PREVIOUS_STATE_FILE"
+if "$PYTHON_BIN" "$REPO_ROOT/scripts/viventium/parallel_work_release_gate.py" --validate-owner-state "$STACK_OWNER_PREVIOUS_STATE_FILE"; then exit 91; fi
+printf '{"ownerPid":"%s","marker":"transient"}\\n' "$$" > "$OWNER_FILE"
+cleanup_cli_lock
+printf '%s\\n' "$STACK_OWNER_PREVIOUS_STATE_FILE"
+read -r resume
 STACK_OWNER_TRANSITION_ACTIVE=1
 reconcile_stack_owner_state_on_exit
-{json.dumps(sys.executable)} - "$OWNER_FILE" <<'PY'
-import json
-import sys
-payload = json.load(open(sys.argv[1], encoding="utf-8"))
-assert payload == {{"ownerPid": "111", "marker": "prior"}}, payload
-PY
-[[ ! -e "$STACK_OWNER_PREVIOUS_STATE_FILE" ]]
+[[ ! -e "$STACK_OWNER_PREVIOUS_STATE_FILE" ]] || exit 31
+[[ "$CLI_LOCK_OWNER" == "0" ]] || exit 31
+"""
+    expected = owner["state"].read_bytes()
+    transition = subprocess.Popen(
+        ["/bin/bash", "-c", body], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE, text=True, start_new_session=True,
+    )
+    successor = None
+    try:
+        readable, _, _ = select.select([transition.stdout], [], [], 15)
+        assert readable, "Transition did not reach its verified-snapshot barrier"
+        snapshot = Path(transition.stdout.readline().strip())
+        assert snapshot == Path(str(owner["state"]) + f".previous.{transition.pid}")
+        assert snapshot.read_bytes() == expected
+        if prior_state == "dead":
+            os.killpg(owner["process"].pid, signal.SIGTERM)
+            owner["process"].wait(timeout=5)
+        elif prior_state in {"tampered", "stale-start"}:
+            payload = json.loads(snapshot.read_text())
+            if prior_state == "tampered":
+                payload["ownerBindingSha256"] = "0" * 64
+            else:
+                payload["ownerProcessStartedAt"] = "not the observed process start"
+                payload.pop("ownerBindingSha256")
+                payload["ownerBindingSha256"] = hashlib.sha256(
+                    json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
+                ).hexdigest()
+            snapshot.write_text(json.dumps(payload))
+        elif prior_state == "successor":
+            successor, payload = owner["spawn_successor"]()
+            published = _publish_runtime_owner_locked(owner, payload)
+            assert published.returncode == 0, published.stderr
+            expected = owner["state"].read_bytes()
+            proof = subprocess.run([sys.executable, str(REPO_ROOT / "scripts/viventium/parallel_work_release_gate.py"),
+                "--validate-owner-state", str(owner["state"])], capture_output=True, timeout=15)
+            assert proof.returncode == 0, proof.stderr
+        stdout, stderr = transition.communicate("resume\n", timeout=20)
+        assert transition.returncode == 0, stderr
+        assert not snapshot.exists()
+        assert not (owner["support"] / "state/cli-operation.lock").exists()
+        if prior_state in {"live", "successor"}:
+            assert owner["state"].read_bytes() == expected
+            assert owner["state"].stat().st_mode & 0o777 == 0o600
+        else:
+            assert not owner["state"].exists()
+        if prior_state != "dead":
+            assert owner["process"].poll() is None
+    finally:
+        if transition.poll() is None:
+            os.killpg(transition.pid, signal.SIGKILL)
+        transition.communicate(timeout=5)
 
+
+def test_stack_owner_transition_removes_failed_owner_without_prior_state(tmp_path: Path) -> None:
+    support = tmp_path / "support"
+    owner_file = support / "state/runtime/isolated/stack-owner.json"
+    owner_file.parent.mkdir(parents=True)
+    body = _owner_transition_shell_prelude(support, owner_file) + """
+acquire_cli_lock start
 capture_stack_owner_state_for_transition
-printf '{{"ownerPid":"999","marker":"successor"}}\\n' >"$OWNER_FILE"
+printf '{"ownerPid":"%s","marker":"transient"}\\n' "$$" > "$OWNER_FILE"
 STACK_OWNER_TRANSITION_ACTIVE=1
 reconcile_stack_owner_state_on_exit
-{json.dumps(sys.executable)} - "$OWNER_FILE" <<'PY'
-import json
-import sys
-payload = json.load(open(sys.argv[1], encoding="utf-8"))
-assert payload == {{"ownerPid": "999", "marker": "successor"}}, payload
-PY
-[[ ! -e "$STACK_OWNER_PREVIOUS_STATE_FILE" ]]
-""",
-        ],
-        check=False,
-        text=True,
-        capture_output=True,
-    )
-
+[[ ! -e "$OWNER_FILE" ]] || exit 31
+[[ "$CLI_LOCK_OWNER" == "1" ]] || exit 31
+[[ "$(cat "$CLI_LOCK_DIR/pid")" == "$$" ]] || exit 31
+cleanup_cli_lock
+"""
+    completed = subprocess.run(["/bin/bash", "-c", body], capture_output=True, text=True, timeout=20)
     assert completed.returncode == 0, completed.stderr
-
-
-def test_stack_owner_transition_removes_failed_owner_without_prior_state(
-    tmp_path: Path,
-) -> None:
-    cli_source = (REPO_ROOT / "bin" / "viventium").read_text(encoding="utf-8")
-    capture_function = extract_shell_function(
-        cli_source, "capture_stack_owner_state_for_transition"
-    )
-    reconcile_function = extract_shell_function(
-        cli_source, "reconcile_stack_owner_state_on_exit"
-    )
-    owner_file = tmp_path / "stack-owner.json"
-
-    completed = subprocess.run(
-        [
-            "bash",
-            "-c",
-            f"""
-set -euo pipefail
-PYTHON_BIN={json.dumps(sys.executable)}
-OWNER_FILE={json.dumps(str(owner_file))}
-stack_owner_state_file() {{ printf '%s\\n' "$OWNER_FILE"; }}
-runtime_owner_process_matches_state() {{ return 1; }}
-json_string_field() {{
-  {json.dumps(sys.executable)} - "$1" "$2" <<'PY'
-import json
-import sys
-print(json.load(open(sys.argv[1], encoding="utf-8")).get(sys.argv[2], ""))
-PY
-}}
-{capture_function}
-{reconcile_function}
-capture_stack_owner_state_for_transition
-printf '{{"ownerPid":"%s","marker":"failed"}}\\n' "$$" >"$OWNER_FILE"
-STACK_OWNER_TRANSITION_ACTIVE=1
-reconcile_stack_owner_state_on_exit
-[[ ! -e "$OWNER_FILE" ]]
-[[ ! -e "$STACK_OWNER_PREVIOUS_STATE_FILE" ]]
-""",
-        ],
-        check=False,
-        text=True,
-        capture_output=True,
-    )
-
-    assert completed.returncode == 0, completed.stderr
+    assert not owner_file.exists()
+    assert not (support / "state/cli-operation.lock").exists()
 
 
 def test_detached_launcher_rejects_altered_shared_command_contract(
@@ -699,6 +685,7 @@ def test_detached_launcher_accepts_the_current_complete_shared_command_contract(
     contract_path = repo / "scripts/viventium/runtime_owner_command_contract.json"
     contract_path.parent.mkdir(parents=True, exist_ok=True)
     shutil.copy2(DETACHED_COMMAND_CONTRACT, contract_path)
+    shutil.copy2(REPO_ROOT / "scripts/viventium/native_runtime.py", contract_path.parent / "native_runtime.py")
     if legacy_attached_contract:
         contract = json.loads(contract_path.read_text(encoding="utf-8"))
         contract["attached"].pop("flagOptions")
@@ -4944,7 +4931,7 @@ def test_launch_stack_detached_waits_when_sidecar_repair_is_already_starting(
     cli_source = (REPO_ROOT / "bin" / "viventium").read_text(encoding="utf-8")
     function_def = extract_shell_function(cli_source, "launch_stack_detached")
     fake_python = tmp_path / "python"
-    write_executable(fake_python, "#!/bin/sh\nprintf '4242\\n'\n")
+    write_executable(fake_python, "#!/bin/sh\nprintf '4242\\n0\\n%s\\n' \"$2\"\n")
     app_support = tmp_path / "app-support"
     config = tmp_path / "config.yaml"
     runtime = tmp_path / "runtime"
@@ -7846,3 +7833,647 @@ def test_attached_owner_does_not_wait_for_runtime_group() -> None:
     )
 
     assert completed.returncode == 0
+
+
+@pytest.fixture
+def live_runtime_owner(tmp_path: Path):
+    repo = (tmp_path / "prior installed root").resolve()
+    support = (tmp_path / "app-support").resolve()
+    state = support / "state/runtime/isolated/stack-owner.json"
+    runtime = support / "runtime"
+    state.parent.mkdir(parents=True)
+    runtime.mkdir()
+    executable = repo / "bin/viventium"
+    ready = repo / "owner.ready"
+    write_executable(executable, f"#!/bin/sh\nprintf ready > {shlex.quote(str(ready))}\nwhile :; do sleep 1; done\n")
+    config = support / "config.yaml"
+    config.write_text("version: 1\n")
+    lock = repo / "components.lock.json"
+    lock.write_text('{"version": 1, "components": []}\n')
+    scripts = repo / "scripts/viventium"
+    scripts.mkdir(parents=True)
+    for name in ("runtime_owner_command_contract.json", "parallel_work_release_gate.py"):
+        shutil.copy2(REPO_ROOT / "scripts/viventium" / name, scripts / name)
+    contract = json.loads(DETACHED_COMMAND_CONTRACT.read_text())
+    values = dict(ownerExecutablePath=str(executable), appSupportDir=str(support),
+                  configFile=str(config), runtimeDir=str(runtime), componentsLockFile=str(lock))
+    process = subprocess.Popen(
+        [token.format(**values) for token in contract["detached"]["argvTemplate"]],
+        cwd=repo, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True,
+    )
+    successors = []
+    try:
+        deadline = time.monotonic() + 5
+        while not ready.exists():
+            assert process.poll() is None and time.monotonic() < deadline, "Synthetic owner did not become ready"
+            time.sleep(0.01)
+        def process_value(field, pid=process.pid):
+            return " ".join(subprocess.run(
+                ["/bin/ps", "-p", str(pid), "-o", field + "="],
+                check=True, capture_output=True, text=True, timeout=5,
+            ).stdout.split())
+        payload = dict(contractVersion=1, repoRoot=str(repo), **values, runtimeProfile="isolated",
+                       command="start", ownerLaunchMode="detached", ownerPid=str(process.pid),
+                       ownerProcessCwd=str(repo), ownerProcessStartedAt=process_value("lstart"),
+                       ownerProcessCommand=process_value("command"))
+        payload["ownerBindingSha256"] = hashlib.sha256(
+            json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
+        ).hexdigest()
+        state.write_text(json.dumps(payload) + "\n")
+        state.chmod(0o600)
+        proof = subprocess.run(
+            [sys.executable, str(REPO_ROOT / "scripts/viventium/parallel_work_release_gate.py"),
+             "--validate-owner-state", str(state)], capture_output=True, text=True, timeout=15,
+        )
+        assert proof.returncode == 0, proof.stderr
+
+        def spawn_successor():
+            ready.unlink(missing_ok=True)
+            successor = subprocess.Popen(
+                [token.format(**values) for token in contract["detached"]["argvTemplate"]],
+                cwd=repo, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True,
+            )
+            successors.append(successor)
+            deadline = time.monotonic() + 5
+            while not ready.exists():
+                assert successor.poll() is None and time.monotonic() < deadline
+                time.sleep(0.01)
+            receipt = {**payload, "ownerPid": str(successor.pid),
+                       "ownerProcessStartedAt": process_value("lstart", successor.pid),
+                       "ownerProcessCommand": process_value("command", successor.pid)}
+            receipt.pop("ownerBindingSha256")
+            receipt["ownerBindingSha256"] = hashlib.sha256(
+                json.dumps(receipt, sort_keys=True, separators=(",", ":")).encode()
+            ).hexdigest()
+            return successor, receipt
+
+        yield dict(repo=repo, support=support, state=state, payload=payload,
+                   process=process, process_value=process_value, spawn_successor=spawn_successor)
+    finally:
+        for owned in [process, *successors]:
+            if owned.poll() is None:
+                os.killpg(owned.pid, signal.SIGTERM)
+            owned.wait(timeout=5)
+
+
+def _run_owner_match(owner_file: Path) -> subprocess.CompletedProcess:
+    function = extract_shell_function((REPO_ROOT / "bin/viventium").read_text(), "runtime_owner_process_matches_state")
+    return subprocess.run(["/bin/bash", "-c", f"""
+set -euo pipefail
+PYTHON_BIN={shlex.quote(sys.executable)}
+json_string_field() {{
+  "$PYTHON_BIN" -c 'import json,sys; print(json.load(open(sys.argv[1])).get(sys.argv[2], ""))' "$1" "$2"
+}}
+{function}
+runtime_owner_process_matches_state {shlex.quote(str(owner_file))}
+"""], capture_output=True, text=True, timeout=20)
+
+
+def _owner_transition_shell_prelude(support: Path, state: Path) -> str:
+    source = (REPO_ROOT / "bin/viventium").read_text()
+    common = (REPO_ROOT / "scripts/viventium/common.sh").read_text()
+    functions = "\n".join(extract_shell_function(source, name) for name in (
+        "cleanup_cli_lock", "read_cli_lock_metadata", "cli_lock_active", "cli_lock_process_command",
+        "cli_lock_active_owner", "verified_parent_cli_lock", "acquire_cli_lock",
+        "install_cli_lock_traps", "exit_cli_on_signal",
+        "runtime_owner_transition_snapshot_matches_state", "capture_stack_owner_state_for_transition",
+        "reconcile_stack_owner_state_locked", "reconcile_stack_owner_state_on_exit",
+    ))
+    functions += "\n" + "\n".join(extract_shell_function(common, name) for name in (
+        "validate_viventium_app_support_root", "ensure_app_support_layout",
+    ))
+    return f"""
+set -euo pipefail
+PYTHON_BIN={shlex.quote(sys.executable)}
+REPO_ROOT={shlex.quote(str(REPO_ROOT))}
+APP_SUPPORT_DIR={shlex.quote(str(support))}
+OWNER_FILE={shlex.quote(str(state))}
+CLI_LOCK_DIR={shlex.quote(str(support / 'state/cli-operation.lock'))}
+CLI_LOCK_OWNER=0
+CLI_LOCK_VERIFIED_PARENT_PID=''
+WORKSPACE_ROOT=''
+unset VIVENTIUM_CLI_LOCK_HELD VIVENTIUM_CLI_LOCK_DIR
+unset VIVENTIUM_CLI_LOCK_OWNER_PID VIVENTIUM_CLI_LOCK_INHERITED_ONCE
+stack_owner_state_file() {{ printf '%s\\n' "$OWNER_FILE"; }}
+{functions}
+"""
+
+
+def _publish_runtime_owner_locked(owner, payload) -> subprocess.CompletedProcess:
+    candidate = owner["support"] / "publication.json"
+    candidate.write_text(json.dumps(payload) + "\n")
+    candidate.chmod(0o600)
+    body = _owner_transition_shell_prelude(owner["support"], owner["state"]) + f"""
+acquire_cli_lock start
+"$PYTHON_BIN" -c 'import os,sys; os.replace(sys.argv[1],sys.argv[2])' {shlex.quote(str(candidate))} "$OWNER_FILE"
+cleanup_cli_lock
+"""
+    return subprocess.run(["/bin/bash", "-c", body], capture_output=True, text=True, timeout=20)
+
+
+@pytest.mark.parametrize("mutation", [
+    "wrong-name", "wrong-parent", "symlink", "bad-mode", "bad-uid", "non-object",
+    "bad-transition-pid", "current-leaf-symlink",
+])
+def test_transition_snapshot_proof_keeps_path_process_and_release_boundaries(
+    live_runtime_owner, monkeypatch, mutation,
+) -> None:
+    owner = live_runtime_owner
+    spec = importlib.util.spec_from_file_location(
+        "transition_owner_validator", REPO_ROOT / "scripts/viventium/parallel_work_release_gate.py"
+    )
+    assert spec and spec.loader
+    gate = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = gate
+    spec.loader.exec_module(gate)
+    transition_pid = os.getpid()
+    snapshot = owner["state"].with_name(f"stack-owner.json.previous.{transition_pid}")
+    shutil.copy2(owner["state"], snapshot)
+    assert gate.validate_runtime_owner_transition_file(snapshot, transition_pid)
+    assert not gate._runtime_owner_state_proves_active(owner["repo"], snapshot)
+    if mutation == "wrong-name":
+        snapshot = snapshot.rename(snapshot.with_name(f"stack-owner.json.previous.{transition_pid + 1}"))
+    elif mutation == "wrong-parent":
+        other = owner["support"] / "other"
+        other.mkdir()
+        snapshot = snapshot.rename(other / snapshot.name)
+    elif mutation == "symlink":
+        snapshot.unlink()
+        snapshot.symlink_to(owner["state"])
+    elif mutation == "bad-mode":
+        snapshot.chmod(0o644)
+    elif mutation == "bad-uid":
+        uid = os.getuid()
+        monkeypatch.setattr(gate.os, "getuid", lambda: uid + 1)
+    elif mutation == "non-object":
+        snapshot.write_text("[]")
+    elif mutation == "bad-transition-pid":
+        transition_pid = 1
+    elif mutation == "current-leaf-symlink":
+        owner["state"].unlink()
+        owner["state"].symlink_to(snapshot)
+        assert not gate._runtime_owner_state_proves_active(owner["repo"], snapshot)
+    assert gate.validate_runtime_owner_transition_file(snapshot, transition_pid) is (
+        mutation == "current-leaf-symlink"
+    )
+
+
+@pytest.mark.parametrize("args", [
+    ["--validate-owner-transition-state", "absent"],
+    ["--transition-owner-pid", "1234"],
+    ["--validate-owner-transition-state", "absent", "--transition-owner-pid", "1234", "--json"],
+])
+def test_transition_snapshot_cli_rejects_incomplete_or_mixed_purposes(args) -> None:
+    completed = subprocess.run(
+        [sys.executable, str(REPO_ROOT / "scripts/viventium/parallel_work_release_gate.py"), *args],
+        capture_output=True, text=True, timeout=15,
+    )
+    assert completed.returncode == 2
+
+
+def test_owner_cleanup_serializes_read_and_replace_with_native_operation_lock(live_runtime_owner) -> None:
+    owner = live_runtime_owner
+    _, successor = owner["spawn_successor"]()
+    barrier = owner["support"] / "cleanup-read"
+    resume = owner["support"] / "cleanup-resume"
+    body = _owner_transition_shell_prelude(owner["support"], owner["state"])
+    anchor = 'if isinstance(current, dict) and str(current.get("ownerPid") or "") == expected_pid:'
+    assert body.count(anchor) == 1
+    # Pause the real helper immediately after its read, with no production hook.
+    pause = f"""import time
+Path({str(barrier)!r}).write_text('read')
+deadline = time.monotonic() + 15
+while not Path({str(resume)!r}).exists():
+    if time.monotonic() >= deadline:
+        raise TimeoutError('Synthetic cleanup barrier timed out')
+    time.sleep(0.01)
+"""
+    body = body.replace(anchor, pause + anchor)
+    body += """
+acquire_cli_lock start
+capture_stack_owner_state_for_transition
+printf '{"ownerPid":"%s","marker":"transient"}\\n' "$$" > "$OWNER_FILE"
+cleanup_cli_lock
+STACK_OWNER_TRANSITION_ACTIVE=1
+reconcile_stack_owner_state_on_exit
+[[ "$CLI_LOCK_OWNER" == "0" ]] || exit 31
+"""
+    process = subprocess.Popen(["/bin/bash", "-c", body], stdout=subprocess.PIPE,
+                               stderr=subprocess.PIPE, text=True, start_new_session=True)
+    try:
+        deadline = time.monotonic() + 10
+        while not barrier.exists():
+            assert process.poll() is None and time.monotonic() < deadline
+            time.sleep(0.01)
+        blocked = _publish_runtime_owner_locked(owner, successor)
+        assert blocked.returncode == 1, blocked.stderr
+        assert json.loads(owner["state"].read_text())["ownerPid"] == str(process.pid)
+        resume.touch()
+        _, stderr = process.communicate(timeout=20)
+        assert process.returncode == 0, stderr
+        assert json.loads(owner["state"].read_text())["ownerPid"] == owner["payload"]["ownerPid"]
+        published = _publish_runtime_owner_locked(owner, successor)
+        assert published.returncode == 0, published.stderr
+        assert json.loads(owner["state"].read_text())["ownerPid"] == successor["ownerPid"]
+        assert not (owner["support"] / "state/cli-operation.lock").exists()
+    finally:
+        resume.touch()
+        if process.poll() is None:
+            os.killpg(process.pid, signal.SIGKILL)
+        process.communicate(timeout=5)
+
+
+def test_cleanup_pid_discovery_precedes_lock_and_preserves_a_competing_holder(tmp_path: Path) -> None:
+    support = tmp_path / "support"
+    support.mkdir()
+    lock = support / "state/cli-operation.lock"
+    entered, resume = tmp_path / "discovery-entered", tmp_path / "discovery-resume"
+    held, release = tmp_path / "holder-ready", tmp_path / "holder-release"
+    wrapper = tmp_path / "paused-native-shell"
+    write_executable(wrapper, f"""#!/bin/sh
+printf ready > {shlex.quote(str(entered))}
+deadline=$(($(date +%s) + 15))
+while [ ! -e {shlex.quote(str(resume))} ]; do
+  [ "$(date +%s)" -lt "$deadline" ] || exit 24
+  sleep 0.01
+done
+exec /bin/sh "$@"
+""")
+    prelude = _owner_transition_shell_prelude(support, support / "owner.json")
+    anchor = 'exec /bin/sh -c \'printf "%s\\n" "$PPID"\''
+    assert prelude.count(anchor) == 1
+    contender_body = prelude.replace(anchor, f"exec {shlex.quote(str(wrapper))} -c 'printf \"%s\\n\" \"$PPID\"'")
+    contender_body += '\n(acquire_cli_lock "owner transition cleanup" current-process)\n'
+    holder_body = prelude + f"""
+acquire_cli_lock start
+printf ready > {shlex.quote(str(held))}
+deadline=$(($(date +%s) + 15))
+while [[ ! -e {shlex.quote(str(release))} ]]; do
+  [[ "$(date +%s)" -lt "$deadline" ]] || exit 25
+  sleep 0.01
+done
+cleanup_cli_lock
+"""
+    contender = subprocess.Popen(["/bin/bash", "-c", contender_body], stdout=subprocess.PIPE,
+                                 stderr=subprocess.PIPE, text=True, start_new_session=True)
+    holder = None
+
+    def await_file(path: Path, process: subprocess.Popen) -> None:
+        deadline = time.monotonic() + 10
+        while not path.exists():
+            assert process.poll() is None and time.monotonic() < deadline
+            time.sleep(0.01)
+
+    try:
+        await_file(entered, contender)
+        assert not lock.exists(), "PID discovery must finish before native mkdir"
+        holder = subprocess.Popen(["/bin/bash", "-c", holder_body], stdout=subprocess.PIPE,
+                                  stderr=subprocess.PIPE, text=True, start_new_session=True)
+        await_file(held, holder)
+        before = {path.name: path.read_bytes() for path in lock.iterdir()}
+        assert before["pid"].strip() == str(holder.pid).encode()
+        resume.touch()
+        _, stderr = contender.communicate(timeout=10)
+        assert contender.returncode == 1, stderr
+        assert "already running" in stderr
+        assert holder.poll() is None
+        assert {path.name: path.read_bytes() for path in lock.iterdir()} == before
+        release.touch()
+        _, stderr = holder.communicate(timeout=10)
+        assert holder.returncode == 0, stderr
+        assert not lock.exists()
+    finally:
+        resume.touch()
+        release.touch()
+        for process in (contender, holder):
+            if process is not None:
+                if process.poll() is None:
+                    os.killpg(process.pid, signal.SIGKILL)
+                process.communicate(timeout=5)
+
+
+@pytest.mark.parametrize("python_mode", ["fails", "non-exec-wrapper"])
+def test_cleanup_lock_pid_uses_native_shell_without_configured_python(tmp_path: Path, python_mode: str) -> None:
+    support = tmp_path / "support"
+    support.mkdir()
+    called, observed = tmp_path / "python-called", tmp_path / "actual-shell-pid"
+    wrapper = tmp_path / "configured-python"
+    tail = "exit 23\n" if python_mode == "fails" else f"{shlex.quote(sys.executable)} \"$@\"\nexit $?\n"
+    write_executable(wrapper, f"#!/bin/sh\nprintf called > {shlex.quote(str(called))}\n" + tail)
+    body = _owner_transition_shell_prelude(support, support / "owner.json") + f"""
+(
+  {shlex.quote(sys.executable)} -c 'import os,sys; open(sys.argv[1], "w").write(str(os.getppid()))' {shlex.quote(str(observed))}
+  PYTHON_BIN={shlex.quote(str(wrapper))}
+  acquire_cli_lock "owner transition cleanup" current-process
+  [[ "$(cat "$CLI_LOCK_DIR/pid")" == "$(cat {shlex.quote(str(observed))})" ]] || exit 31
+  [[ ! -e {shlex.quote(str(called))} ]] || exit 31
+  cleanup_cli_lock
+)
+[[ ! -e "$CLI_LOCK_DIR" ]] || exit 31
+"""
+    completed = subprocess.run(["/bin/bash", "-c", body], capture_output=True, text=True, timeout=15)
+    assert completed.returncode == 0, completed.stderr
+    assert not called.exists()
+
+
+def test_owner_cleanup_keeps_native_lock_when_original_parent_is_killed(live_runtime_owner) -> None:
+    owner = live_runtime_owner
+    _, successor = owner["spawn_successor"]()
+    barrier = owner["support"] / "orphan-cleanup-read"
+    resume = owner["support"] / "orphan-cleanup-resume"
+    lock = owner["support"] / "state/cli-operation.lock"
+    body = _owner_transition_shell_prelude(owner["support"], owner["state"])
+    anchor = 'if isinstance(current, dict) and str(current.get("ownerPid") or "") == expected_pid:'
+    assert body.count(anchor) == 1
+    pause = f"""import time
+Path({str(barrier)!r}).write_text(str(os.getpid()))
+deadline = time.monotonic() + 15
+while not Path({str(resume)!r}).exists():
+    if time.monotonic() >= deadline:
+        raise TimeoutError('Synthetic orphan cleanup barrier timed out')
+    time.sleep(0.01)
+"""
+    body = body.replace(anchor, pause + anchor) + """
+STACK_OWNER_PREVIOUS_STATE_FILE=''
+printf '{"ownerPid":"%s","marker":"transient"}\\n' "$$" > "$OWNER_FILE"
+STACK_OWNER_TRANSITION_ACTIVE=1
+reconcile_stack_owner_state_on_exit
+"""
+    process = subprocess.Popen(["/bin/bash", "-c", body], stdout=subprocess.PIPE,
+                               stderr=subprocess.PIPE, text=True, start_new_session=True)
+    try:
+        deadline = time.monotonic() + 10
+        while not barrier.exists():
+            assert process.poll() is None and time.monotonic() < deadline
+            time.sleep(0.01)
+        cleanup_pid = int((lock / "pid").read_text())
+        assert cleanup_pid != process.pid
+        process.kill()  # Kill only the original parent, not its owned process group.
+        process.wait(timeout=5)
+        os.kill(cleanup_pid, 0)
+        blocked = _publish_runtime_owner_locked(owner, successor)
+        assert blocked.returncode == 1, blocked.stderr
+        assert (lock / "pid").read_text().strip() == str(cleanup_pid)
+        assert json.loads(owner["state"].read_text())["marker"] == "transient"
+        resume.touch()
+        process.communicate(timeout=10)  # Pipes close only after the orphan cleanup exits.
+        assert not lock.exists()
+        published = _publish_runtime_owner_locked(owner, successor)
+        assert published.returncode == 0, published.stderr
+        assert json.loads(owner["state"].read_text())["ownerPid"] == successor["ownerPid"]
+    finally:
+        resume.touch()
+        try:
+            os.killpg(process.pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+        process.communicate(timeout=5)
+
+
+@pytest.mark.parametrize("restore_previous", [False, True])
+@pytest.mark.parametrize("primary_exit", [None, 23])
+def test_owner_cleanup_reports_real_filesystem_failure_without_masking_primary_exit(
+    live_runtime_owner, restore_previous, primary_exit
+) -> None:
+    owner = live_runtime_owner
+    body = _owner_transition_shell_prelude(owner["support"], owner["state"])
+    anchor = 'if isinstance(current, dict) and str(current.get("ownerPid") or "") == expected_pid:'
+    assert body.count(anchor) == 1
+    # A directory at the previously read target makes both real os.replace and
+    # unlink fail. Keep the actual helper, validator and native lock machinery.
+    body = body.replace(anchor, "owner_file.unlink()\nowner_file.mkdir()\n" + anchor)
+    capture = "capture_stack_owner_state_for_transition" if restore_previous else "STACK_OWNER_PREVIOUS_STATE_FILE=''"
+    body += f"""
+{capture}
+printf '{{"ownerPid":"%s","marker":"transient"}}\\n' "$$" > "$OWNER_FILE"
+STACK_OWNER_TRANSITION_ACTIVE=1
+"""
+    if primary_exit is None:
+        body += """
+if reconcile_stack_owner_state_on_exit; then exit 90; else status=$?; fi
+[[ "$status" == "1" ]] || exit 31
+[[ ! -e "$CLI_LOCK_DIR" ]] || exit 31
+"""
+    else:
+        body += extract_shell_function((REPO_ROOT / "bin/viventium").read_text(), "start_owner_transition_exit_cleanup")
+        body += f"\nclear_runtime_start_claim() {{ return 0; }}\ntrap start_owner_transition_exit_cleanup EXIT\nexit {primary_exit}\n"
+    completed = subprocess.run(["/bin/bash", "-c", body], capture_output=True, text=True, timeout=20)
+    assert completed.returncode == (primary_exit or 0), completed.stderr
+    assert completed.stderr.count("Viventium owner recovery was skipped or failed") == 1
+    assert "IsADirectoryError" in completed.stderr or "PermissionError" in completed.stderr
+    assert owner["state"].is_dir()
+    assert not (owner["support"] / "state/cli-operation.lock").exists()
+
+
+@pytest.mark.parametrize("failure", ["helper-error", "signal", "layout-error", "metadata-error"])
+@pytest.mark.parametrize("inside_exit_trap", [False, True])
+def test_owner_cleanup_releases_only_its_reacquired_lock_on_failure(
+    live_runtime_owner, failure, inside_exit_trap
+) -> None:
+    owner = live_runtime_owner
+    original = owner["state"].read_bytes()
+    fault = ('"$PYTHON_BIN" -c \'import os,signal; os.kill(os.getppid(),signal.SIGTERM)\'; return 99'
+             if failure == "signal" else 'return 7')
+    expected = {"helper-error": 7, "signal": 143, "layout-error": 1, "metadata-error": 1}[failure]
+    layout = ('HOME="$APP_SUPPORT_DIR"' if failure == "layout-error" else
+              'cli_lock_process_command() { return 7; }' if failure == "metadata-error" else '')
+    body = _owner_transition_shell_prelude(owner["support"], owner["state"]) + f"""
+reconcile_stack_owner_state_locked() {{ {fault}; }}
+{layout}
+STACK_OWNER_PREVIOUS_STATE_FILE="$OWNER_FILE.previous.$$"
+cp "$OWNER_FILE" "$STACK_OWNER_PREVIOUS_STATE_FILE"
+SAVED_PREVIOUS="$STACK_OWNER_PREVIOUS_STATE_FILE"
+STACK_OWNER_TRANSITION_ACTIVE=1
+"""
+    if inside_exit_trap:
+        body += extract_shell_function((REPO_ROOT / "bin/viventium").read_text(), "start_owner_transition_exit_cleanup")
+        body += "\nclear_runtime_start_claim() { return 0; }\ntrap start_owner_transition_exit_cleanup EXIT\nexit 23\n"
+    else:
+        body += f"""
+if reconcile_stack_owner_state_on_exit; then exit 90; else status=$?; fi
+[[ "$status" == "{expected}" ]] || exit 31
+[[ "$CLI_LOCK_OWNER" == "0" ]] || exit 31
+[[ ! -e "$CLI_LOCK_DIR" && ! -e "$SAVED_PREVIOUS" ]] || exit 31
+"""
+    completed = subprocess.run(["/bin/bash", "-c", body], capture_output=True, text=True, timeout=20)
+    assert completed.returncode == (23 if inside_exit_trap else 0), completed.stderr
+    assert completed.stderr.count("Viventium owner recovery was skipped or failed") == 1
+    assert not (owner["support"] / "state/cli-operation.lock").exists()
+    assert not list(owner["state"].parent.glob("stack-owner.json.previous.*"))
+    assert owner["state"].read_bytes() == original
+
+
+def test_owner_cleanup_refuses_mutation_while_another_operation_owns_lock(live_runtime_owner) -> None:
+    import select
+
+    owner = live_runtime_owner
+    _, successor = owner["spawn_successor"]()
+    candidate = owner["support"] / "successor-publication.json"
+    candidate.write_text(json.dumps(successor) + "\n")
+    candidate.chmod(0o600)
+    old_body = _owner_transition_shell_prelude(owner["support"], owner["state"]) + """
+acquire_cli_lock start
+capture_stack_owner_state_for_transition
+printf '{"ownerPid":"%s","marker":"transient"}\\n' "$$" > "$OWNER_FILE"
+cleanup_cli_lock
+printf '%s\\n' "$STACK_OWNER_PREVIOUS_STATE_FILE"
+read -r resume
+export VIVENTIUM_CLI_LOCK_HELD=1 VIVENTIUM_CLI_LOCK_DIR="$CLI_LOCK_DIR"
+export VIVENTIUM_CLI_LOCK_OWNER_PID=2147483000 VIVENTIUM_CLI_LOCK_INHERITED_ONCE=0
+STACK_OWNER_TRANSITION_ACTIVE=1
+if reconcile_stack_owner_state_on_exit; then exit 90; fi
+[[ "$CLI_LOCK_OWNER" == "0" ]] || exit 31
+cleanup_cli_lock
+"""
+    holder_body = _owner_transition_shell_prelude(owner["support"], owner["state"]) + f"""
+acquire_cli_lock stop
+printf 'held\\n'
+read -r resume
+"$PYTHON_BIN" -c 'import os,sys; os.replace(sys.argv[1],sys.argv[2])' {shlex.quote(str(candidate))} "$OWNER_FILE"
+cleanup_cli_lock
+"""
+    old = subprocess.Popen(["/bin/bash", "-c", old_body], stdin=subprocess.PIPE,
+                           stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, start_new_session=True)
+    holder = None
+    try:
+        assert select.select([old.stdout], [], [], 15)[0]
+        previous = Path(old.stdout.readline().strip())
+        assert previous.is_file()
+        transient = owner["state"].read_bytes()
+        holder = subprocess.Popen(["/bin/bash", "-c", holder_body], stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, start_new_session=True)
+        assert select.select([holder.stdout], [], [], 10)[0]
+        assert holder.stdout.readline().strip() == "held"
+        _, stderr = old.communicate("resume\n", timeout=5)
+        assert old.returncode == 0, stderr
+        assert owner["state"].read_bytes() == transient
+        assert not previous.exists()
+        lock_pid = owner["support"] / "state/cli-operation.lock/pid"
+        assert lock_pid.read_text().strip() == str(holder.pid)
+        _, stderr = holder.communicate("publish\n", timeout=10)
+        assert holder.returncode == 0, stderr
+        assert json.loads(owner["state"].read_text())["ownerPid"] == successor["ownerPid"]
+        assert not lock_pid.parent.exists()
+    finally:
+        for process in (old, holder):
+            if process is not None:
+                if process.poll() is None:
+                    os.killpg(process.pid, signal.SIGKILL)
+                process.communicate(timeout=5)
+
+
+@pytest.mark.parametrize("consume_handoff", [False, True])
+def test_owner_cleanup_preserves_verified_parent_operation_lock(live_runtime_owner, consume_handoff) -> None:
+    owner = live_runtime_owner
+    child = owner["support"] / "borrowed-cleanup.sh"
+    consume = 'acquire_cli_lock start' if consume_handoff else ':'
+    child.write_text(_owner_transition_shell_prelude(owner["support"], owner["state"]) + f"""
+export VIVENTIUM_CLI_LOCK_HELD=1 VIVENTIUM_CLI_LOCK_DIR="$CLI_LOCK_DIR"
+export VIVENTIUM_CLI_LOCK_OWNER_PID="$1" VIVENTIUM_CLI_LOCK_INHERITED_ONCE=1
+{consume}
+STACK_OWNER_TRANSITION_ACTIVE=1
+reconcile_stack_owner_state_on_exit
+[[ "$CLI_LOCK_OWNER" == "0" ]] || exit 31
+cleanup_cli_lock
+[[ "$(cat "$CLI_LOCK_DIR/pid")" == "$1" ]] || exit 31
+""")
+    body = _owner_transition_shell_prelude(owner["support"], owner["state"]) + f"""
+acquire_cli_lock upgrade
+/bin/bash {shlex.quote(str(child))} "$$"
+[[ "$CLI_LOCK_OWNER" == "1" ]] || exit 31
+[[ "$(cat "$CLI_LOCK_DIR/pid")" == "$$" ]] || exit 31
+cleanup_cli_lock
+"""
+    completed = subprocess.run(["/bin/bash", "-c", body], capture_output=True, text=True, timeout=20)
+    assert completed.returncode == 0, completed.stderr
+    assert not (owner["support"] / "state/cli-operation.lock").exists()
+
+
+@pytest.mark.parametrize("leaf", ["regular", "symlink", "hardlink"])
+def test_detached_launch_uses_the_selected_private_log_and_exact_attempt_offset(tmp_path: Path, leaf: str) -> None:
+    cli_source = (REPO_ROOT / "bin/viventium").read_text()
+    functions = "".join(extract_shell_function(cli_source, name) for name in (
+        "value_is_true", "launch_stack_detached",
+    ))
+    repo = tmp_path / "synthetic-repo"
+    support = tmp_path / "private app support"
+    runtime = support / "runtime"
+    runtime.mkdir(parents=True)
+    config = support / "config.yaml"
+    config.write_text("version: 1\n")
+    lock = repo / "components.lock.json"
+    executable = repo / "bin/viventium"
+    marker = tmp_path / "launched"
+    write_executable(executable, "#!/bin/sh\nprintf 'current launch\\n'\ntouch " + shlex.quote(str(marker)) + "\n")
+    contract = repo / "scripts/viventium/runtime_owner_command_contract.json"
+    contract.parent.mkdir(parents=True)
+    shutil.copy2(DETACHED_COMMAND_CONTRACT, contract)
+    shutil.copy2(REPO_ROOT / "scripts/viventium/native_runtime.py", contract.parent / "native_runtime.py")
+    lock.write_text('{"version":1,"components":[]}\n')
+    log = support / "logs/helper-start.log"
+    log.parent.mkdir()
+    outside = tmp_path / "unrelated-owned-data"
+    outside.write_bytes(b"do not change\n")
+    if leaf == "regular":
+        log.write_bytes(b"earlier diagnostic\n")
+    elif leaf == "symlink":
+        log.symlink_to(outside)
+    else:
+        os.link(outside, log)
+    script = "\n".join([
+        "set -euo pipefail", functions,
+        "PYTHON_BIN=" + shlex.quote(sys.executable),
+        "REPO_ROOT=" + shlex.quote(str(repo)),
+        "APP_SUPPORT_DIR=" + shlex.quote(str(support)),
+        "CONFIG_FILE=" + shlex.quote(str(config)),
+        "RUNTIME_DIR=" + shlex.quote(str(runtime)),
+        "LOCK_FILE=" + shlex.quote(str(lock)),
+        "ensure_app_support_layout() { :; }",
+        "initialize_telegram_user_config_authority() { return 0; }",
+        "user_surface_healthy() { return 1; }",
+        "runtime_optional_surfaces_healthy() { return 1; }",
+        "detached_launch_process_group_running() { return 1; }",
+        "runtime_start_claim_active() { return 1; }",
+        "is_stack_running() { return 1; }",
+        "launch_stack_detached",
+        'printf "SELECTED=%s\\nOFFSET=%s\\n" "$DETACHED_START_LOG_PATH" "$DETACHED_START_LOG_OFFSET"',
+    ])
+    result = subprocess.run(["/bin/bash", "-c", script], capture_output=True, text=True, timeout=10)
+    assert result.returncode == 0, result.stderr
+    selected = log if leaf == "regular" else log.with_name("helper-start.recovery.log")
+    assert "SELECTED=" + str(selected) in result.stdout
+    expected_offset = len(b"earlier diagnostic\n") if leaf == "regular" else 0
+    assert f"OFFSET={expected_offset}\n" in result.stdout
+    deadline = time.monotonic() + 3
+    while not marker.exists() and time.monotonic() < deadline:
+        time.sleep(0.01)
+    assert marker.exists()
+    assert selected.read_bytes()[expected_offset:] == b"current launch\n"
+    assert selected.stat().st_mode & 0o777 == 0o600
+    assert outside.read_bytes() == b"do not change\n"
+
+
+@pytest.mark.parametrize("leaf", ["regular", "symlink"])
+def test_detached_log_offset_capture_uses_the_selected_private_descriptor(tmp_path: Path, leaf: str) -> None:
+    source = (REPO_ROOT / "bin/viventium").read_text()
+    log = tmp_path / "logs/helper-start.log"
+    log.parent.mkdir()
+    target = tmp_path / "private-unrelated-data"
+    target.write_bytes(b"keep exact data\n")
+    if leaf == "symlink":
+        log.symlink_to(target)
+    else:
+        log.write_bytes(b"earlier diagnostic\n")
+    script = "\n".join([
+        "set -euo pipefail", extract_shell_function(source, "capture_detached_start_log_offset"),
+        "REPO_ROOT=" + shlex.quote(str(REPO_ROOT)),
+        "PYTHON_BIN=" + shlex.quote(sys.executable),
+        "capture_detached_start_log_offset " + shlex.quote(str(log)),
+        'printf "SELECTED=%s\\nOFFSET=%s\\n" "$DETACHED_START_LOG_PATH" "$DETACHED_START_LOG_OFFSET"',
+    ])
+    result = subprocess.run(["/bin/bash", "-c", script], capture_output=True, text=True, timeout=10)
+    assert result.returncode == 0, result.stderr
+    selected = log if leaf == "regular" else log.with_name("helper-start.recovery.log")
+    assert "SELECTED=" + str(selected) in result.stdout
+    assert f"OFFSET={selected.stat().st_size}\n" in result.stdout
+    assert target.read_bytes() == b"keep exact data\n"

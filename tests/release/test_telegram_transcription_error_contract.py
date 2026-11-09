@@ -21,9 +21,12 @@ def test_telegram_scripts_use_structured_transcription_results() -> None:
     assert 'error_text=f"Timed out downloading this {media_label} from Telegram. Please retry."' in scripts_source
     assert 'return _transcription_download_error("voice note", download_result.error_code)' in scripts_source
     assert "voice_file_id = update_message.voice.file_id" in scripts_source
-    assert "elif update_message.video_note:" in scripts_source
-    assert "if update_message.video:" in scripts_source
-    assert "regular videos should flow through" in scripts_source
+    assert "elif update_message.video_note or mp4_upload:" in scripts_source
+    assert "video = update_message.video_note or mp4_upload" in scripts_source
+    assert "voice_result = await transcribe_video(" in scripts_source
+    assert 'media_label="video" if mp4_upload else "video note"' in scripts_source
+    assert "if update_message.video and not mp4_upload:" in scripts_source
+    assert "if isinstance(voice_result, TelegramVideoNoteResult):" in scripts_source
     assert "voice_error_text = voice_result.error_text" in scripts_source
     assert "def classify_telegram_download_error(exc: Exception) -> str:" in scripts_source
     assert 'return f"error: Temporarily unable to process video note:' not in scripts_source

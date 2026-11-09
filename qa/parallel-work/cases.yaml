@@ -55,9 +55,9 @@ journeys:
     evidence: [visible transcript, action receipt, attempt and lease state, artifact hashes, callback and delivery rows]
   - id: PAR-QA-E2E-002
     requirements: [PW-099]
-    userAction: Exercise duplicate and out-of-order input, failure, recovery, restart, owner isolation, fallback, callbacks, scheduler, and applicable Voice or media paths.
+    userAction: Exercise duplicate and out-of-order input, failure, recovery, restart, owner isolation, fallback, callbacks, scheduler, and applicable Voice or media paths. Queue a continuation on Web-origin work from its linked Telegram chat.
     surfaces: [all affected installed surfaces]
-    expectedResult: Each path keeps the same authorized outcome, one owner, exact controls, and truthful lifecycle state.
+    expectedResult: Each path keeps the same authorized outcome, one owner, exact controls, and truthful lifecycle state. The first run returns its file while the successor runs. The continuation sends its own result once to the accepted Telegram chat and topic without a status request.
     degradedAndRecovery: Capacity, provider, auth, native-child, delivery, and rollback failures stay distinct and recover safely.
     persistenceAndCleanup: Restart and rollback lose no accepted work and leak no cross-owner state.
     evidence: [real user output, authority and isolation proof, lifecycle state, callbacks, artifacts, installed identity]
@@ -69,3 +69,36 @@ journeys:
     degradedAndRecovery: Missing required real-surface or artifact evidence makes the result PARTIAL or BLOCKED, never PASS.
     persistenceAndCleanup: Agent-sync drift and dry-run checks run only when that seam changes; public evidence is sanitized and synthetic state is removed.
     evidence: [candidate-bound report, hashes, redacted trace, cleanup proof, remaining gaps]
+  - id: PAR-QA-NATIVE-COORDINATION-001
+    requirements: [PW-050, PW-052, PW-098, PW-099, CORE-005]
+    userAction: In saved coordination mode, give an ordinary authorized action request, omit optional historical-file and current-source selections (including a combined current input), receive its result, then continue the conversation. Also test a Worker launched from an earlier result and retrieval of an accepted file that was never presented. Repeat the owning contract across Codex, Claude and Direct.
+    surfaces: [Telegram, Web, Voice, native harness]
+    expectedResult: Queen has the existing hand_off_to, active_work_action and list_workers controls without a second synchronous host-graph action menu. Workers receive exact selected original input and authorized context, retain native action capabilities and configured effort, and return through the same Queen once. Long task text is preserved; Native capacity owns admission. Background browser work preserves the user's active tab and input.
+    degradedAndRecovery: Missing browser consent and an unavailable optional connector are distinct. Connector failure cannot remove independent authorized handoff. A forced unavailable graph transfer fails clearly. Stored worker results recover without rerunning completed work. Full mode retains its graph behavior.
+    persistenceAndCleanup: Reload keeps original source, exact work identity and one delivered result. Preserve unrelated work and account settings; end owned test calls normally.
+    evidence: [profile and role matrix, exact source hashes, real tool and permission receipts, callback and roster consumers, artifact download hashes, visible reloaded result, configured and loaded source identity, remaining physical audio or browser-consent gates]
+  - id: PAR-QA-PLANNING-RETRY-001
+    requirements: [PW-050, PW-098, PW-099, CORE-005]
+    userAction: Recover an accepted interactive request whose native planner failed before creating a goal. Use Retry in Active Work, including a duplicate or lost-response recovery.
+    surfaces: [Web, Active Work, native harness]
+    expectedResult: One durable retry child inherits the exact original message and selected Library context through fresh authorized preparation. Failed history remains intact. The parent card gives way to the accepted child, then current goals and one useful result. No new handoff flag or replacement brief is required.
+    degradedAndRecovery: Foreign, stopped, held, unsettled, completed and already-dispatched sources cannot start another plan. An existing child is recovered without another effect. Expired native replies stay invalid; a new question uses its current run and attempt.
+    persistenceAndCleanup: Restart preserves the accepted source, child relationship and one delivery. Retain scoped audit evidence and leave unrelated work unchanged.
+    evidence: [original source equality, retry receipt, child and provider identities, outbox identity, current permission preparation, visible parent-child transition, result count, retained state after reload and restart]
+
+  - id: PAR-QA-RESULT-CLAIM-001
+    requirements: [PW-028, PW-099, CORE-007]
+    userAction: Pause a synthetic result author after its draft, reclaim the same evidence row with the same attempt and timestamp, then resume the earlier author. Repeat for success and retryable or permanent failure.
+    surfaces: [Main result author, callback queue, persisted delivery]
+    expectedResult: Only the current exact claim can write a draft, Main reply, delivery or settlement. The replaced author cannot mutate the new claim. A valid current claimant still delivers once.
+    degradedAndRecovery: An accepted callback receipt alone does not retain processing authority. Existing transaction recovery and exact source guards remain active.
+    persistenceAndCleanup: Reopening storage retains the current claim and one result. Retire only synthetic rows through their existing owner.
+    evidence: [causal stale-claim unit tests, real replica-set transaction cases, claim and delivery state, actual source/result association]
+  - id: PAR-QA-BROKER-INGRESS-001
+    requirements: [PW-050, CORE-005, CORE-007]
+    userAction: Supply synthetic reserved broker grant fields and MCP aliases in model launch arguments. Compare unrelated context and a trusted fresh Core action bundle.
+    surfaces: [Core tool ingress, Native coordinator preparation]
+    expectedResult: Model arguments cannot create broker authority. Fresh Core-prepared grants remain usable; unrelated original context and configuration remain intact.
+    degradedAndRecovery: Missing real authority fails without a new grant or alternate transport. An unavailable optional connector does not remove independent authorized handoff controls.
+    persistenceAndCleanup: Preserve the same accepted source, scope and existing action receipts. No account or policy reset.
+    evidence: [raw ingress attack tests, trusted action positive cases, Core and Native consumer tests, exact prepared grant provenance]

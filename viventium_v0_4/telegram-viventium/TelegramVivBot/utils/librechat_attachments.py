@@ -129,6 +129,7 @@ async def send_librechat_attachments(
 
     seen: set[str] = set()
     images: list[tuple[bytes, str]] = []
+    videos: list[tuple[bytes, str]] = []
     documents: list[tuple[bytes, str]] = []
     unavailable = 0
     retrieval_failed = 0
@@ -226,6 +227,8 @@ async def send_librechat_attachments(
         final_mime = (content_type or mime_type or "").split(";")[0].strip().lower()
         if final_mime.startswith("image/"):
             images.append((blob, safe_name))
+        elif final_mime == "video/mp4":
+            videos.append((blob, safe_name))
         else:
             documents.append((blob, safe_name))
 
@@ -258,6 +261,27 @@ async def send_librechat_attachments(
         except Exception:
             unconfirmed += len(batch)
             continue
+
+    for blob, safe_name in videos:
+        bio = BytesIO(blob)
+        bio.name = safe_name
+        await authorize()
+        try:
+            result = await bot.send_video(
+                chat_id=telegram_chat_id,
+                message_thread_id=message_thread_id,
+                video=bio,
+                filename=safe_name,
+                reply_to_message_id=reply_to_message_id,
+                supports_streaming=True,
+            )
+            remember(result)
+        except BadRequest:
+            documents.append((blob, safe_name))
+        except (Forbidden, RetryAfter):
+            rejected += 1
+        except Exception:
+            unconfirmed += 1
 
     for blob, safe_name in documents:
         bio = BytesIO(blob)

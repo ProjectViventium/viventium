@@ -27,6 +27,7 @@ if str(SCRIPT_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPT_DIR))
 
 from telegram_tokens import telegram_bot_token_validation_error
+from life_bootstrap import validate_life_location
 from native_runtime import NATIVE_ALLOWED_PLAIN_ENV
 from host_cli_auth import (
     codex_app_cli_candidates as shared_codex_app_cli_candidates,
@@ -374,6 +375,13 @@ def glasshive_enabled(config: dict[str, Any]) -> bool:
             "run `bin/viventium bootstrap-components` and compile again"
         )
     return True
+
+
+def chrome_devtools_enabled(config: dict[str, Any]) -> bool:
+    settings = ((config.get("integrations") or {}).get("chrome_devtools") or {})
+    if not isinstance(settings, dict):
+        raise SystemExit("integrations.chrome_devtools must be an object")
+    return resolve_bool(settings.get("enabled"), False)
 
 
 def xperfect_scheduled_wake_environment(
@@ -1527,6 +1535,35 @@ def resolve_host_cli_path(command: str, explicit_path: Any = None) -> str:
     return ""
 
 
+def local_media_worker_environment(config: dict[str, Any], execution_mode: str,
+                                   workspace_root: str, protected_root: str) -> dict[str, str]:
+    media = (config.get("integrations") or {}).get("local_media") or {}
+    configured = os.environ.get("VIVENTIUM_LOCAL_MEDIA_CONFIG", media.get("config", "")).strip()
+    if not configured:
+        return {}
+    if execution_mode != "host":
+        raise SystemExit("Viventium local media requires automatic host workers.")
+    media_config = Path(configured).expanduser()
+    if not media_config.is_absolute() or not media_config.is_file():
+        raise SystemExit("Viventium local media config must point to an existing absolute TOML file.")
+    command = media_config.parent / ".venv/bin/viventium-media"
+    if not command.is_file() or not os.access(command, os.X_OK):
+        raise SystemExit("Install viventium-media in the .venv next to the media TOML file.")
+    workspace = Path(workspace_root).expanduser()
+    command_args = [str(command), "connection", "--config", str(media_config), "--workspace-parent", str(workspace)]
+    if workspace.resolve().is_relative_to(Path(protected_root).expanduser().resolve()):
+        command_args.append("--worker-temp-output")
+    try:
+        result = subprocess.run(
+            command_args,
+            capture_output=True, text=True, check=True, timeout=20,
+        )
+        bundle = json.loads(result.stdout)
+    except (OSError, subprocess.SubprocessError, ValueError):
+        raise SystemExit("Local media setup is invalid. Check its TOML with viventium-media doctor.")
+    return {"VIVENTIUM_LOCAL_MEDIA_WORKER_BOOTSTRAP": json.dumps(bundle, separators=(",", ":"))}
+
+
 def resolve_glasshive_orchestration_settings(config: dict[str, Any]) -> dict[str, Any]:
     """Resolve automatic work using the installation's existing execution authority."""
     integrations = config.get("integrations", {}) or {}
@@ -1905,6 +1942,11 @@ def resolve_glasshive_provider_settings(config: dict[str, Any]) -> dict[str, Any
             "server-side path (a leading ~ is supported)"
         )
     life_path = Path(os.path.normpath(str(life_path)))
+    if enabled or life_dir_chosen:
+        try:
+            validate_life_location(life_path)
+        except ValueError as error:
+            raise SystemExit(str(error)) from error
     raw_roots = provider.get("allowed_workspace_roots")
     if isinstance(raw_roots, str):
         raw_workspace_roots = [
@@ -5195,7 +5237,12 @@ def render_runtime_env(
     if playground_variant not in {"modern", "classic"}:
         playground_variant = "modern"
     livekit_http_port = str(profile["livekit_http_port"])
+    livekit_runtime = str(network.get("livekit_runtime") or "docker").strip().lower()
+    if livekit_runtime not in {"docker", "native"}:
+        raise SystemExit("runtime.network.livekit_runtime must be docker or native")
     livekit_api_host = str(network.get("livekit_api_host") or "").strip()
+    if livekit_runtime == "native" and livekit_api_host:
+        raise SystemExit("runtime.network.livekit_runtime=native cannot also select an external livekit_api_host")
     if livekit_api_host:
         try:
             livekit_endpoint = urlparse(livekit_api_host)
@@ -5412,6 +5459,7 @@ def render_runtime_env(
         "VIVENTIUM_SKYVERN_UI_PORT": str(profile["skyvern_ui_port"]),
         "VIVENTIUM_PLAYGROUND_URL": f"http://localhost:{profile['playground_port']}",
         "LIVEKIT_HTTP_PORT": livekit_http_port,
+        "VIVENTIUM_LIVEKIT_RUNTIME": livekit_runtime,
         "LIVEKIT_TCP_PORT": str(profile["livekit_tcp_port"]),
         "LIVEKIT_UDP_PORT": str(profile["livekit_udp_port"]),
         "LIVEKIT_API_KEY": "viventium-local",
@@ -5671,6 +5719,7 @@ def render_runtime_env(
         # LIFE is a source/Docker install concern independent of whether the
         # GlassHive provider is currently enabled. Native filters this key.
         "VIVENTIUM_LIFE_DIR": str(glasshive_provider["life_dir"]),
+        "GLASSHIVE_PROTECTED_ARTIFACT_ROOTS": str(glasshive_provider["life_dir"]),
         # Truth for the setup API: the default path above is not an owner choice.
         "VIVENTIUM_LIFE_FOLDER_CHOSEN": (
             "true" if glasshive_provider.get("life_dir_chosen") else "false"
@@ -5838,6 +5887,12 @@ def render_runtime_env(
                 glasshive_fallback_worker_profile
             )
         env["WPR_HOST_WORKSPACE_ROOT"] = str(glasshive_host_worker["workspace_root"])
+        env.update(local_media_worker_environment(
+            config,
+            glasshive_orchestration["automatic_execution_mode"],
+            glasshive_host_worker["workspace_root"],
+            glasshive_provider["life_dir"],
+        ))
         env["GLASSHIVE_DEFAULT_EXECUTION_MODE"] = str(glasshive_host_worker["default_execution_mode"])
         env["WPR_DEFAULT_EXECUTION_MODE"] = str(glasshive_host_worker["default_execution_mode"])
         env["WPR_HOST_DESTRUCTIVE_CONFIRMATION"] = "true" if glasshive_host_worker["destructive_confirmation_enabled"] else "false"
@@ -6362,6 +6417,46 @@ def render_runtime_env(
     public_glasshive_origin = str(network.get("public_glasshive_origin", "") or "").strip()
     livekit_node_ip = str(network.get("livekit_node_ip", "") or "").strip()
     remote_call_mode = normalize_remote_call_mode(network)
+
+    if resolve_bool(network.get("lan_https"), False):
+        if remote_call_mode != "public_https_edge" or resolved_voice["mode"] == "disabled":
+            raise SystemExit("runtime.network.lan_https requires the public HTTPS edge and enabled Voice")
+        env["VIVENTIUM_LAN_HTTPS"] = "true"
+        lan_ports = [bounded_int_or_default(network.get(key), default, f"runtime.network.{key}",
+                     minimum=1024, maximum=65535) for key, default in (
+                         ("lan_playground_https_port", 8443), ("lan_livekit_https_port", 8444))]
+        if lan_ports[0] == lan_ports[1]:
+            raise SystemExit("LAN call listener ports must be distinct")
+        env["VIVENTIUM_LAN_PLAYGROUND_HTTPS_PORT"] = str(lan_ports[0])
+        env["VIVENTIUM_LAN_LIVEKIT_HTTPS_PORT"] = str(lan_ports[1])
+        lan_domain = str(network.get("lan_domain") or "").strip().lower().rstrip(".")
+        if lan_domain:
+            lan_dns = network.get("lan_dns") or {}
+            zone = str(lan_dns.get("zone") or "").strip().lower().rstrip(".")
+            provider = str(lan_dns.get("provider") or "").strip()
+            secret_ref = str(lan_dns.get("api_token") or "").strip()
+            if provider not in {"godaddy", "cloudflare"} or not zone or not secret_ref.startswith("keychain://") or not secret_ref[len("keychain://"):]:
+                raise SystemExit("Trusted LAN HTTPS requires a DNS zone, supported provider and Keychain credential reference")
+            if not lan_domain.endswith("." + zone):
+                raise SystemExit("The LAN domain must be a dedicated subdomain of its DNS zone")
+            for name in (lan_domain, zone):
+                if any(not label or len(label) > 63 or label.startswith("-") or label.endswith("-")
+                       or not label.isascii() or not label.replace("-", "").isalnum()
+                       for label in name.split(".")):
+                    raise SystemExit("LAN DNS settings require plain DNS names")
+            lan_hosts = {f"playground.{lan_domain}", f"livekit.{lan_domain}"}
+            public_hosts = {urlparse(value).hostname for value in (
+                public_client_origin, public_api_origin, public_playground_origin,
+                public_livekit_url, public_glasshive_origin,
+            ) if value}
+            if lan_hosts & public_hosts:
+                raise SystemExit("LAN DNS names must not reuse a configured public hostname")
+            env.update({
+                "VIVENTIUM_LAN_DOMAIN": lan_domain,
+                "VIVENTIUM_LAN_DNS_ZONE": zone,
+                "VIVENTIUM_LAN_DNS_PROVIDER": provider,
+                "VIVENTIUM_LAN_DNS_SECRET_REF": secret_ref,
+            })
 
     if remote_call_mode:
         env["VIVENTIUM_REMOTE_CALL_MODE"] = remote_call_mode
@@ -7003,6 +7098,14 @@ def render_runtime_env(
 
     for key, value in build_legacy_env_imports(config).items():
         env.setdefault(key, value)
+    if chrome_devtools_enabled(config):
+        persistent_servers = dict.fromkeys(
+            server.strip()
+            for server in env.get("MCP_PERSISTENT_CONNECTION_SERVERS", "scheduling-cortex").split(",")
+            if server.strip()
+        )
+        persistent_servers["chrome-devtools"] = None
+        env["MCP_PERSISTENT_CONNECTION_SERVERS"] = ",".join(persistent_servers)
     if glasshive_is_enabled and not glasshive_enterprise["enabled"]:
         glasshive_config = integrations.get("glasshive", {}) or {}
         configured_mcp_url = str(glasshive_config.get("mcp_url") or "").strip()
@@ -7086,6 +7189,8 @@ def render_runtime_env(
             runtime_app_support_dir, profile["lc_api_port"]
         )
 
+    # The edge helper resolves this credential only for its Caddy child.
+    env.pop("VIVENTIUM_LAN_DNS_TOKEN", None)
     return env
 
 
@@ -7106,6 +7211,7 @@ def render_native_runtime_env(config: dict[str, Any], env: dict[str, str]) -> di
         # Source-install serving; Native owns its own compiled serving and delivery slot.
         "VIVENTIUM_LIBRECHAT_SERVE_MODE",
         "VIVENTIUM_RUNTIME_SLOT_ID",
+        "VIVENTIUM_LOCAL_MEDIA_WORKER_BOOTSTRAP",
     }
     denied_name_fragments = ("SECRET", "TOKEN", "PASSWORD", "CREDENTIAL", "API_KEY")
     denied_suffixes = ("_DIR", "_FILE", "_ORIGIN", "_PATH", "_PORT", "_ROOT", "_URL")
@@ -7638,6 +7744,32 @@ def build_mcp_servers(
             servers["sequential-thinking"]["command"] = "${VIVENTIUM_NATIVE_NODE_BINARY}"
             servers["sequential-thinking"]["args"] = ["${VIVENTIUM_NATIVE_SEQUENTIAL_THINKING_ENTRYPOINT}"]
 
+    if chrome_devtools_enabled(config):
+        servers["chrome-devtools"] = {
+            "type": "stdio",
+            "command": "npx",
+            "args": [
+                "-y", "chrome-devtools-mcp@1.12.0", "--autoConnect",
+                "--no-usage-statistics", "--no-performance-crux",
+            ],
+            "startup": False,
+            "chatMenu": True,
+            "timeout": 120000,
+            "viventiumAccess": {"audience": "local_owner"},
+            "viventiumGlassHive": {
+                "version": 1,
+                "permitsAutonomousWorker": True,
+                "hostAllowed": True,
+                "sandboxAllowed": False,
+                "defaultToolAccess": "content_read",
+                "contentReadPolicy": "require_broker_grant",
+                "writePolicy": "allow",
+                "riskClass": "local_browser_control",
+                "reexportNativeTools": True,
+                "nativeServerIds": ["chrome-devtools"],
+            },
+        }
+
     if glasshive_enabled(config):
         glasshive_enterprise = resolve_glasshive_enterprise_settings(config)
         glasshive_headers = {
@@ -7894,6 +8026,17 @@ def render_librechat_yaml(
         },
     }
     source_template = load_source_of_truth_librechat_yaml()
+    source_agents = load_source_of_truth_agents_bundle()
+    direct_action_servers = (
+        ((source_agents.get("config") or {}).get("viventium") or {})
+        .get("background_cortices", {})
+        .get("activation_policy", {})
+        .get("direct_action_mcp_servers")
+    )
+    if isinstance(direct_action_servers, list):
+        generated["viventium"]["background_cortices"] = {
+            "activation_policy": {"direct_action_mcp_servers": copy.deepcopy(direct_action_servers)}
+        }
     payload = copy.deepcopy(source_template) if source_template else {}
 
     payload["version"] = LIBRECHAT_YAML_VERSION
@@ -8054,6 +8197,7 @@ def render_service_envs(output_dir: Path, env: dict[str, str]) -> None:
     ]
     telegram_keys = [
         "BOT_TOKEN",
+        "VIVENTIUM_LAN_DOMAIN",
         "VIVENTIUM_TELEGRAM_BACKEND",
         "VIVENTIUM_TELEGRAM_AGENT_ID",
         "VIVENTIUM_LIBRECHAT_ORIGIN",
@@ -8298,9 +8442,15 @@ def render_service_envs(output_dir: Path, env: dict[str, str]) -> None:
     glasshive_runtime_env["VIVENTIUM_DISABLE_DEFAULT_RUNTIME_ENV"] = "1"
 
     librechat_env = {key: env.get(key, "") for key in librechat_keys}
+    if "VIVENTIUM_LOCAL_MEDIA_WORKER_BOOTSTRAP" in env:
+        librechat_env["VIVENTIUM_LOCAL_MEDIA_WORKER_BOOTSTRAP"] = env[
+            "VIVENTIUM_LOCAL_MEDIA_WORKER_BOOTSTRAP"
+        ]
     for key in ("USE_REDIS", "USE_REDIS_STREAMS", "REDIS_URI"):
         if key in env:
             librechat_env[key] = env[key]
+    if "MCP_PERSISTENT_CONNECTION_SERVERS" in env:
+        librechat_env["MCP_PERSISTENT_CONNECTION_SERVERS"] = env["MCP_PERSISTENT_CONNECTION_SERVERS"]
     dump_env(service_dir / "librechat.env", librechat_env)
     dump_env(service_dir / "telegram.config.env", {key: env.get(key, "") for key in telegram_keys})
     dump_env(service_dir / "telegram-codex.env", {key: env.get(key, "") for key in telegram_codex_keys})

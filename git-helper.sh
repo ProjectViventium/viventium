@@ -398,6 +398,7 @@ push_branch_via_temp_clone() {
     local path="$2"
     local branch="$3"
     local force_push="$4"
+    local approved_tip="$5"
 
     local origin_url temp_dir push_exit=0
     origin_url="$(git -C "$path" remote get-url origin 2>/dev/null || echo "")"
@@ -431,7 +432,7 @@ push_branch_via_temp_clone() {
 
     git -C "$temp_dir" fetch --no-tags origin >/dev/null 2>&1 || true
 
-    if ! git -C "$temp_dir" fetch --no-tags localsrc "refs/heads/$branch:refs/heads/$branch"; then
+    if ! git -C "$temp_dir" fetch --no-tags localsrc "$approved_tip:refs/heads/$branch"; then
         cleanup_temp_dir "$temp_dir"
         echo "  - $name: failed to import local branch into temp repo" >&2
         return 1
@@ -444,10 +445,10 @@ push_branch_via_temp_clone() {
     fi
 
     if [ "$force_push" = true ]; then
-        git -C "$temp_dir" push --force -u origin "$branch"
+        git -C "$temp_dir" push --no-follow-tags --recurse-submodules=no --force -u origin "$branch"
         push_exit=$?
     else
-        git -C "$temp_dir" push -u origin "$branch"
+        git -C "$temp_dir" push --no-follow-tags --recurse-submodules=no -u origin "$branch"
         push_exit=$?
     fi
 
@@ -503,10 +504,10 @@ commit_and_push_repo() {
     echo "[$name] $path"
 
     if [ "$dry_run" = true ]; then
-        echo "  - would checkout/create branch $branch"
+        echo "  - would checkout the requested branch"
         echo "  - would stage repo-safe changes"
-        echo "  - would commit with message: $message"
-        echo "  - would push to origin/$branch$([ "$force_push" = true ] && echo ' (force)')"
+        echo "  - would commit staged changes after the privacy check"
+        echo "  - would push the reviewed revision to origin$([ "$force_push" = true ] && echo ' (force)')"
         return 0
     fi
 
@@ -531,7 +532,7 @@ commit_and_push_repo() {
             return 1
         }
         python3 "$PROJECT_ROOT/scripts/viventium/verify_staged_public_safety.py" \
-            --repo "$path" || {
+            --repo "$path" --message-stdin <<< "$message" || {
             echo "  - $name: staged public-safety verification failed; refusing to commit or push" >&2
             return 1
         }
@@ -548,25 +549,44 @@ commit_and_push_repo() {
         echo "  - no changes to commit"
     fi
 
+    # The index can be clean while a local commit still contains private data.
+    # Refresh the exact origin branch baseline before inspecting all outgoing history.
+    local fetch_url push_url approved_tip
+    fetch_url="$(git -C "$path" remote get-url --all origin)" || return 1
+    push_url="$(git -C "$path" remote get-url --push --all origin)" || return 1
+    if [[ "$fetch_url" != "$push_url" || "$fetch_url" == *$'\n'* ]]; then
+        echo "  - $name: fetch and push must use the same single origin" >&2
+        return 1
+    fi
+    approved_tip="$(git -C "$path" rev-parse --verify "refs/heads/$branch^{commit}")" || return 1
+    if ! git -C "$path" fetch --no-tags --prune origin \
+        '+refs/heads/*:refs/remotes/origin/*' ||
+        ! python3 "$PROJECT_ROOT/scripts/viventium/verify_staged_public_safety.py" \
+            --repo "$path" --outgoing-ref "$approved_tip" --target-ref "refs/heads/$branch"; then
+        echo "  - $name: outgoing public-safety verification failed; refusing to push" >&2
+        return 1
+    fi
+
     if [ "$force_push" = true ]; then
-        if ! git -C "$path" push --force -u origin "$branch"; then
+        if ! git -C "$path" push --no-follow-tags --recurse-submodules=no --force origin "$approved_tip:refs/heads/$branch"; then
             echo "  - $name: direct push failed, retrying via temp clone"
-            push_branch_via_temp_clone "$name" "$path" "$branch" "$force_push" || {
+            push_branch_via_temp_clone "$name" "$path" "$branch" "$force_push" "$approved_tip" || {
                 echo "  - $name: push failed" >&2
                 return 1
             }
             echo "  - recovered push via temp clone"
         fi
     else
-        if ! git -C "$path" push -u origin "$branch"; then
+        if ! git -C "$path" push --no-follow-tags --recurse-submodules=no origin "$approved_tip:refs/heads/$branch"; then
             echo "  - $name: direct push failed, retrying via temp clone"
-            push_branch_via_temp_clone "$name" "$path" "$branch" "$force_push" || {
+            push_branch_via_temp_clone "$name" "$path" "$branch" "$force_push" "$approved_tip" || {
                 echo "  - $name: push failed" >&2
                 return 1
             }
             echo "  - recovered push via temp clone"
         fi
     fi
+    git -C "$path" branch --set-upstream-to="origin/$branch" "$branch" >/dev/null 2>&1 || true
     echo "  - pushed to origin/$branch"
     return 0
 }

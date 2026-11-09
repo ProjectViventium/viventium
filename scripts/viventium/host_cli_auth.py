@@ -11,6 +11,7 @@ from typing import Any
 
 
 CODEX_APP_CLI = Path("/Applications/Codex.app/Contents/Resources/codex")
+GROK_AUTH_PROBE = Path(__file__).resolve().parents[2] / "viventium_v0_4/xPerfect/runtime_phase1/src/workers_projects_runtime/grok_auth.py"
 GLASSHIVE_PROVIDER_MODEL_BY_WORKER_PROFILE = {
     "grok-build": "grok-build:grok-4.7",
     "codex-cli": "codex-cli:gpt-6.1-sol",
@@ -92,6 +93,12 @@ def host_cli_command(command: str) -> str:
             candidate = Path(selected).expanduser()
             resolved = str(candidate) if candidate.is_absolute() else shutil.which(selected)
             return resolved if resolved and executable_path_exists(Path(resolved)) else ""
+        discovered = shutil.which(command)
+        if discovered:
+            return discovered
+        vendor = Path.home() / ".grok/bin/grok"
+        if executable_path_exists(vendor):
+            return str(vendor)
     discovered = shutil.which(command)
     if not discovered and command == "grok":
         vendor = Path.home() / ".grok/bin/grok"
@@ -146,7 +153,7 @@ def host_cli_auth_ready(command: str) -> bool:
             payload = json.loads(completed.stdout)
         except json.JSONDecodeError:
             return False
-        return resolve_bool(payload.get("loggedIn"), False)
+        return isinstance(payload, dict) and resolve_bool(payload.get("loggedIn"), False)
     return True
 
 

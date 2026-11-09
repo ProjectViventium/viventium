@@ -21,7 +21,7 @@ class DecodedTelegramAudio:
     no_speech: bool = False
 
 
-def decode_audio_bytes(file_bytes, timeout_s=120):
+def decode_audio_bytes(file_bytes, timeout_s=120, *, input_format=None):
     """Preserve every source channel/rate for validation; Whisper gets float32 16 kHz mono.
 
     The preserved source is read in bounded chunks from a private temporary file. Only
@@ -39,6 +39,7 @@ def decode_audio_bytes(file_bytes, timeout_s=120):
         source.write_bytes(file_bytes)
         command = [
             'ffmpeg', '-nostdin', '-hide_banner', '-loglevel', 'error', '-y',
+            *(['-protocol_whitelist', 'file', '-f', input_format] if input_format else []),
             '-i', str(source), '-filter_complex', '[0:a:0]asplit=2[source][recognizer]',
             '-map', '[source]', '-c:a', 'pcm_f32le', '-f', 'f32le', str(preserved),
             '-map', '[recognizer]', '-ac', '1', '-ar', '16000',

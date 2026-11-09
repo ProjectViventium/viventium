@@ -1,5 +1,6 @@
 import asyncio
 import hashlib
+import ipaddress
 import logging
 import os
 import secrets
@@ -596,6 +597,27 @@ _CALL_URL_CACHE = {}
 _VOICE_PREFERENCE_SYNC_TASKS = {}
 
 
+_LOCAL_CALL_NETWORKS = tuple(ipaddress.ip_network(value) for value in
+                             ("10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16"))
+
+
+def _is_local_call_url(call_url):
+    try:
+        parsed = urlparse(str(call_url or "").strip())
+        domain = os.environ.get("VIVENTIUM_LAN_DOMAIN", "").strip().lower()
+        configured_hostname = bool(domain and parsed.hostname == "playground." + domain)
+        private_address = False
+        if not configured_hostname:
+            address = ipaddress.ip_address(parsed.hostname or "")
+            private_address = address.version == 4 and any(address in network for network in _LOCAL_CALL_NETWORKS)
+        return (parsed.scheme == "https" and parsed.port is not None
+                and (configured_hostname or private_address)
+                and parsed.path in {"", "/", "/call-bootstrap"}
+                and not parsed.username and not parsed.password)
+    except ValueError:
+        return False
+
+
 def _should_cache_call_url(call_url):
     parsed = urlparse(str(call_url or "").strip())
     if not parsed.scheme or not parsed.netloc:
@@ -690,7 +712,7 @@ def _extract_telegram_user_id(conversation_key):
     return raw
 
 
-def get_telegram_call_link_result(conversation_key):
+def get_telegram_call_link_result(conversation_key, *, launch_target="auto"):
     config_lookup_id = str(conversation_key or "").strip()
     normalized_user_id = _extract_telegram_user_id(config_lookup_id)
     if not normalized_user_id:
@@ -704,7 +726,7 @@ def get_telegram_call_link_result(conversation_key):
 
     cache_ttl_s = max(_get_int_env("VIVENTIUM_TELEGRAM_CALL_LINK_CACHE_TTL_S", 480), 0)
     now = time.time()
-    cached = _CALL_URL_CACHE.get(normalized_user_id)
+    cached = _CALL_URL_CACHE.get(normalized_user_id) if launch_target == "public" else None
     if cached and cached.get("expires_at", 0) > now:
         cached_url = cached.get("url", "")
         if _should_cache_call_url(cached_url):
@@ -738,6 +760,7 @@ def get_telegram_call_link_result(conversation_key):
         }
 
     payload = {"telegramUserId": normalized_user_id}
+    payload["launchTarget"] = launch_target
     try:
         state = get_librechat_conversation_state(config_lookup_id)
         conversation_id = state["conversation_id"]
@@ -770,10 +793,15 @@ def get_telegram_call_link_result(conversation_key):
                 "status_code": resp.status_code,
                 "link_required": bool(data.get("linkRequired")),
                 "public_url_required": bool(data.get("publicPlaygroundRequired")),
+                "local_url_required": bool(data.get("localPlaygroundRequired")),
                 "error": str(data.get("error") or "").strip(),
             }
         data = resp.json() if resp.content else {}
         call_url = str(data.get("callUrl") or data.get("playgroundUrl") or "").strip()
+        if launch_target == "local" and not _is_local_call_url(call_url):
+            return {"url": "", "local_url": "", "status_code": resp.status_code,
+                    "local_url_required": True,
+                    "error": "Local calls need a trusted same-Wi-Fi Viventium voice URL."}
         if not call_url:
             return {
                 "url": "",
@@ -782,13 +810,17 @@ def get_telegram_call_link_result(conversation_key):
                 "public_url_required": False,
                 "error": "Call link response did not include a URL",
             }
-        if cache_ttl_s > 0 and _should_cache_call_url(call_url):
+        if launch_target == "public" and cache_ttl_s > 0 and _should_cache_call_url(call_url):
             _CALL_URL_CACHE[normalized_user_id] = {
                 "url": call_url,
                 "expires_at": now + cache_ttl_s,
             }
         return {
             "url": call_url,
+            "launch_target": data.get("launchTarget") or launch_target,
+            "public_url": str(data.get("publicCallUrl") or "").strip(),
+            "local_url": str(data.get("localCallUrl") or "").strip()
+            if _is_local_call_url(data.get("localCallUrl")) else "",
             "status_code": resp.status_code,
             "link_required": False,
             "public_url_required": False,
@@ -1540,18 +1572,22 @@ def get_current_lang(chatid=None):
 # REMOVED: update_models_buttons() - Model selection UI removed, Viventium handles models
 # This function created model selection buttons which are no longer needed
 
-def update_first_buttons_message(chatid=None, call_url=None, fetch_call_url=True):
+def update_first_buttons_message(chatid=None, call_url=None, fetch_call_url=True, local_call_url=""):
     # REMOVED: Language selection button - Using English-only UI
     first_buttons = []
     if call_url is None:
         if chatid is None:
             call_url = ""
         elif fetch_call_url:
-            call_url = get_telegram_call_url(chatid)
+            call_result = get_telegram_call_link_result(chatid)
+            call_url = call_result.get("url") or ""
+            local_call_url = call_result.get("local_url") or ""
         else:
             call_url = get_cached_telegram_call_url(chatid)
-    if call_url:
-        first_buttons.append([InlineKeyboardButton("Call Viventium", url=call_url)])
+    if call_url and call_url != local_call_url:
+        first_buttons.append([InlineKeyboardButton("Other Wi-Fi or mobile data", url=call_url)])
+    if _is_local_call_url(local_call_url):
+        first_buttons.append([InlineKeyboardButton("Same Wi-Fi", url=local_call_url)])
     first_buttons.append(
         [
             # REMOVED: Model selection button - Models handled by Viventium

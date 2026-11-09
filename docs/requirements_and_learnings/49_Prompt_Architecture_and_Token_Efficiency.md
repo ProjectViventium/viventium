@@ -40,6 +40,31 @@ ClaudeViv review conclusion:
 
 ## Implementation Log
 
+### Shared Main Context for Late Results
+
+Late-result authors reuse ordinary Main message and runtime-instruction preparation. The result
+lane keeps its existing generation, persistence and delivery owners. It adds the registered
+relevance or deferred-answer tail to current Main identity, preferences, memory, Feelings,
+authorized conversation, files and channel instructions. Default channel instructions and admitted
+Call facts have one owner; the evidence prompt does not repeat them.
+
+The actual Main composer must include the registered channel instructions exactly once for
+Web/default, Telegram, playground, and admitted Voice. Web/default and nonscheduled Workbench use
+the registered Web text instructions. Trusted scheduled Workbench provenance instead selects the
+canonical scheduled-output contract; caller labels cannot override it. Late-result evidence adds
+no second channel contract or admitted-Call capsule.
+
+The current evidence event and the accepted task sources are separate. Further handoff uses exact
+accepted source segments and file references. Worker reports are inherited context, never current
+user input or a replacement task brief. Trusted channel and scheduler provenance survive without
+being rebuilt from caller labels. Callback-time Feelings reads and explicit evaluation isolation
+remain pinned through preparation. Native memory stays in the existing per-turn tail.
+
+The courier does not cut request, result or continuation text by character or message count.
+Existing context admission and source readers own capacity. Unexpected prepared event content
+fails before generation instead of silently discarding attachments. Acceptance requires paired
+exact-model checks and affected real-surface proof; source alignment alone is not delivery proof.
+
 ### 2026-10-14 Present Necessary Owner Input
 
 The registered Phase B user prompt distinguishes a promise or mention of choices from a question actually presented in the owner conversation. Presentation and answers must apply to the current accepted work and request. An answer or completed artifact from another work does not prove this need fulfilled without an applicable binding. Relevant current-work history, standing preferences and explicit permission remain usable. Already presented questions and needs resolved by the current conversation remain silent. A completed worker turn alone does not fulfill the accepted goal. This is model-owned judgment over existing evidence; it adds no runtime question detection, forced callback delivery or native approval authority.
@@ -785,7 +810,7 @@ are not trusted for profile or memory rendering.
 `HARD-020` is stricter than a token-free address bar. Workbench authentication material must never
 enter a URL, browser history, referrer, access/application log, or persistent `localStorage` value.
 Launch and refresh use a short-lived exchange or verified same-machine session, and the browser
-security case must inspect every one of those sinks. `PW-053` / `PW-UC-026` owns acceptance.
+security case must inspect every one of those sinks. `PWB-053` / `PWB-UC-026` owns acceptance.
 
 The built-in schedule is named **Subconscious Deep Thought** in the product UI, with
 **Nightly subconscious thought formation** documented as the template/legacy alias. It preserves
@@ -1855,6 +1880,18 @@ HARD-020: Prompt Workbench authentication material must not enter URLs, browser 
 <!-- VIVENTIUM-STABLE-REQUIREMENT-DECLARATIONS:END -->
 
 ### Native Profile MCP Access Facts
+
+Action-capable Native conversations inherit the existing registered
+`worker.native_capability_inventory` through the application instruction carrier. This includes
+the Native background coordinator. The exact same source already belongs to mission harness
+composition; dispatch and continuation do not add a second copy. Coordination-only Main and
+tool-less presentation keep their existing authority. This inheritance changes no tool grant,
+execution policy, or model choice.
+
+Context-only Main preparation exposes its exact scoped Feeling capsule to the ordinary Native
+`developer_instruction_tail` metadata owner. Native moves that existing authority text after
+structural instructions, keeps one copy, and rejects a declared tail absent from the supplied
+authority. No application-specific capsule parser is added to Native.
 
 The registered `worker.grok_mcp_tool_access` fact describes Grok's native `search_tool` and
 `use_tool` mechanism. The existing Grok command owner adds it to Worker rules or conversation

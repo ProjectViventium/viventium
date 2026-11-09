@@ -7,6 +7,22 @@ sourceInventories:
   - qa/main-continuity/cases.md
   - qa/scheduling-cortex/cases.md
 journeys:
+  - id: bounded-compaction-field-repair
+    requirements: [CC-003, CC-007]
+    userAction: Continue a long conversation whose indivisible history produces an oversized draft or omits required verbatim unfinished input; repeat with a stale repair digest, source correction and quoted instruction.
+    surfaces: [Main context admission, Prompt Workbench, Web, Telegram]
+    expectedResult: The configured model can replace only the fields needing compression. Unchanged fields persist exactly. The complete merged candidate fits its original allocation and passes independent fidelity review before promotion. Main can answer with an explicit older-context gap while this maintenance runs.
+    degradedAndRecovery: Stale drafts, schema changes, unknown replacement fields, oversized results and failed fidelity remain rejected. A rejected merged draft remains complete in subsequent feedback. Numeric-only repair and full proposals remain supported when a draft cannot fit native admission.
+    persistenceAndCleanup: Source, checkpoints, lease and attempt ownership remain unchanged. Reopening the conversation preserves the accepted response and history. Retire only exact synthetic fixtures.
+    evidence: [typed merge rejection tests, complete source review and promotion, exact-model old and proposed compaction and adjacent cases, source-compiled-live prompt lineage, real Telegram continuation and retained-source receipts]
+  - id: responsive-older-continuity
+    requirements: [CC-003, CC-007, MC-008]
+    userAction: Continue a long chat while older accepted context exceeds the selected carrier and while its background compaction is active. Request an existing completed file without repeating its work.
+    surfaces: [Telegram, Web, native Main, background compaction, Prompt Workbench]
+    expectedResult: Main answers current independent questions with current style and authority. A relevant temporary older-context gap is disclosed. Whole newest sources remain contiguous; older facts cannot cross an omitted correction. Existing files can be recovered through their authorized source.
+    degradedAndRecovery: Pending or unavailable older sources remain private and saved. Current required source and the disclosure still must fit. Disabled sources remain disabled. Compaction and independent fidelity review retain their original contract and run outside the reply path without idle-timer starvation.
+    persistenceAndCleanup: Replies and delivered file references survive reload once. Never revive old callback attempts, reset accounts or rerun completed work to pass QA. Preserve unrelated fixtures.
+    evidence: [old failure and same-chat recovery, configured-model rule comparison, selected carrier and registered guide receipt, active compactor plus independent Main session and timing, actual delivered original file and byte identity, persistence/reload, owner and password safety]
   - id: standing-invitation-fidelity
     requirements: [CC-001, CC-004, CC-022, CC-024, CC-025, CC-035, CC-061, CC-062, CC-063]
     userAction: Author a broad standing invitation, then compare its old and proposed scheduled prompt on the exact configured model with the same frozen conversation, memory and Feeling context. Cover spontaneous creativity, companionship without a task, an explicit busy boundary, recent unanswered contact, a long quiet gap and a stale prior nudge. Then run the saved candidate through ordinary Main and inspect the selected channel.

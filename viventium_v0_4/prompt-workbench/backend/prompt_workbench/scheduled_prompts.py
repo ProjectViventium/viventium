@@ -2079,7 +2079,7 @@ def _dispatch_manual_task_with_lease_heartbeat(
     stopped = threading.Event()
     lease_owner = f"workbench:{run_id}"
     lease_seconds = max(1, int(DEFAULT_OCCURRENCE_LEASE_SECONDS))
-    interval_s = max(1, min(60, lease_seconds // 3))
+    interval_s = min(60.0, lease_seconds / 3)
 
     def renew() -> None:
         while not stopped.wait(interval_s):

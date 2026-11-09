@@ -1,0 +1,2391 @@
+{
+  "schema_version": 2,
+  "study_date": "2026-11-08",
+  "qa_mode": "blast-radius",
+  "scope": "Read-only latency and decision replays; not runtime acceptance",
+  "sample_total": 115,
+  "transport_completed": 103,
+  "cold_seed_count": 1,
+  "context_buckets_chars": [
+    60000,
+    200000
+  ],
+  "variants": {
+    "sol-native": {
+      "provider": "openai",
+      "label": "Native Codex / plan quota",
+      "setting": "GPT-6.1 Sol \u00b7 Low",
+      "note": "Fresh native threads in one app-server. Not Direct."
+    },
+    "sol-official-direct": {
+      "provider": "openai",
+      "label": "Official ChatGPT Direct / plan quota",
+      "setting": "GPT-6.1 Sol \u00b7 Low",
+      "note": "Official app grant and public Responses endpoint. Tested; not yet integrated into xPerfect Direct."
+    },
+    "sol-api-rejected": {
+      "provider": "openai",
+      "label": "API credits / Sol unavailable",
+      "setting": "GPT-6.1 Sol \u00b7 Low",
+      "note": "Attempted: HTTP 403 model_not_found. The API project does not expose Sol; no substituted speed value."
+    },
+    "gpt52-api-low": {
+      "provider": "openai",
+      "label": "API credits / alternate-model control",
+      "setting": "GPT-5.2 \u00b7 Low",
+      "note": "Separate model available to the API project. Included free credit verified; not Sol parity."
+    },
+    "gpt52-api-none": {
+      "provider": "openai",
+      "label": "API credits / alternate-model control",
+      "setting": "GPT-5.2 \u00b7 thinking none",
+      "note": "Separate model. Recovery trials remain unstable: connection failures include a captured TLS error. Timings cover completions only; not a reliability pass."
+    },
+    "opus-native-warm": {
+      "provider": "anthropic",
+      "label": "Warm native Claude Code / plan quota",
+      "setting": "Opus 5 \u00b7 Low",
+      "note": "One persistent native conversation, after a separate cold seed. Documented quota route; not Direct."
+    },
+    "opus-native-low": {
+      "provider": "anthropic",
+      "label": "Cold native Claude Code / plan quota",
+      "setting": "Opus 5 \u00b7 Low",
+      "note": "Unmodified native harness; process startup included."
+    },
+    "opus-native-off": {
+      "provider": "anthropic",
+      "label": "Cold native Claude Code / plan quota",
+      "setting": "Opus 5 \u00b7 thinking off",
+      "note": "Official per-process thinking-off control; Low also requested. No consistent advantage here."
+    },
+    "opus-direct-low": {
+      "provider": "anthropic",
+      "label": "Saved Anthropic account / experimental Direct",
+      "setting": "Opus 5 \u00b7 Low",
+      "note": "Existing OAuth adapter adds Claude Code identity and headers. Success does not establish general Direct-client support."
+    },
+    "opus-direct-off": {
+      "provider": "anthropic",
+      "label": "Saved Anthropic account / experimental Direct",
+      "setting": "Opus 5 \u00b7 thinking off",
+      "note": "Same compatibility adapter, thinking explicitly disabled. Keep its support caveat."
+    },
+    "sol-official-none": {
+      "provider": "openai",
+      "label": "Official ChatGPT Direct / unsupported setting",
+      "setting": "GPT-6.1 Sol \u00b7 none",
+      "note": "HTTP 400 unsupported_value; not silently changed to Low."
+    }
+  },
+  "samples": [
+    {
+      "variant": "opus-direct-low",
+      "case": "cognition_natural",
+      "repetition": 1,
+      "phase": "primary",
+      "status": "completed",
+      "seed": false,
+      "first_text_s": 1.15,
+      "completion_s": 2.6393,
+      "requested_model": "claude-opus-5",
+      "effective_model": "claude-opus-5"
+    },
+    {
+      "variant": "opus-native-low",
+      "case": "cognition_natural",
+      "repetition": 1,
+      "phase": "primary",
+      "status": "completed",
+      "seed": false,
+      "first_text_s": 1.6457,
+      "completion_s": 2.981,
+      "requested_model": "claude-opus-5",
+      "effective_model": "claude-opus-5"
+    },
+    {
+      "variant": "opus-direct-off",
+      "case": "cognition_natural",
+      "repetition": 1,
+      "phase": "primary",
+      "status": "completed",
+      "seed": false,
+      "first_text_s": 1.0505,
+      "completion_s": 2.4564,
+      "requested_model": "claude-opus-5",
+      "effective_model": "claude-opus-5"
+    },
+    {
+      "variant": "opus-native-off",
+      "case": "cognition_natural",
+      "repetition": 1,
+      "phase": "primary",
+      "status": "completed",
+      "seed": false,
+      "first_text_s": 1.6915,
+      "completion_s": 3.1955,
+      "requested_model": "claude-opus-5",
+      "effective_model": "claude-opus-5"
+    },
+    {
+      "variant": "opus-direct-low",
+      "case": "full_natural",
+      "repetition": 1,
+      "phase": "primary",
+      "status": "completed",
+      "seed": false,
+      "first_text_s": 1.7731,
+      "completion_s": 2.8067,
+      "requested_model": "claude-opus-5",
+      "effective_model": "claude-opus-5"
+    },
+    {
+      "variant": "opus-native-low",
+      "case": "full_natural",
+      "repetition": 1,
+      "phase": "primary",
+      "status": "completed",
+      "seed": false,
+      "first_text_s": 2.4439,
+      "completion_s": 3.5497,
+      "requested_model": "claude-opus-5",
+      "effective_model": "claude-opus-5"
+    },
+    {
+      "variant": "opus-direct-off",
+      "case": "full_natural",
+      "repetition": 1,
+      "phase": "primary",
+      "status": "completed",
+      "seed": false,
+      "first_text_s": 2.4866,
+      "completion_s": 3.6593,
+      "requested_model": "claude-opus-5",
+      "effective_model": "claude-opus-5"
+    },
+    {
+      "variant": "opus-native-off",
+      "case": "full_natural",
+      "repetition": 1,
+      "phase": "primary",
+      "status": "completed",
+      "seed": false,
+      "first_text_s": 2.5705,
+      "completion_s": 3.5992,
+      "requested_model": "claude-opus-5",
+      "effective_model": "claude-opus-5"
+    },
+    {
+      "variant": "opus-direct-low",
+      "case": "full_reply",
+      "repetition": 1,
+      "phase": "primary",
+      "status": "completed",
+      "seed": false,
+      "first_text_s": 0.9877,
+      "completion_s": 2.0702,
+      "requested_model": "claude-opus-5",
+      "effective_model": "claude-opus-5",
+      "strict_json": true,
+      "expected_flag": true,
+      "no_machinery": true
+    },
+    {
+      "variant": "opus-native-low",
+      "case": "full_reply",
+      "repetition": 1,
+      "phase": "primary",
+      "status": "completed",
+      "seed": false,
+      "first_text_s": 3.9153,
+      "completion_s": 4.989,
+      "requested_model": "claude-opus-5",
+      "effective_model": "claude-opus-5",
+      "strict_json": true,
+      "expected_flag": true,
+      "no_machinery": true
+    },
+    {
+      "variant": "opus-direct-off",
+      "case": "full_reply",
+      "repetition": 1,
+      "phase": "primary",
+      "status": "completed",
+      "seed": false,
+      "first_text_s": 2.0721,
+      "completion_s": 3.4151,
+      "requested_model": "claude-opus-5",
+      "effective_model": "claude-opus-5",
+      "strict_json": true,
+      "expected_flag": true,
+      "no_machinery": true
+    },
+    {
+      "variant": "opus-native-off",
+      "case": "full_reply",
+      "repetition": 1,
+      "phase": "primary",
+      "status": "completed",
+      "seed": false,
+      "first_text_s": 2.3389,
+      "completion_s": 3.3442,
+      "requested_model": "claude-opus-5",
+      "effective_model": "claude-opus-5",
+      "strict_json": true,
+      "expected_flag": true,
+      "no_machinery": true
+    },
+    {
+      "variant": "opus-direct-low",
+      "case": "full_handoff",
+      "repetition": 1,
+      "phase": "primary",
+      "status": "completed",
+      "seed": false,
+      "first_text_s": 2.5111,
+      "completion_s": 4.1353,
+      "requested_model": "claude-opus-5",
+      "effective_model": "claude-opus-5",
+      "strict_json": true,
+      "expected_flag": true,
+      "no_machinery": true
+    },
+    {
+      "variant": "opus-native-low",
+      "case": "full_handoff",
+      "repetition": 1,
+      "phase": "primary",
+      "status": "completed",
+      "seed": false,
+      "first_text_s": 2.3793,
+      "completion_s": 4.0981,
+      "requested_model": "claude-opus-5",
+      "effective_model": "claude-opus-5",
+      "strict_json": true,
+      "expected_flag": true,
+      "no_machinery": true
+    },
+    {
+      "variant": "opus-direct-off",
+      "case": "full_handoff",
+      "repetition": 1,
+      "phase": "primary",
+      "status": "completed",
+      "seed": false,
+      "first_text_s": 1.9498,
+      "completion_s": 4.132,
+      "requested_model": "claude-opus-5",
+      "effective_model": "claude-opus-5",
+      "strict_json": true,
+      "expected_flag": true,
+      "no_machinery": true
+    },
+    {
+      "variant": "opus-native-off",
+      "case": "full_handoff",
+      "repetition": 1,
+      "phase": "primary",
+      "status": "completed",
+      "seed": false,
+      "first_text_s": 2.7139,
+      "completion_s": 4.531,
+      "requested_model": "claude-opus-5",
+      "effective_model": "claude-opus-5",
+      "strict_json": true,
+      "expected_flag": true,
+      "no_machinery": true
+    },
+    {
+      "variant": "opus-native-low",
+      "case": "cognition_natural",
+      "repetition": 2,
+      "phase": "primary",
+      "status": "completed",
+      "seed": false,
+      "first_text_s": 1.9748,
+      "completion_s": 3.1113,
+      "requested_model": "claude-opus-5",
+      "effective_model": "claude-opus-5"
+    },
+    {
+      "variant": "opus-direct-low",
+      "case": "cognition_natural",
+      "repetition": 2,
+      "phase": "primary",
+      "status": "completed",
+      "seed": false,
+      "first_text_s": 2.7168,
+      "completion_s": 4.0158,
+      "requested_model": "claude-opus-5",
+      "effective_model": "claude-opus-5"
+    },
+    {
+      "variant": "opus-native-off",
+      "case": "cognition_natural",
+      "repetition": 2,
+      "phase": "primary",
+      "status": "completed",
+      "seed": false,
+      "first_text_s": 1.4898,
+      "completion_s": 3.0654,
+      "requested_model": "claude-opus-5",
+      "effective_model": "claude-opus-5"
+    },
+    {
+      "variant": "opus-direct-off",
+      "case": "cognition_natural",
+      "repetition": 2,
+      "phase": "primary",
+      "status": "completed",
+      "seed": false,
+      "first_text_s": 1.0524,
+      "completion_s": 2.3495,
+      "requested_model": "claude-opus-5",
+      "effective_model": "claude-opus-5"
+    },
+    {
+      "variant": "opus-native-low",
+      "case": "full_natural",
+      "repetition": 2,
+      "phase": "primary",
+      "status": "completed",
+      "seed": false,
+      "first_text_s": 2.7055,
+      "completion_s": 3.9943,
+      "requested_model": "claude-opus-5",
+      "effective_model": "claude-opus-5"
+    },
+    {
+      "variant": "opus-direct-low",
+      "case": "full_natural",
+      "repetition": 2,
+      "phase": "primary",
+      "status": "completed",
+      "seed": false,
+      "first_text_s": 0.9886,
+      "completion_s": 1.9656,
+      "requested_model": "claude-opus-5",
+      "effective_model": "claude-opus-5"
+    },
+    {
+      "variant": "opus-native-off",
+      "case": "full_natural",
+      "repetition": 2,
+      "phase": "primary",
+      "status": "completed",
+      "seed": false,
+      "first_text_s": 3.4943,
+      "completion_s": 4.4227,
+      "requested_model": "claude-opus-5",
+      "effective_model": "claude-opus-5"
+    },
+    {
+      "variant": "opus-direct-off",
+      "case": "full_natural",
+      "repetition": 2,
+      "phase": "primary",
+      "status": "completed",
+      "seed": false,
+      "first_text_s": 1.2923,
+      "completion_s": 2.6596,
+      "requested_model": "claude-opus-5",
+      "effective_model": "claude-opus-5"
+    },
+    {
+      "variant": "opus-native-low",
+      "case": "full_reply",
+      "repetition": 2,
+      "phase": "primary",
+      "status": "completed",
+      "seed": false,
+      "first_text_s": 2.7741,
+      "completion_s": 3.8979,
+      "requested_model": "claude-opus-5",
+      "effective_model": "claude-opus-5",
+      "strict_json": true,
+      "expected_flag": true,
+      "no_machinery": true
+    },
+    {
+      "variant": "opus-direct-low",
+      "case": "full_reply",
+      "repetition": 2,
+      "phase": "primary",
+      "status": "completed",
+      "seed": false,
+      "first_text_s": 1.0622,
+      "completion_s": 2.2278,
+      "requested_model": "claude-opus-5",
+      "effective_model": "claude-opus-5",
+      "strict_json": true,
+      "expected_flag": true,
+      "no_machinery": true
+    },
+    {
+      "variant": "opus-native-off",
+      "case": "full_reply",
+      "repetition": 2,
+      "phase": "primary",
+      "status": "completed",
+      "seed": false,
+      "first_text_s": 3.9387,
+      "completion_s": 5.1692,
+      "requested_model": "claude-opus-5",
+      "effective_model": "claude-opus-5",
+      "strict_json": true,
+      "expected_flag": true,
+      "no_machinery": true
+    },
+    {
+      "variant": "opus-direct-off",
+      "case": "full_reply",
+      "repetition": 2,
+      "phase": "primary",
+      "status": "completed",
+      "seed": false,
+      "first_text_s": 1.1336,
+      "completion_s": 2.607,
+      "requested_model": "claude-opus-5",
+      "effective_model": "claude-opus-5",
+      "strict_json": true,
+      "expected_flag": true,
+      "no_machinery": true
+    },
+    {
+      "variant": "opus-native-low",
+      "case": "full_handoff",
+      "repetition": 2,
+      "phase": "primary",
+      "status": "completed",
+      "seed": false,
+      "first_text_s": 2.5362,
+      "completion_s": 4.1501,
+      "requested_model": "claude-opus-5",
+      "effective_model": "claude-opus-5",
+      "strict_json": true,
+      "expected_flag": true,
+      "no_machinery": true
+    },
+    {
+      "variant": "opus-direct-low",
+      "case": "full_handoff",
+      "repetition": 2,
+      "phase": "primary",
+      "status": "completed",
+      "seed": false,
+      "first_text_s": 1.1937,
+      "completion_s": 2.6602,
+      "requested_model": "claude-opus-5",
+      "effective_model": "claude-opus-5",
+      "strict_json": true,
+      "expected_flag": true,
+      "no_machinery": true
+    },
+    {
+      "variant": "opus-native-off",
+      "case": "full_handoff",
+      "repetition": 2,
+      "phase": "primary",
+      "status": "completed",
+      "seed": false,
+      "first_text_s": 3.2846,
+      "completion_s": 4.5147,
+      "requested_model": "claude-opus-5",
+      "effective_model": "claude-opus-5",
+      "strict_json": true,
+      "expected_flag": true,
+      "no_machinery": true
+    },
+    {
+      "variant": "opus-direct-off",
+      "case": "full_handoff",
+      "repetition": 2,
+      "phase": "primary",
+      "status": "completed",
+      "seed": false,
+      "first_text_s": 1.0135,
+      "completion_s": 2.2541,
+      "requested_model": "claude-opus-5",
+      "effective_model": "claude-opus-5",
+      "strict_json": true,
+      "expected_flag": true,
+      "no_machinery": true
+    },
+    {
+      "variant": "opus-direct-low",
+      "case": "cognition_natural",
+      "repetition": 3,
+      "phase": "primary",
+      "status": "completed",
+      "seed": false,
+      "first_text_s": 0.8355,
+      "completion_s": 2.2879,
+      "requested_model": "claude-opus-5",
+      "effective_model": "claude-opus-5"
+    },
+    {
+      "variant": "opus-native-low",
+      "case": "cognition_natural",
+      "repetition": 3,
+      "phase": "primary",
+      "status": "completed",
+      "seed": false,
+      "first_text_s": 1.5385,
+      "completion_s": 2.981,
+      "requested_model": "claude-opus-5",
+      "effective_model": "claude-opus-5"
+    },
+    {
+      "variant": "opus-direct-off",
+      "case": "cognition_natural",
+      "repetition": 3,
+      "phase": "primary",
+      "status": "completed",
+      "seed": false,
+      "first_text_s": 0.85,
+      "completion_s": 2.0458,
+      "requested_model": "claude-opus-5",
+      "effective_model": "claude-opus-5"
+    },
+    {
+      "variant": "opus-native-off",
+      "case": "cognition_natural",
+      "repetition": 3,
+      "phase": "primary",
+      "status": "completed",
+      "seed": false,
+      "first_text_s": 1.6073,
+      "completion_s": 3.1144,
+      "requested_model": "claude-opus-5",
+      "effective_model": "claude-opus-5"
+    },
+    {
+      "variant": "opus-direct-low",
+      "case": "full_natural",
+      "repetition": 3,
+      "phase": "primary",
+      "status": "completed",
+      "seed": false,
+      "first_text_s": 1.1228,
+      "completion_s": 2.1692,
+      "requested_model": "claude-opus-5",
+      "effective_model": "claude-opus-5"
+    },
+    {
+      "variant": "opus-native-low",
+      "case": "full_natural",
+      "repetition": 3,
+      "phase": "primary",
+      "status": "completed",
+      "seed": false,
+      "first_text_s": 2.6456,
+      "completion_s": 3.8165,
+      "requested_model": "claude-opus-5",
+      "effective_model": "claude-opus-5"
+    },
+    {
+      "variant": "opus-direct-off",
+      "case": "full_natural",
+      "repetition": 3,
+      "phase": "primary",
+      "status": "completed",
+      "seed": false,
+      "first_text_s": 1.3507,
+      "completion_s": 2.7861,
+      "requested_model": "claude-opus-5",
+      "effective_model": "claude-opus-5"
+    },
+    {
+      "variant": "opus-native-off",
+      "case": "full_natural",
+      "repetition": 3,
+      "phase": "primary",
+      "status": "completed",
+      "seed": false,
+      "first_text_s": 2.4928,
+      "completion_s": 4.0298,
+      "requested_model": "claude-opus-5",
+      "effective_model": "claude-opus-5"
+    },
+    {
+      "variant": "opus-direct-low",
+      "case": "full_reply",
+      "repetition": 3,
+      "phase": "primary",
+      "status": "completed",
+      "seed": false,
+      "first_text_s": 1.0943,
+      "completion_s": 2.2368,
+      "requested_model": "claude-opus-5",
+      "effective_model": "claude-opus-5",
+      "strict_json": true,
+      "expected_flag": true,
+      "no_machinery": true
+    },
+    {
+      "variant": "opus-native-low",
+      "case": "full_reply",
+      "repetition": 3,
+      "phase": "primary",
+      "status": "completed",
+      "seed": false,
+      "first_text_s": 1.6729,
+      "completion_s": 3.0001,
+      "requested_model": "claude-opus-5",
+      "effective_model": "claude-opus-5",
+      "strict_json": true,
+      "expected_flag": true,
+      "no_machinery": true
+    },
+    {
+      "variant": "opus-direct-off",
+      "case": "full_reply",
+      "repetition": 3,
+      "phase": "primary",
+      "status": "completed",
+      "seed": false,
+      "first_text_s": 1.0082,
+      "completion_s": 2.2199,
+      "requested_model": "claude-opus-5",
+      "effective_model": "claude-opus-5",
+      "strict_json": true,
+      "expected_flag": true,
+      "no_machinery": true
+    },
+    {
+      "variant": "opus-native-off",
+      "case": "full_reply",
+      "repetition": 3,
+      "phase": "primary",
+      "status": "completed",
+      "seed": false,
+      "first_text_s": 3.5354,
+      "completion_s": 4.6824,
+      "requested_model": "claude-opus-5",
+      "effective_model": "claude-opus-5",
+      "strict_json": true,
+      "expected_flag": true,
+      "no_machinery": true
+    },
+    {
+      "variant": "opus-direct-low",
+      "case": "full_handoff",
+      "repetition": 3,
+      "phase": "primary",
+      "status": "completed",
+      "seed": false,
+      "first_text_s": 1.0973,
+      "completion_s": 2.5932,
+      "requested_model": "claude-opus-5",
+      "effective_model": "claude-opus-5",
+      "strict_json": true,
+      "expected_flag": true,
+      "no_machinery": true
+    },
+    {
+      "variant": "opus-native-low",
+      "case": "full_handoff",
+      "repetition": 3,
+      "phase": "primary",
+      "status": "completed",
+      "seed": false,
+      "first_text_s": 1.7848,
+      "completion_s": 3.1068,
+      "requested_model": "claude-opus-5",
+      "effective_model": "claude-opus-5",
+      "strict_json": true,
+      "expected_flag": true,
+      "no_machinery": true
+    },
+    {
+      "variant": "opus-direct-off",
+      "case": "full_handoff",
+      "repetition": 3,
+      "phase": "primary",
+      "status": "completed",
+      "seed": false,
+      "first_text_s": 0.9229,
+      "completion_s": 2.642,
+      "requested_model": "claude-opus-5",
+      "effective_model": "claude-opus-5",
+      "strict_json": true,
+      "expected_flag": true,
+      "no_machinery": true
+    },
+    {
+      "variant": "opus-native-off",
+      "case": "full_handoff",
+      "repetition": 3,
+      "phase": "primary",
+      "status": "completed",
+      "seed": false,
+      "first_text_s": 2.4222,
+      "completion_s": 3.8335,
+      "requested_model": "claude-opus-5",
+      "effective_model": "claude-opus-5",
+      "strict_json": true,
+      "expected_flag": true,
+      "no_machinery": true
+    },
+    {
+      "variant": "sol-native",
+      "case": "cognition_natural",
+      "repetition": 1,
+      "phase": "primary",
+      "status": "completed",
+      "seed": false,
+      "first_text_s": 5.5324,
+      "completion_s": 6.6296,
+      "requested_model": "gpt-6.1-sol",
+      "effective_model": null
+    },
+    {
+      "variant": "sol-native",
+      "case": "full_natural",
+      "repetition": 1,
+      "phase": "primary",
+      "status": "completed",
+      "seed": false,
+      "first_text_s": 2.5486,
+      "completion_s": 3.6484,
+      "requested_model": "gpt-6.1-sol",
+      "effective_model": null
+    },
+    {
+      "variant": "sol-native",
+      "case": "full_reply",
+      "repetition": 1,
+      "phase": "primary",
+      "status": "completed",
+      "seed": false,
+      "first_text_s": 5.5751,
+      "completion_s": 6.1128,
+      "requested_model": "gpt-6.1-sol",
+      "effective_model": null,
+      "strict_json": true,
+      "expected_flag": true,
+      "no_machinery": true
+    },
+    {
+      "variant": "sol-native",
+      "case": "full_handoff",
+      "repetition": 1,
+      "phase": "primary",
+      "status": "completed",
+      "seed": false,
+      "first_text_s": 4.6639,
+      "completion_s": 5.4379,
+      "requested_model": "gpt-6.1-sol",
+      "effective_model": null,
+      "strict_json": true,
+      "expected_flag": true,
+      "no_machinery": true
+    },
+    {
+      "variant": "sol-native",
+      "case": "cognition_natural",
+      "repetition": 2,
+      "phase": "primary",
+      "status": "completed",
+      "seed": false,
+      "first_text_s": 4.7331,
+      "completion_s": 5.3626,
+      "requested_model": "gpt-6.1-sol",
+      "effective_model": null
+    },
+    {
+      "variant": "sol-native",
+      "case": "full_natural",
+      "repetition": 2,
+      "phase": "primary",
+      "status": "completed",
+      "seed": false,
+      "first_text_s": 2.5949,
+      "completion_s": 3.703,
+      "requested_model": "gpt-6.1-sol",
+      "effective_model": null
+    },
+    {
+      "variant": "sol-native",
+      "case": "full_reply",
+      "repetition": 2,
+      "phase": "primary",
+      "status": "completed",
+      "seed": false,
+      "first_text_s": 5.7881,
+      "completion_s": 6.241,
+      "requested_model": "gpt-6.1-sol",
+      "effective_model": null,
+      "strict_json": true,
+      "expected_flag": true,
+      "no_machinery": true
+    },
+    {
+      "variant": "sol-native",
+      "case": "full_handoff",
+      "repetition": 2,
+      "phase": "primary",
+      "status": "completed",
+      "seed": false,
+      "first_text_s": 2.8528,
+      "completion_s": 3.4782,
+      "requested_model": "gpt-6.1-sol",
+      "effective_model": null,
+      "strict_json": true,
+      "expected_flag": true,
+      "no_machinery": true
+    },
+    {
+      "variant": "sol-native",
+      "case": "cognition_natural",
+      "repetition": 3,
+      "phase": "primary",
+      "status": "completed",
+      "seed": false,
+      "first_text_s": 2.6687,
+      "completion_s": 3.4769,
+      "requested_model": "gpt-6.1-sol",
+      "effective_model": null
+    },
+    {
+      "variant": "sol-native",
+      "case": "full_natural",
+      "repetition": 3,
+      "phase": "primary",
+      "status": "completed",
+      "seed": false,
+      "first_text_s": 2.5165,
+      "completion_s": 3.5261,
+      "requested_model": "gpt-6.1-sol",
+      "effective_model": null
+    },
+    {
+      "variant": "sol-native",
+      "case": "full_reply",
+      "repetition": 3,
+      "phase": "primary",
+      "status": "completed",
+      "seed": false,
+      "first_text_s": 2.9807,
+      "completion_s": 3.7105,
+      "requested_model": "gpt-6.1-sol",
+      "effective_model": null,
+      "strict_json": true,
+      "expected_flag": true,
+      "no_machinery": true
+    },
+    {
+      "variant": "sol-native",
+      "case": "full_handoff",
+      "repetition": 3,
+      "phase": "primary",
+      "status": "completed",
+      "seed": false,
+      "first_text_s": 2.6289,
+      "completion_s": 3.336,
+      "requested_model": "gpt-6.1-sol",
+      "effective_model": null,
+      "strict_json": true,
+      "expected_flag": true,
+      "no_machinery": true
+    },
+    {
+      "variant": "sol-official-direct",
+      "case": "cognition_natural",
+      "repetition": 1,
+      "phase": "primary",
+      "status": "completed",
+      "seed": false,
+      "first_text_s": 1.6428,
+      "completion_s": 2.6866,
+      "requested_model": "gpt-6.1-sol",
+      "effective_model": "gpt-6.1-sol"
+    },
+    {
+      "variant": "sol-official-direct",
+      "case": "full_natural",
+      "repetition": 1,
+      "phase": "primary",
+      "status": "completed",
+      "seed": false,
+      "first_text_s": 2.0222,
+      "completion_s": 2.8713,
+      "requested_model": "gpt-6.1-sol",
+      "effective_model": "gpt-6.1-sol"
+    },
+    {
+      "variant": "sol-official-direct",
+      "case": "full_reply",
+      "repetition": 1,
+      "phase": "primary",
+      "status": "completed",
+      "seed": false,
+      "first_text_s": 2.3577,
+      "completion_s": 2.9984,
+      "requested_model": "gpt-6.1-sol",
+      "effective_model": "gpt-6.1-sol",
+      "strict_json": true,
+      "expected_flag": true,
+      "no_machinery": true
+    },
+    {
+      "variant": "sol-official-direct",
+      "case": "full_handoff",
+      "repetition": 1,
+      "phase": "primary",
+      "status": "completed",
+      "seed": false,
+      "first_text_s": 1.7187,
+      "completion_s": 2.8688,
+      "requested_model": "gpt-6.1-sol",
+      "effective_model": "gpt-6.1-sol",
+      "strict_json": true,
+      "expected_flag": true,
+      "no_machinery": true
+    },
+    {
+      "variant": "sol-official-direct",
+      "case": "cognition_natural",
+      "repetition": 2,
+      "phase": "primary",
+      "status": "completed",
+      "seed": false,
+      "first_text_s": 1.8956,
+      "completion_s": 2.5688,
+      "requested_model": "gpt-6.1-sol",
+      "effective_model": "gpt-6.1-sol"
+    },
+    {
+      "variant": "sol-official-direct",
+      "case": "full_natural",
+      "repetition": 2,
+      "phase": "primary",
+      "status": "completed",
+      "seed": false,
+      "first_text_s": 2.3291,
+      "completion_s": 3.2923,
+      "requested_model": "gpt-6.1-sol",
+      "effective_model": "gpt-6.1-sol"
+    },
+    {
+      "variant": "sol-official-direct",
+      "case": "full_reply",
+      "repetition": 2,
+      "phase": "primary",
+      "status": "completed",
+      "seed": false,
+      "first_text_s": 2.0965,
+      "completion_s": 3.2905,
+      "requested_model": "gpt-6.1-sol",
+      "effective_model": "gpt-6.1-sol",
+      "strict_json": true,
+      "expected_flag": true,
+      "no_machinery": true
+    },
+    {
+      "variant": "sol-official-direct",
+      "case": "full_handoff",
+      "repetition": 2,
+      "phase": "primary",
+      "status": "completed",
+      "seed": false,
+      "first_text_s": 2.7164,
+      "completion_s": 3.6379,
+      "requested_model": "gpt-6.1-sol",
+      "effective_model": "gpt-6.1-sol",
+      "strict_json": true,
+      "expected_flag": true,
+      "no_machinery": true
+    },
+    {
+      "variant": "sol-official-direct",
+      "case": "cognition_natural",
+      "repetition": 3,
+      "phase": "primary",
+      "status": "completed",
+      "seed": false,
+      "first_text_s": 1.5942,
+      "completion_s": 2.5551,
+      "requested_model": "gpt-6.1-sol",
+      "effective_model": "gpt-6.1-sol"
+    },
+    {
+      "variant": "sol-official-direct",
+      "case": "full_natural",
+      "repetition": 3,
+      "phase": "primary",
+      "status": "completed",
+      "seed": false,
+      "first_text_s": 2.0805,
+      "completion_s": 2.7647,
+      "requested_model": "gpt-6.1-sol",
+      "effective_model": "gpt-6.1-sol"
+    },
+    {
+      "variant": "sol-official-direct",
+      "case": "full_reply",
+      "repetition": 3,
+      "phase": "primary",
+      "status": "completed",
+      "seed": false,
+      "first_text_s": 2.4522,
+      "completion_s": 3.9146,
+      "requested_model": "gpt-6.1-sol",
+      "effective_model": "gpt-6.1-sol",
+      "strict_json": true,
+      "expected_flag": true,
+      "no_machinery": true
+    },
+    {
+      "variant": "sol-official-direct",
+      "case": "full_handoff",
+      "repetition": 3,
+      "phase": "primary",
+      "status": "completed",
+      "seed": false,
+      "first_text_s": 2.1834,
+      "completion_s": 3.2381,
+      "requested_model": "gpt-6.1-sol",
+      "effective_model": "gpt-6.1-sol",
+      "strict_json": true,
+      "expected_flag": true,
+      "no_machinery": true
+    },
+    {
+      "variant": "sol-official-none",
+      "case": "full_natural",
+      "repetition": 1,
+      "phase": "primary",
+      "status": "failed",
+      "seed": false,
+      "first_text_s": null,
+      "completion_s": 0.6404,
+      "requested_model": "gpt-6.1-sol",
+      "effective_model": null,
+      "error": {
+        "status": 400,
+        "code": "unsupported_value",
+        "type": "Error"
+      }
+    },
+    {
+      "variant": "opus-native-warm",
+      "case": "seed_full_natural",
+      "repetition": 0,
+      "phase": "primary",
+      "status": "completed",
+      "seed": true,
+      "first_text_s": 3.1981,
+      "completion_s": 4.0952,
+      "requested_model": "claude-opus-5",
+      "effective_model": "claude-opus-5"
+    },
+    {
+      "variant": "opus-native-warm",
+      "case": "full_natural",
+      "repetition": 1,
+      "phase": "primary",
+      "status": "completed",
+      "seed": false,
+      "first_text_s": 1.0681,
+      "completion_s": 2.0997,
+      "requested_model": "claude-opus-5",
+      "effective_model": "claude-opus-5"
+    },
+    {
+      "variant": "opus-native-warm",
+      "case": "full_reply",
+      "repetition": 1,
+      "phase": "primary",
+      "status": "completed",
+      "seed": false,
+      "first_text_s": 0.9988,
+      "completion_s": 2.2878,
+      "requested_model": "claude-opus-5",
+      "effective_model": "claude-opus-5",
+      "strict_json": true,
+      "expected_flag": true,
+      "no_machinery": true
+    },
+    {
+      "variant": "opus-native-warm",
+      "case": "full_handoff",
+      "repetition": 1,
+      "phase": "primary",
+      "status": "completed",
+      "seed": false,
+      "first_text_s": 1.0382,
+      "completion_s": 2.628,
+      "requested_model": "claude-opus-5",
+      "effective_model": "claude-opus-5",
+      "strict_json": true,
+      "expected_flag": true,
+      "no_machinery": true
+    },
+    {
+      "variant": "opus-native-warm",
+      "case": "full_natural",
+      "repetition": 2,
+      "phase": "primary",
+      "status": "completed",
+      "seed": false,
+      "first_text_s": 1.0344,
+      "completion_s": 2.293,
+      "requested_model": "claude-opus-5",
+      "effective_model": "claude-opus-5"
+    },
+    {
+      "variant": "opus-native-warm",
+      "case": "full_reply",
+      "repetition": 2,
+      "phase": "primary",
+      "status": "completed",
+      "seed": false,
+      "first_text_s": 1.1292,
+      "completion_s": 2.2195,
+      "requested_model": "claude-opus-5",
+      "effective_model": "claude-opus-5",
+      "strict_json": true,
+      "expected_flag": true,
+      "no_machinery": true
+    },
+    {
+      "variant": "opus-native-warm",
+      "case": "full_handoff",
+      "repetition": 2,
+      "phase": "primary",
+      "status": "completed",
+      "seed": false,
+      "first_text_s": 1.0101,
+      "completion_s": 2.4623,
+      "requested_model": "claude-opus-5",
+      "effective_model": "claude-opus-5",
+      "strict_json": true,
+      "expected_flag": true,
+      "no_machinery": true
+    },
+    {
+      "variant": "opus-native-warm",
+      "case": "full_natural",
+      "repetition": 3,
+      "phase": "primary",
+      "status": "completed",
+      "seed": false,
+      "first_text_s": 1.2165,
+      "completion_s": 2.3381,
+      "requested_model": "claude-opus-5",
+      "effective_model": "claude-opus-5"
+    },
+    {
+      "variant": "opus-native-warm",
+      "case": "full_reply",
+      "repetition": 3,
+      "phase": "primary",
+      "status": "completed",
+      "seed": false,
+      "first_text_s": 1.0002,
+      "completion_s": 2.1469,
+      "requested_model": "claude-opus-5",
+      "effective_model": "claude-opus-5",
+      "strict_json": true,
+      "expected_flag": true,
+      "no_machinery": true
+    },
+    {
+      "variant": "opus-native-warm",
+      "case": "full_handoff",
+      "repetition": 3,
+      "phase": "primary",
+      "status": "completed",
+      "seed": false,
+      "first_text_s": 1.0949,
+      "completion_s": 2.2926,
+      "requested_model": "claude-opus-5",
+      "effective_model": "claude-opus-5",
+      "strict_json": true,
+      "expected_flag": true,
+      "no_machinery": true
+    },
+    {
+      "variant": "sol-api-rejected",
+      "case": "cognition_natural",
+      "repetition": 1,
+      "phase": "primary",
+      "status": "failed",
+      "seed": false,
+      "first_text_s": null,
+      "completion_s": 1.4969,
+      "requested_model": "gpt-6.1-sol",
+      "effective_model": null,
+      "error": {
+        "status": 403,
+        "code": "model_not_found",
+        "type": "Error"
+      }
+    },
+    {
+      "variant": "gpt52-api-low",
+      "case": "cognition_natural",
+      "repetition": 1,
+      "phase": "primary",
+      "status": "completed",
+      "seed": false,
+      "first_text_s": 3.3608,
+      "completion_s": 3.7019,
+      "requested_model": "gpt-5.2",
+      "effective_model": "gpt-5.2-2025-12-11"
+    },
+    {
+      "variant": "gpt52-api-low",
+      "case": "full_natural",
+      "repetition": 1,
+      "phase": "primary",
+      "status": "completed",
+      "seed": false,
+      "first_text_s": 1.613,
+      "completion_s": 2.4872,
+      "requested_model": "gpt-5.2",
+      "effective_model": "gpt-5.2-2025-12-11"
+    },
+    {
+      "variant": "gpt52-api-low",
+      "case": "full_reply",
+      "repetition": 1,
+      "phase": "primary",
+      "status": "completed",
+      "seed": false,
+      "first_text_s": 1.957,
+      "completion_s": 2.6392,
+      "requested_model": "gpt-5.2",
+      "effective_model": "gpt-5.2-2025-12-11",
+      "strict_json": true,
+      "expected_flag": true,
+      "no_machinery": true
+    },
+    {
+      "variant": "gpt52-api-low",
+      "case": "full_handoff",
+      "repetition": 1,
+      "phase": "primary",
+      "status": "completed",
+      "seed": false,
+      "first_text_s": 1.3698,
+      "completion_s": 2.5971,
+      "requested_model": "gpt-5.2",
+      "effective_model": "gpt-5.2-2025-12-11",
+      "strict_json": true,
+      "expected_flag": true,
+      "no_machinery": true
+    },
+    {
+      "variant": "gpt52-api-low",
+      "case": "cognition_natural",
+      "repetition": 2,
+      "phase": "primary",
+      "status": "completed",
+      "seed": false,
+      "first_text_s": 2.5599,
+      "completion_s": 3.1928,
+      "requested_model": "gpt-5.2",
+      "effective_model": "gpt-5.2-2025-12-11"
+    },
+    {
+      "variant": "gpt52-api-low",
+      "case": "full_natural",
+      "repetition": 2,
+      "phase": "primary",
+      "status": "completed",
+      "seed": false,
+      "first_text_s": 2.3179,
+      "completion_s": 2.7285,
+      "requested_model": "gpt-5.2",
+      "effective_model": "gpt-5.2-2025-12-11"
+    },
+    {
+      "variant": "gpt52-api-low",
+      "case": "full_reply",
+      "repetition": 2,
+      "phase": "primary",
+      "status": "completed",
+      "seed": false,
+      "first_text_s": 2.0856,
+      "completion_s": 4.0537,
+      "requested_model": "gpt-5.2",
+      "effective_model": "gpt-5.2-2025-12-11",
+      "strict_json": true,
+      "expected_flag": true,
+      "no_machinery": true
+    },
+    {
+      "variant": "gpt52-api-low",
+      "case": "full_handoff",
+      "repetition": 2,
+      "phase": "primary",
+      "status": "completed",
+      "seed": false,
+      "first_text_s": 2.3492,
+      "completion_s": 3.3044,
+      "requested_model": "gpt-5.2",
+      "effective_model": "gpt-5.2-2025-12-11",
+      "strict_json": true,
+      "expected_flag": true,
+      "no_machinery": true
+    },
+    {
+      "variant": "gpt52-api-low",
+      "case": "cognition_natural",
+      "repetition": 3,
+      "phase": "primary",
+      "status": "completed",
+      "seed": false,
+      "first_text_s": 1.7281,
+      "completion_s": 2.4806,
+      "requested_model": "gpt-5.2",
+      "effective_model": "gpt-5.2-2025-12-11"
+    },
+    {
+      "variant": "gpt52-api-low",
+      "case": "full_natural",
+      "repetition": 3,
+      "phase": "primary",
+      "status": "completed",
+      "seed": false,
+      "first_text_s": 1.8064,
+      "completion_s": 3.0794,
+      "requested_model": "gpt-5.2",
+      "effective_model": "gpt-5.2-2025-12-11"
+    },
+    {
+      "variant": "gpt52-api-low",
+      "case": "full_reply",
+      "repetition": 3,
+      "phase": "primary",
+      "status": "completed",
+      "seed": false,
+      "first_text_s": 2.6262,
+      "completion_s": 3.1798,
+      "requested_model": "gpt-5.2",
+      "effective_model": "gpt-5.2-2025-12-11",
+      "strict_json": true,
+      "expected_flag": true,
+      "no_machinery": true
+    },
+    {
+      "variant": "gpt52-api-low",
+      "case": "full_handoff",
+      "repetition": 3,
+      "phase": "primary",
+      "status": "completed",
+      "seed": false,
+      "first_text_s": 1.483,
+      "completion_s": 2.5826,
+      "requested_model": "gpt-5.2",
+      "effective_model": "gpt-5.2-2025-12-11",
+      "strict_json": true,
+      "expected_flag": true,
+      "no_machinery": true
+    },
+    {
+      "variant": "gpt52-api-none",
+      "case": "full_natural",
+      "repetition": 1,
+      "phase": "primary",
+      "status": "failed",
+      "seed": false,
+      "first_text_s": null,
+      "completion_s": 0.0473,
+      "requested_model": "gpt-5.2",
+      "effective_model": null,
+      "error": {
+        "type": "Error",
+        "category": "connection_error"
+      }
+    },
+    {
+      "variant": "gpt52-api-none",
+      "case": "full_natural",
+      "repetition": 1,
+      "phase": "process_recheck",
+      "status": "completed",
+      "seed": false,
+      "first_text_s": 2.368,
+      "completion_s": 3.0628,
+      "requested_model": "gpt-5.2",
+      "effective_model": "gpt-5.2-2025-12-11"
+    },
+    {
+      "variant": "gpt52-api-none",
+      "case": "full_reply",
+      "repetition": 1,
+      "phase": "process_recheck",
+      "status": "failed",
+      "seed": false,
+      "first_text_s": null,
+      "completion_s": 0.1288,
+      "requested_model": "gpt-5.2",
+      "effective_model": null,
+      "error": {
+        "type": "Error",
+        "category": "connection_error"
+      }
+    },
+    {
+      "variant": "gpt52-api-none",
+      "case": "full_handoff",
+      "repetition": 1,
+      "phase": "process_recheck",
+      "status": "failed",
+      "seed": false,
+      "first_text_s": null,
+      "completion_s": 0.0017,
+      "requested_model": "gpt-5.2",
+      "effective_model": null,
+      "error": {
+        "type": "Error",
+        "category": "connection_error"
+      }
+    },
+    {
+      "variant": "gpt52-api-none",
+      "case": "full_natural",
+      "repetition": 2,
+      "phase": "process_recheck",
+      "status": "failed",
+      "seed": false,
+      "first_text_s": null,
+      "completion_s": 0.0009,
+      "requested_model": "gpt-5.2",
+      "effective_model": null,
+      "error": {
+        "type": "Error",
+        "category": "connection_error"
+      }
+    },
+    {
+      "variant": "gpt52-api-none",
+      "case": "full_reply",
+      "repetition": 2,
+      "phase": "process_recheck",
+      "status": "failed",
+      "seed": false,
+      "first_text_s": null,
+      "completion_s": 0.0011,
+      "requested_model": "gpt-5.2",
+      "effective_model": null,
+      "error": {
+        "type": "Error",
+        "category": "connection_error"
+      }
+    },
+    {
+      "variant": "gpt52-api-none",
+      "case": "full_handoff",
+      "repetition": 2,
+      "phase": "process_recheck",
+      "status": "failed",
+      "seed": false,
+      "first_text_s": null,
+      "completion_s": 0.0008,
+      "requested_model": "gpt-5.2",
+      "effective_model": null,
+      "error": {
+        "type": "Error",
+        "category": "connection_error"
+      }
+    },
+    {
+      "variant": "gpt52-api-none",
+      "case": "full_natural",
+      "repetition": 3,
+      "phase": "process_recheck",
+      "status": "failed",
+      "seed": false,
+      "first_text_s": null,
+      "completion_s": 0.0007,
+      "requested_model": "gpt-5.2",
+      "effective_model": null,
+      "error": {
+        "type": "Error",
+        "category": "connection_error"
+      }
+    },
+    {
+      "variant": "gpt52-api-none",
+      "case": "full_reply",
+      "repetition": 3,
+      "phase": "process_recheck",
+      "status": "failed",
+      "seed": false,
+      "first_text_s": null,
+      "completion_s": 0.0008,
+      "requested_model": "gpt-5.2",
+      "effective_model": null,
+      "error": {
+        "type": "Error",
+        "category": "connection_error"
+      }
+    },
+    {
+      "variant": "gpt52-api-none",
+      "case": "full_handoff",
+      "repetition": 3,
+      "phase": "process_recheck",
+      "status": "failed",
+      "seed": false,
+      "first_text_s": null,
+      "completion_s": 0.0008,
+      "requested_model": "gpt-5.2",
+      "effective_model": null,
+      "error": {
+        "type": "Error",
+        "category": "connection_error"
+      }
+    },
+    {
+      "variant": "gpt52-api-none",
+      "case": "full_natural",
+      "repetition": 1,
+      "phase": "fresh_client_recheck",
+      "status": "completed",
+      "seed": false,
+      "first_text_s": 1.4185,
+      "completion_s": 2.1276,
+      "requested_model": "gpt-5.2",
+      "effective_model": "gpt-5.2-2025-12-11"
+    },
+    {
+      "variant": "gpt52-api-none",
+      "case": "full_reply",
+      "repetition": 1,
+      "phase": "fresh_client_recheck",
+      "status": "completed",
+      "seed": false,
+      "first_text_s": 0.8094,
+      "completion_s": 1.6016,
+      "requested_model": "gpt-5.2",
+      "effective_model": "gpt-5.2-2025-12-11",
+      "strict_json": true,
+      "expected_flag": true,
+      "no_machinery": true
+    },
+    {
+      "variant": "gpt52-api-none",
+      "case": "full_handoff",
+      "repetition": 1,
+      "phase": "fresh_client_recheck",
+      "status": "completed",
+      "seed": false,
+      "first_text_s": 2.3466,
+      "completion_s": 2.7938,
+      "requested_model": "gpt-5.2",
+      "effective_model": "gpt-5.2-2025-12-11",
+      "strict_json": true,
+      "expected_flag": true,
+      "no_machinery": true
+    },
+    {
+      "variant": "gpt52-api-none",
+      "case": "full_natural",
+      "repetition": 2,
+      "phase": "fresh_client_recheck",
+      "status": "completed",
+      "seed": false,
+      "first_text_s": 1.1623,
+      "completion_s": 1.9635,
+      "requested_model": "gpt-5.2",
+      "effective_model": "gpt-5.2-2025-12-11"
+    },
+    {
+      "variant": "gpt52-api-none",
+      "case": "full_reply",
+      "repetition": 2,
+      "phase": "fresh_client_recheck",
+      "status": "completed",
+      "seed": false,
+      "first_text_s": 1.1154,
+      "completion_s": 1.8457,
+      "requested_model": "gpt-5.2",
+      "effective_model": "gpt-5.2-2025-12-11",
+      "strict_json": true,
+      "expected_flag": true,
+      "no_machinery": true
+    },
+    {
+      "variant": "gpt52-api-none",
+      "case": "full_handoff",
+      "repetition": 2,
+      "phase": "fresh_client_recheck",
+      "status": "completed",
+      "seed": false,
+      "first_text_s": 0.8065,
+      "completion_s": 1.3812,
+      "requested_model": "gpt-5.2",
+      "effective_model": "gpt-5.2-2025-12-11",
+      "strict_json": true,
+      "expected_flag": true,
+      "no_machinery": true
+    },
+    {
+      "variant": "gpt52-api-none",
+      "case": "full_natural",
+      "repetition": 3,
+      "phase": "fresh_client_recheck",
+      "status": "completed",
+      "seed": false,
+      "first_text_s": 0.882,
+      "completion_s": 1.5563,
+      "requested_model": "gpt-5.2",
+      "effective_model": "gpt-5.2-2025-12-11"
+    },
+    {
+      "variant": "gpt52-api-none",
+      "case": "full_reply",
+      "repetition": 3,
+      "phase": "fresh_client_recheck",
+      "status": "completed",
+      "seed": false,
+      "first_text_s": 0.6868,
+      "completion_s": 1.5235,
+      "requested_model": "gpt-5.2",
+      "effective_model": "gpt-5.2-2025-12-11",
+      "strict_json": true,
+      "expected_flag": true,
+      "no_machinery": true
+    },
+    {
+      "variant": "gpt52-api-none",
+      "case": "full_handoff",
+      "repetition": 3,
+      "phase": "fresh_client_recheck",
+      "status": "failed",
+      "seed": false,
+      "first_text_s": null,
+      "completion_s": 0.0638,
+      "requested_model": "gpt-5.2",
+      "effective_model": null,
+      "error": {
+        "type": "Error",
+        "category": "connection_error"
+      }
+    }
+  ],
+  "groups": [
+    {
+      "variant": "opus-direct-low",
+      "case": "cognition_natural",
+      "attempts": 3,
+      "completed": 3,
+      "first_text": {
+        "n": 3,
+        "median_s": 1.15,
+        "min_s": 0.8355,
+        "max_s": 2.7168
+      },
+      "completion": {
+        "n": 3,
+        "median_s": 2.6393,
+        "min_s": 2.2879,
+        "max_s": 4.0158
+      }
+    },
+    {
+      "variant": "opus-native-low",
+      "case": "cognition_natural",
+      "attempts": 3,
+      "completed": 3,
+      "first_text": {
+        "n": 3,
+        "median_s": 1.6457,
+        "min_s": 1.5385,
+        "max_s": 1.9748
+      },
+      "completion": {
+        "n": 3,
+        "median_s": 2.981,
+        "min_s": 2.981,
+        "max_s": 3.1113
+      }
+    },
+    {
+      "variant": "opus-direct-off",
+      "case": "cognition_natural",
+      "attempts": 3,
+      "completed": 3,
+      "first_text": {
+        "n": 3,
+        "median_s": 1.0505,
+        "min_s": 0.85,
+        "max_s": 1.0524
+      },
+      "completion": {
+        "n": 3,
+        "median_s": 2.3495,
+        "min_s": 2.0458,
+        "max_s": 2.4564
+      }
+    },
+    {
+      "variant": "opus-native-off",
+      "case": "cognition_natural",
+      "attempts": 3,
+      "completed": 3,
+      "first_text": {
+        "n": 3,
+        "median_s": 1.6073,
+        "min_s": 1.4898,
+        "max_s": 1.6915
+      },
+      "completion": {
+        "n": 3,
+        "median_s": 3.1144,
+        "min_s": 3.0654,
+        "max_s": 3.1955
+      }
+    },
+    {
+      "variant": "opus-direct-low",
+      "case": "full_natural",
+      "attempts": 3,
+      "completed": 3,
+      "first_text": {
+        "n": 3,
+        "median_s": 1.1228,
+        "min_s": 0.9886,
+        "max_s": 1.7731
+      },
+      "completion": {
+        "n": 3,
+        "median_s": 2.1692,
+        "min_s": 1.9656,
+        "max_s": 2.8067
+      }
+    },
+    {
+      "variant": "opus-native-low",
+      "case": "full_natural",
+      "attempts": 3,
+      "completed": 3,
+      "first_text": {
+        "n": 3,
+        "median_s": 2.6456,
+        "min_s": 2.4439,
+        "max_s": 2.7055
+      },
+      "completion": {
+        "n": 3,
+        "median_s": 3.8165,
+        "min_s": 3.5497,
+        "max_s": 3.9943
+      }
+    },
+    {
+      "variant": "opus-direct-off",
+      "case": "full_natural",
+      "attempts": 3,
+      "completed": 3,
+      "first_text": {
+        "n": 3,
+        "median_s": 1.3507,
+        "min_s": 1.2923,
+        "max_s": 2.4866
+      },
+      "completion": {
+        "n": 3,
+        "median_s": 2.7861,
+        "min_s": 2.6596,
+        "max_s": 3.6593
+      }
+    },
+    {
+      "variant": "opus-native-off",
+      "case": "full_natural",
+      "attempts": 3,
+      "completed": 3,
+      "first_text": {
+        "n": 3,
+        "median_s": 2.5705,
+        "min_s": 2.4928,
+        "max_s": 3.4943
+      },
+      "completion": {
+        "n": 3,
+        "median_s": 4.0298,
+        "min_s": 3.5992,
+        "max_s": 4.4227
+      }
+    },
+    {
+      "variant": "opus-direct-low",
+      "case": "full_reply",
+      "attempts": 3,
+      "completed": 3,
+      "first_text": {
+        "n": 3,
+        "median_s": 1.0622,
+        "min_s": 0.9877,
+        "max_s": 1.0943
+      },
+      "completion": {
+        "n": 3,
+        "median_s": 2.2278,
+        "min_s": 2.0702,
+        "max_s": 2.2368
+      },
+      "strict_json": 3,
+      "expected_flag": 3,
+      "no_machinery": 3
+    },
+    {
+      "variant": "opus-native-low",
+      "case": "full_reply",
+      "attempts": 3,
+      "completed": 3,
+      "first_text": {
+        "n": 3,
+        "median_s": 2.7741,
+        "min_s": 1.6729,
+        "max_s": 3.9153
+      },
+      "completion": {
+        "n": 3,
+        "median_s": 3.8979,
+        "min_s": 3.0001,
+        "max_s": 4.989
+      },
+      "strict_json": 3,
+      "expected_flag": 3,
+      "no_machinery": 3
+    },
+    {
+      "variant": "opus-direct-off",
+      "case": "full_reply",
+      "attempts": 3,
+      "completed": 3,
+      "first_text": {
+        "n": 3,
+        "median_s": 1.1336,
+        "min_s": 1.0082,
+        "max_s": 2.0721
+      },
+      "completion": {
+        "n": 3,
+        "median_s": 2.607,
+        "min_s": 2.2199,
+        "max_s": 3.4151
+      },
+      "strict_json": 3,
+      "expected_flag": 3,
+      "no_machinery": 3
+    },
+    {
+      "variant": "opus-native-off",
+      "case": "full_reply",
+      "attempts": 3,
+      "completed": 3,
+      "first_text": {
+        "n": 3,
+        "median_s": 3.5354,
+        "min_s": 2.3389,
+        "max_s": 3.9387
+      },
+      "completion": {
+        "n": 3,
+        "median_s": 4.6824,
+        "min_s": 3.3442,
+        "max_s": 5.1692
+      },
+      "strict_json": 3,
+      "expected_flag": 3,
+      "no_machinery": 3
+    },
+    {
+      "variant": "opus-direct-low",
+      "case": "full_handoff",
+      "attempts": 3,
+      "completed": 3,
+      "first_text": {
+        "n": 3,
+        "median_s": 1.1937,
+        "min_s": 1.0973,
+        "max_s": 2.5111
+      },
+      "completion": {
+        "n": 3,
+        "median_s": 2.6602,
+        "min_s": 2.5932,
+        "max_s": 4.1353
+      },
+      "strict_json": 3,
+      "expected_flag": 3,
+      "no_machinery": 3
+    },
+    {
+      "variant": "opus-native-low",
+      "case": "full_handoff",
+      "attempts": 3,
+      "completed": 3,
+      "first_text": {
+        "n": 3,
+        "median_s": 2.3793,
+        "min_s": 1.7848,
+        "max_s": 2.5362
+      },
+      "completion": {
+        "n": 3,
+        "median_s": 4.0981,
+        "min_s": 3.1068,
+        "max_s": 4.1501
+      },
+      "strict_json": 3,
+      "expected_flag": 3,
+      "no_machinery": 3
+    },
+    {
+      "variant": "opus-direct-off",
+      "case": "full_handoff",
+      "attempts": 3,
+      "completed": 3,
+      "first_text": {
+        "n": 3,
+        "median_s": 1.0135,
+        "min_s": 0.9229,
+        "max_s": 1.9498
+      },
+      "completion": {
+        "n": 3,
+        "median_s": 2.642,
+        "min_s": 2.2541,
+        "max_s": 4.132
+      },
+      "strict_json": 3,
+      "expected_flag": 3,
+      "no_machinery": 3
+    },
+    {
+      "variant": "opus-native-off",
+      "case": "full_handoff",
+      "attempts": 3,
+      "completed": 3,
+      "first_text": {
+        "n": 3,
+        "median_s": 2.7139,
+        "min_s": 2.4222,
+        "max_s": 3.2846
+      },
+      "completion": {
+        "n": 3,
+        "median_s": 4.5147,
+        "min_s": 3.8335,
+        "max_s": 4.531
+      },
+      "strict_json": 3,
+      "expected_flag": 3,
+      "no_machinery": 3
+    },
+    {
+      "variant": "sol-native",
+      "case": "cognition_natural",
+      "attempts": 3,
+      "completed": 3,
+      "first_text": {
+        "n": 3,
+        "median_s": 4.7331,
+        "min_s": 2.6687,
+        "max_s": 5.5324
+      },
+      "completion": {
+        "n": 3,
+        "median_s": 5.3626,
+        "min_s": 3.4769,
+        "max_s": 6.6296
+      }
+    },
+    {
+      "variant": "sol-native",
+      "case": "full_natural",
+      "attempts": 3,
+      "completed": 3,
+      "first_text": {
+        "n": 3,
+        "median_s": 2.5486,
+        "min_s": 2.5165,
+        "max_s": 2.5949
+      },
+      "completion": {
+        "n": 3,
+        "median_s": 3.6484,
+        "min_s": 3.5261,
+        "max_s": 3.703
+      }
+    },
+    {
+      "variant": "sol-native",
+      "case": "full_reply",
+      "attempts": 3,
+      "completed": 3,
+      "first_text": {
+        "n": 3,
+        "median_s": 5.5751,
+        "min_s": 2.9807,
+        "max_s": 5.7881
+      },
+      "completion": {
+        "n": 3,
+        "median_s": 6.1128,
+        "min_s": 3.7105,
+        "max_s": 6.241
+      },
+      "strict_json": 3,
+      "expected_flag": 3,
+      "no_machinery": 3
+    },
+    {
+      "variant": "sol-native",
+      "case": "full_handoff",
+      "attempts": 3,
+      "completed": 3,
+      "first_text": {
+        "n": 3,
+        "median_s": 2.8528,
+        "min_s": 2.6289,
+        "max_s": 4.6639
+      },
+      "completion": {
+        "n": 3,
+        "median_s": 3.4782,
+        "min_s": 3.336,
+        "max_s": 5.4379
+      },
+      "strict_json": 3,
+      "expected_flag": 3,
+      "no_machinery": 3
+    },
+    {
+      "variant": "sol-official-direct",
+      "case": "cognition_natural",
+      "attempts": 3,
+      "completed": 3,
+      "first_text": {
+        "n": 3,
+        "median_s": 1.6428,
+        "min_s": 1.5942,
+        "max_s": 1.8956
+      },
+      "completion": {
+        "n": 3,
+        "median_s": 2.5688,
+        "min_s": 2.5551,
+        "max_s": 2.6866
+      }
+    },
+    {
+      "variant": "sol-official-direct",
+      "case": "full_natural",
+      "attempts": 3,
+      "completed": 3,
+      "first_text": {
+        "n": 3,
+        "median_s": 2.0805,
+        "min_s": 2.0222,
+        "max_s": 2.3291
+      },
+      "completion": {
+        "n": 3,
+        "median_s": 2.8713,
+        "min_s": 2.7647,
+        "max_s": 3.2923
+      }
+    },
+    {
+      "variant": "sol-official-direct",
+      "case": "full_reply",
+      "attempts": 3,
+      "completed": 3,
+      "first_text": {
+        "n": 3,
+        "median_s": 2.3577,
+        "min_s": 2.0965,
+        "max_s": 2.4522
+      },
+      "completion": {
+        "n": 3,
+        "median_s": 3.2905,
+        "min_s": 2.9984,
+        "max_s": 3.9146
+      },
+      "strict_json": 3,
+      "expected_flag": 3,
+      "no_machinery": 3
+    },
+    {
+      "variant": "sol-official-direct",
+      "case": "full_handoff",
+      "attempts": 3,
+      "completed": 3,
+      "first_text": {
+        "n": 3,
+        "median_s": 2.1834,
+        "min_s": 1.7187,
+        "max_s": 2.7164
+      },
+      "completion": {
+        "n": 3,
+        "median_s": 3.2381,
+        "min_s": 2.8688,
+        "max_s": 3.6379
+      },
+      "strict_json": 3,
+      "expected_flag": 3,
+      "no_machinery": 3
+    },
+    {
+      "variant": "sol-official-none",
+      "case": "full_natural",
+      "attempts": 1,
+      "completed": 0,
+      "first_text": null,
+      "completion": null
+    },
+    {
+      "variant": "opus-native-warm",
+      "case": "seed_full_natural",
+      "attempts": 1,
+      "completed": 1,
+      "first_text": {
+        "n": 1,
+        "median_s": 3.1981,
+        "min_s": 3.1981,
+        "max_s": 3.1981
+      },
+      "completion": {
+        "n": 1,
+        "median_s": 4.0952,
+        "min_s": 4.0952,
+        "max_s": 4.0952
+      }
+    },
+    {
+      "variant": "opus-native-warm",
+      "case": "full_natural",
+      "attempts": 3,
+      "completed": 3,
+      "first_text": {
+        "n": 3,
+        "median_s": 1.0681,
+        "min_s": 1.0344,
+        "max_s": 1.2165
+      },
+      "completion": {
+        "n": 3,
+        "median_s": 2.293,
+        "min_s": 2.0997,
+        "max_s": 2.3381
+      }
+    },
+    {
+      "variant": "opus-native-warm",
+      "case": "full_reply",
+      "attempts": 3,
+      "completed": 3,
+      "first_text": {
+        "n": 3,
+        "median_s": 1.0002,
+        "min_s": 0.9988,
+        "max_s": 1.1292
+      },
+      "completion": {
+        "n": 3,
+        "median_s": 2.2195,
+        "min_s": 2.1469,
+        "max_s": 2.2878
+      },
+      "strict_json": 3,
+      "expected_flag": 3,
+      "no_machinery": 3
+    },
+    {
+      "variant": "opus-native-warm",
+      "case": "full_handoff",
+      "attempts": 3,
+      "completed": 3,
+      "first_text": {
+        "n": 3,
+        "median_s": 1.0382,
+        "min_s": 1.0101,
+        "max_s": 1.0949
+      },
+      "completion": {
+        "n": 3,
+        "median_s": 2.4623,
+        "min_s": 2.2926,
+        "max_s": 2.628
+      },
+      "strict_json": 3,
+      "expected_flag": 3,
+      "no_machinery": 3
+    },
+    {
+      "variant": "sol-api-rejected",
+      "case": "cognition_natural",
+      "attempts": 1,
+      "completed": 0,
+      "first_text": null,
+      "completion": null
+    },
+    {
+      "variant": "gpt52-api-low",
+      "case": "cognition_natural",
+      "attempts": 3,
+      "completed": 3,
+      "first_text": {
+        "n": 3,
+        "median_s": 2.5599,
+        "min_s": 1.7281,
+        "max_s": 3.3608
+      },
+      "completion": {
+        "n": 3,
+        "median_s": 3.1928,
+        "min_s": 2.4806,
+        "max_s": 3.7019
+      }
+    },
+    {
+      "variant": "gpt52-api-low",
+      "case": "full_natural",
+      "attempts": 3,
+      "completed": 3,
+      "first_text": {
+        "n": 3,
+        "median_s": 1.8064,
+        "min_s": 1.613,
+        "max_s": 2.3179
+      },
+      "completion": {
+        "n": 3,
+        "median_s": 2.7285,
+        "min_s": 2.4872,
+        "max_s": 3.0794
+      }
+    },
+    {
+      "variant": "gpt52-api-low",
+      "case": "full_reply",
+      "attempts": 3,
+      "completed": 3,
+      "first_text": {
+        "n": 3,
+        "median_s": 2.0856,
+        "min_s": 1.957,
+        "max_s": 2.6262
+      },
+      "completion": {
+        "n": 3,
+        "median_s": 3.1798,
+        "min_s": 2.6392,
+        "max_s": 4.0537
+      },
+      "strict_json": 3,
+      "expected_flag": 3,
+      "no_machinery": 3
+    },
+    {
+      "variant": "gpt52-api-low",
+      "case": "full_handoff",
+      "attempts": 3,
+      "completed": 3,
+      "first_text": {
+        "n": 3,
+        "median_s": 1.483,
+        "min_s": 1.3698,
+        "max_s": 2.3492
+      },
+      "completion": {
+        "n": 3,
+        "median_s": 2.5971,
+        "min_s": 2.5826,
+        "max_s": 3.3044
+      },
+      "strict_json": 3,
+      "expected_flag": 3,
+      "no_machinery": 3
+    },
+    {
+      "variant": "gpt52-api-none",
+      "case": "full_natural",
+      "attempts": 7,
+      "completed": 4,
+      "first_text": {
+        "n": 4,
+        "median_s": 1.2904,
+        "min_s": 0.882,
+        "max_s": 2.368
+      },
+      "completion": {
+        "n": 4,
+        "median_s": 2.0455,
+        "min_s": 1.5563,
+        "max_s": 3.0628
+      }
+    },
+    {
+      "variant": "gpt52-api-none",
+      "case": "full_reply",
+      "attempts": 6,
+      "completed": 3,
+      "first_text": {
+        "n": 3,
+        "median_s": 0.8094,
+        "min_s": 0.6868,
+        "max_s": 1.1154
+      },
+      "completion": {
+        "n": 3,
+        "median_s": 1.6016,
+        "min_s": 1.5235,
+        "max_s": 1.8457
+      },
+      "strict_json": 3,
+      "expected_flag": 3,
+      "no_machinery": 3
+    },
+    {
+      "variant": "gpt52-api-none",
+      "case": "full_handoff",
+      "attempts": 6,
+      "completed": 2,
+      "first_text": {
+        "n": 2,
+        "median_s": 1.5766,
+        "min_s": 0.8065,
+        "max_s": 2.3466
+      },
+      "completion": {
+        "n": 2,
+        "median_s": 2.0875,
+        "min_s": 1.3812,
+        "max_s": 2.7938
+      },
+      "strict_json": 2,
+      "expected_flag": 2,
+      "no_machinery": 2
+    }
+  ],
+  "support_controls": {
+    "sol_none": "Official Direct returned HTTP 400 unsupported_value; Low used without substitution.",
+    "sol_api": "HTTP 403 model_not_found; authenticated model list confirms no Sol or GPT-6 model.",
+    "anthropic_direct": "Existing compatibility wrapper, not unmodified native Claude Code.",
+    "anthropic_api_credits": "NOT RUN: no verified separate Console benefit/balance."
+  },
+  "quality_status": "NOT ACCEPTED: correct narrow flags do not clear relevance, brevity, needless clarification or premature action-claim issues.",
+  "limits": [
+    "n=3 per normal cell; not p95",
+    "Warm native retains previous trial turns; fresh routes replay a frozen frame.",
+    "Cold and warm startup, shared machine load, output lengths, cache state and wrappers differ.",
+    "API control caps output at 1024 tokens; official Direct uses SDK defaults.",
+    "No work admission, execution, Telegram, audible output or restart recovery is tested.",
+    "Only sanitized measurements are public; original context and outputs stay private."
+  ],
+  "native_model_binding": "Native Codex: exact configured model and server catalog verified; no separate per-turn effective-model echo. Other completed routes retain the returned/init model.",
+  "auxiliary_probes": "Two initial Opus 5 setup completions retained privately, outside the 115-attempt matrix."
+}

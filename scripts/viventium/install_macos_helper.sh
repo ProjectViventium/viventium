@@ -881,13 +881,33 @@ PY
 
 unregister_login_item() {
   [[ "$SKIP_LOGIN_ITEM" == "1" ]] && return 0
-  /usr/bin/osascript <<APPLESCRIPT
-tell application "System Events"
+  local python_bin
+  python_bin="$(resolve_repo_python)"
+  "$python_bin" - "$OSASCRIPT_TIMEOUT_SECONDS" <<'PY'
+import subprocess
+import sys
+
+timeout = float(sys.argv[1])
+script = '''tell application "System Events"
   if exists login item "Viventium" then
     delete login item "Viventium"
   end if
 end tell
-APPLESCRIPT
+'''
+
+try:
+    completed = subprocess.run(
+        ["/usr/bin/osascript"],
+        input=script,
+        text=True,
+        timeout=timeout,
+    )
+except subprocess.TimeoutExpired:
+    sys.stderr.write(f"[viventium] Login-item removal timed out after {timeout:.0f}s\n")
+    raise SystemExit(124)
+
+raise SystemExit(completed.returncode)
+PY
 }
 
 cleanup_legacy_terminal_helper_launchers() {

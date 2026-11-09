@@ -51,6 +51,7 @@ services:
     environment:
       VIVENTIUM_PARALLEL_PROXY_ROLE: broker
       VIVENTIUM_PARALLEL_PROXY_UPSTREAM: http://host.docker.internal:${VIVENTIUM_LC_API_PORT}
+      GLASSHIVE_NATIVE_RUNTIME_UPSTREAM: http://host.docker.internal:${GLASSHIVE_RUNTIME_PORT:-8766}
       VIVENTIUM_PARALLEL_PROXY_PORT: "8080"
     labels:
       com.viventium.parallel-clean-room.policy: parallel-clean-room-v1

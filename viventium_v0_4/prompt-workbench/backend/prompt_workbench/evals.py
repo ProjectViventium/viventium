@@ -754,6 +754,13 @@ def _sha(value: str, length: int = 16) -> str:
     return hashlib.sha256(value.encode("utf-8")).hexdigest()[:length]
 
 
+def _prompt_frame_route_hash(frame: dict[str, Any], key: str) -> str:
+    value = str(frame.get(key) or "")
+    if frame.get("route_identity_hashed") is True:
+        return value[1:] if re.fullmatch(r"h[0-9a-f]{16}", value) else ""
+    return _sha(value)
+
+
 def _route_effort(value: Any) -> str:
     effort = str(value or "").strip().lower()
     return effort if re.fullmatch(r"[a-z0-9][a-z0-9._:-]{0,31}", effort) else ""
@@ -1448,17 +1455,13 @@ def _native_surface_execution_route(
                     }
                 lineage, lineage_error = _validate_observed_lineage(
                     configured,
-                    requested_provider_hash=_sha(
-                        str(frame.get("requested_provider") or "")
-                    ),
-                    requested_model_hash=_sha(str(frame.get("requested_model") or "")),
+                    requested_provider_hash=_prompt_frame_route_hash(frame, "requested_provider"),
+                    requested_model_hash=_prompt_frame_route_hash(frame, "requested_model"),
                     requested_effort=_route_effort(frame.get("requested_effort")),
-                    effective_provider_hash=_sha(
-                        str(frame.get("effective_provider") or frame.get("provider") or "")
-                    ),
-                    effective_model_hash=_sha(
-                        str(frame.get("effective_model") or frame.get("model") or "")
-                    ),
+                    effective_provider_hash=_prompt_frame_route_hash(
+                        frame, "effective_provider" if frame.get("effective_provider") else "provider"),
+                    effective_model_hash=_prompt_frame_route_hash(
+                        frame, "effective_model" if frame.get("effective_model") else "model"),
                     effective_effort=_route_effort(frame.get("effective_effort")),
                     fallback_used=frame.get("fallback_used"),
                     fallback_reason=str(frame.get("fallback_reason") or ""),

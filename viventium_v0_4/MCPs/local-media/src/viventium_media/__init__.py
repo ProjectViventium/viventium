@@ -1,0 +1,1 @@
+"""Local Viventium media generation."""

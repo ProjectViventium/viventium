@@ -36,6 +36,7 @@ def valid_audio_and_config(monkeypatch):
         telegram_audio.DecodedTelegramAudio(np.full(1600, 0.001, dtype=np.float32)))
     for config in (scripts.config, sys.modules['config']):
         monkeypatch.setattr(config, 'VIVENTIUM_TELEGRAM_BACKEND', 'librechat', raising=False)
+        monkeypatch.setattr(config, 'VIVENTIUM_TELEGRAM_FILE_UPLOAD_ENABLED', False, raising=False)
         monkeypatch.setattr(config, 'NICK', None, raising=False)
     async def download(_bot, file_id, **_kwargs):
         return scripts.TelegramDownloadResult(file_bytes=file_id.encode(), filename='note.ogg')

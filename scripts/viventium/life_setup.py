@@ -16,7 +16,7 @@ from typing import Any
 
 import yaml
 from config_settings import load_config
-from life_bootstrap import bootstrap_life
+from life_bootstrap import bootstrap_life, validate_life_location
 
 INTENT_VERSION = 1
 INTENT_MAX_CHARS = 2000
@@ -209,7 +209,9 @@ def _execute(args):
         folder = data.get('folder') or getattr(args, 'folder', None)
         provider = _provider_section(config, create=True)
         if folder:
-            provider['life_dir'] = str(_folder(folder))
+            selected = _folder(folder)
+            validate_life_location(selected, new_selection=str(selected) != provider.get('life_dir'))
+            provider['life_dir'] = str(selected)
         root = _folder(str(_root(config, args.state_dir)), create=True)
         bootstrap_life(template_dir=Path(__file__).resolve().parents[2] / 'templates/life-v0.01',
                        life_dir=root.resolve(), state_file=args.state_dir / 'life/bootstrap.json')

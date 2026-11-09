@@ -64,11 +64,22 @@ stream, TTS, follow-up polling, tools, background cortices, title generation, or
   the user-facing Next.js app and can create unnecessary dev-server work and log volume while local
   prod is simply staying available.
 - The stable sequence is:
-  1. fetch connection details with explicit call-session dispatch prepared, then connect the room
-     with microphone disabled
-  2. enable the microphone after the room is connected
-  3. let LiveKit assign the publisher job to `librechat-voice-gateway`
+  1. acquire the microphone using the native SDK, including the browser permission decision,
+     before creating the dispatch or connecting ICE; retain the captured track without publishing
+  2. fetch connection details and connect the room with automatic microphone publication disabled
+  3. stop the temporary capture and let the SDK's `setMicrophoneEnabled` own the sole microphone
+     publication after connection, then start room audio
   4. persist the active job/worker ids on the call session
+- Capture permission can expose a browser's LAN ICE candidate. Asking only after ICE connects can
+  deadlock a Docker-backed LAN call where public hairpin routing is unavailable and private browser
+  candidates are hidden. Publication still waits for connection; no pre-connect audio is sent.
+  Denied/missing capture fails explicitly before dispatch. Leaving or failing startup stops an
+  unpublished track, including a late permission grant. A saved muted call skips capture as before;
+  it still needs a reachable server candidate and must not be declared accepted from this fix alone.
+- Do not raw-publish the pre-connect track beside SDK microphone controls. Their source-wide
+  single-flight guard must remain authoritative, including overlapping mute, Retry and recovery.
+  Recovery shares the same Start promise, and the microphone control is disabled during startup.
+  Temporary capture is call setup only; it adds no model request or work to each conversational turn.
 - Call startup is single-flight. The LibreChat **Call** click should show connection and microphone
   progress, prevent duplicate starts, and automatically enable the microphone after the room
   connects. The pre-connect muted state is an internal timeout-avoidance phase, not a user default.
@@ -117,6 +128,16 @@ stream, TTS, follow-up polling, tools, background cortices, title generation, or
 - Public acceptance requires an off-LAN selected ICE pair, real worker join, and delivered synthetic
   media/transcript. Page render and signaling alone are not a working call.
 - Same-Wi-Fi use of the public hostname is a separate router NAT-loopback or trusted split-DNS case.
+- `runtime.network.livekit_runtime: native` explicitly selects the pinned LiveKit 1.13.4 server
+  on macOS ARM64 (15+); `docker` remains the default. This uses host media interfaces and runs
+  as the host user, outside container isolation. The main launcher starts it after edge setup,
+  verifies its artifact and receipts, and owns its normal stop/restart. It keeps the same ports,
+  credentials and APIs. See [the native server contract](../../docs/requirements_and_learnings/capabilities/voice.md#explicit-native-livekit-server).
+- Trusted LAN calls use the detected private address through dedicated DNS names and private-bound
+  HTTPS listeners. Native Caddy DNS-01 waits 30 seconds after writing a challenge before checking
+  propagation. This applies to certificate issuance, not each call. Cached certificates are reused.
+  LAN verification failure withholds the local-call link and retains public access; recovery keeps
+  the failed certificate attempt in the edge log. A trusted link needs no phone profile or local CA.
 - `qa/remote-access/cases.md` `REMOTE-004` and `qa/modern-playground-voice/cases.md` `MPV-023`
   are the reusable regression gates.
 

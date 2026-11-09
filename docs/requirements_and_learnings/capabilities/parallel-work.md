@@ -10,11 +10,32 @@ need no parallel-mode toggle, special delegation prompt, extra configuration, or
 
 ### Roles
 
-- **PW-001 / PW-008:** The existing Main manages work and authors the final user response from
-  neutral worker evidence.
-- **PW-002:** Each independent durable objective has one saved mission root.
+- **PW-001 / PW-008:** The speaking Main accepts background work and authors the final user
+  response from neutral evidence. The existing native coordinator manages accepted assignments.
+- **PW-002:** Each independent durable objective has one existing Native goal, accepted Native
+  turn or saved mission owner. Do not invent a goal or mission for a self-handled Native turn.
 - **PW-007:** Workers cannot impersonate Main, address the user as separate personalities, or
   receive unrelated sibling work or private chat.
+
+Ordinary replies, scheduled continuations and background-result authors use the same Main
+cognition preparation: current identity, preferences, authorized memory, Feelings, conversation,
+files and capabilities. A durable follow-up is a delivery lane, not a separate generic identity.
+Any further delegation uses that same prepared context with the Worker's own role and authority.
+The host preserves complete accepted requests, newer corrections and background evidence. It must
+not prefix-cut messages or findings or silently drop older turns; existing context admission and
+retrievable sources own capacity. Follow-ups retain the silence, relevance and no-repeat contracts.
+Result authors retain the canonical Main agent identity. Callback-launched work returns to that
+same Main. An accepted callback receipt and the current processing claim are separate authorities.
+Every draft, final Main result, delivery update and failure settlement rechecks the exact claim in
+its existing transaction. Reclaiming the same row invalidates the previous author even when attempt
+number and timestamp repeat. Reuse that evidence row and transaction; add no result store or timer.
+A durable result author mutates only under its current callback lane and claim. An
+in-process continuation can use its real, still-running source job; without either owner it fails
+closed. Neither path fabricates a foreground job. Authority is checked again immediately before
+dispatch. Supersession between that check and a network dispatch cannot roll back an accepted
+launch. The current callback-author map is process-local: calls routed to another process or made
+after a restart fail closed until the owning lane is restored. Multi-process routing needs that
+same owner; this candidate does not add a distributed authorization store.
 
 ### Mode
 
@@ -37,7 +58,8 @@ need no parallel-mode toggle, special delegation prompt, extra configuration, or
   objective from guidance for existing work. New objectives create separate missions once;
   relevant follow-ups update only the matching track. Unrelated input cannot interrupt, cancel,
   restart, or hide another mission. Runtime binds the chosen exact identity and authority; it
-  does not classify prompt text, add a routing model, or invent a second orchestration layer.
+  does not classify prompt text or add another routing model, planner, queue, or work store.
+  Background planning reuses the existing native coordinator.
 
 ### Responsiveness
 
@@ -88,8 +110,14 @@ the current Main receives those original inputs and fresh accepted-work facts. T
 Web successors as well as Telegram and Voice. Existing accepted workers keep their own owners;
 taking over an unfinished reply grants no authority to repeat their effects.
 
-One message can contain independent objectives. `sourceOrdinals` selects original messages; the
-optional existing `instruction` can select one exact verbatim clause inside a selected message.
+A new coordination handoff accepts the complete current request once, including its independent
+objectives and shared conditions. The background coordinator selects and manages assignments.
+New coordination starts take no arguments except optional `action: start`. Original files and
+capabilities follow their existing authorized readers; the speaking Main does not choose Worker
+file bindings or execution placement. The user's own narrowing remains part of the original request
+for the coordinator to interpret. Source selectors, exact guidance and attachment fields remain
+available for existing-work controls. The native coordinator or a declared individual-Worker
+tool can select one verbatim clause for an assignment.
 The source owner rejects paraphrases, historical text and text from unselected sources. Omitting
 it retains the complete selected input. Full authorized conversation and files remain shared
 context; they are not extra work for every worker. This keeps a correction to one worker separate
@@ -122,12 +150,55 @@ from a new objective without a generated task brief or another routing layer.
 
 ## Truth, isolation, and recovery
 
+Temporary synthesis transport or gateway unavailability uses the existing recovery backoff without
+consuming the deterministic failure budget. Failure state retains its stage, code and HTTP status.
+Historical deadletters are not automatically republished. Main can retrieve a selected retained
+result and its original accepted files without rerunning the Worker or requiring public access.
+The native signed request may carry exact prior run/attempt/file-hash grants from current accepted
+results in the originating conversation. Those grants do not persist in the worker's stable state.
+Native verifies the source and the host fences it again at attachment commit. The file courier
+must not discard a correct answer and invoke a different model for a typed attachment failure.
+Workers receive actual supported delivery-root facts through the registered file contract. New
+requested deliverables may use a supported temporary root; local-only existing content must not
+be copied out for delivery.
+
+An active, unbound mission may reuse its original capability authorization while the same
+conversation-recall corpus changes. Only the canonical file-search resource's explicitly owned corpus
+observations (source and uploaded turn/character counts, corpus digests and reduced-window status)
+are excluded from this comparison, in `vector` or `source_only` mode. The saved fingerprint must first verify itself; file
+IDs, entity, mode, ACLs, tools, servers and all other fields remain strict. Reuse returns the original
+immutable record and expiry. It cannot refresh a bound, revoked or expired authorization, add
+access, or extend a callback deadline. Current data remains subject to the existing reader ACLs.
+
+An explicit retry of an unstarted dispatch may prepare the same closed, unbound Core intent once
+under the current Native dispatch generation and signed notification deadline. Transport retries do
+not create that generation. Source identity and empty execution bindings remain mandatory; an exact
+already-ready replay keeps its first lease. This does not renew capability authorization or extend
+an earlier notification deadline. Immutable failure traces keep their first identical observation;
+changed failure facts remain conflicts.
+
+Native dispatch and continuation carry the attachment set returned by the existing current-owner,
+selected-ancestry reader, even when the newest message has no files. Current-message descriptors
+must not replace that resolved set. Upload-as-Text retains its stored extracted body and input kind;
+it is not an original-byte upload. Foreign, sibling-branch, deleted and deselected inputs remain
+excluded by the existing source owner. The signed attachment ledger uses the normal Native upload
+projection before execution; file search is not a substitute for transporting an accepted input.
+
+Native-owned goal cards are composed before Core delivery enrichment. The delivery owner joins
+each verified goal alias through its canonical delegation reference, including goals absent from
+Native's recent terminal roster. The visible alias, current action mask, pagination and existing
+read-only View owner remain intact. A receipt from another owner or an older Native run cannot
+confirm the current result; retained chat files and delivery receipts are not rewritten by polling.
+
 ### Continuity
 
 - **PW-028:** Restart, reload, reconnect, or chat continuation loses no accepted segment, mission,
   action, callback, result, or artifact. Execution complete, callback accepted, and result delivered
   remain distinct. A new unrelated message cannot strand an earlier completed result; useful Main
-  synthesis reaches its authorized origin or existing governed continuation once.
+  synthesis reaches its authorized origin or existing governed continuation once. A queued
+  successor does not withhold the completed run's text or files or mark the whole work complete.
+  A Telegram continuation in the same linked conversation uses its accepted chat and topic.
+  Scheduled work retains its configured destinations.
 
 - Owner-wide work awareness preserves the original conversation, configured destination surfaces,
   and retained result run/revision as typed delivery facts. A result delivered in another conversation
@@ -185,6 +256,10 @@ from a new objective without a generated task brief or another routing layer.
 
 - **PW-081 / PW-082:** Work and artifacts are owner-isolated. References are not authority; service
   calls require signed owner scope and public summaries exclude private inputs and internals.
+- Broker handoffs retain complete authorized resources without an application byte cap.
+  Large conversation or file context must not remove delegation tools. Signed owner, tenant,
+  turn, expiry, revocation and content-digest checks still govern access. Native model capacity
+  remains the native runtime owner's contract.
 - Main callback files imported into the host File store open through its authenticated download
   path on Web. The Markdown link renderer binds only the exact verified native grant and message
   to its owner-matched imported attachment; rejected or unavailable imports gain no download
@@ -240,6 +315,67 @@ or assign the whole source. Acceptance and delivery checks stay internal; Main g
 natural acknowledgment and later presents useful results.
 
 ### Exact assignment and continuing work
+
+Saved coordination mode uses the same `hand_off_to`, `active_work_action` and `list_workers` view
+for Direct, Codex and Claude. `hand_off_to` is the new-request flag; the existing control primitive
+keeps required action and work reference separate from it. Previously issued `hand_off_to` control
+calls remain valid through the existing owner for replay compatibility, but are not advertised.
+New handoffs durably accept an original request before planning. The existing native
+coordinator chooses the assignments and configured High Workers. Exact controls retain their
+existing authorized owners; previously hosted work finishes under its original manager.
+Coordination mode excludes legacy synchronous host-graph transfers from the Native action menu;
+full mode keeps its existing graph. An explicitly forced unavailable transfer fails clearly.
+Raw model launch arguments cannot supply host-owned broker authority, grant requirements, tokens
+or reserved MCP aliases. Strip only those reserved fields at the untrusted ingress, then let Core
+build its fresh scoped bundle. Preserve unrelated context, configuration and original requests;
+trusted Core-prepared action bundles retain their current valid authority.
+The host selects original input and carries authorized history, memory, Feelings and files through
+existing readers; it does not replace the task with a written brief. Workers retain their own
+native tools and configured effort. An unavailable optional connector inventory is reported
+separately and must not remove independent authorized work controls.
+Without an existing work reference, a handoff defaults to new work and accepts the exact current
+owned input group. Its typed start contract rejects authored assignment text and source selectors
+rather than silently removing them. Repeated flags for the same owned source return its existing
+acceptance even when the model supplies a different trusted tool-call ID. Distinct owned input
+groups retain distinct identities. Other effect types keep their existing occurrence rules.
+The speaking Main does not split the input into Worker briefs
+or repeat it for each objective. Historical conversation remains context. Current source
+files remain included; omitted historical-file selection adds no historical files. Existing work
+requires an explicit offered action.
+
+Each coordinator wake prepares current authorized application cognition through the existing
+Main readers. A native result wake refers to its durable originating interactive source; it does
+not receive a generic identity or fabricate a new human turn. Native conversation IDs stay Native
+IDs, while original application source IDs remain context. Fresh grants are prepared per wake,
+not retained in static configuration. Accepted pending turns stay visible before goals bind; their
+cards and controls come from Native state. Goal controls retain the exact current run fence.
+
+A settled failed interactive planning turn with no accepted source goals offers an explicit Retry.
+The existing turn owner saves one deterministic child per failed attempt, retaining the exact
+original message, selected Library context and failed provider history. Duplicate actions recover
+that same child. The child uses fresh authorized preparation and resolves its source to the original
+accepted request. Stopped or held work is not reopened. Existing permission owners still govern
+new actions; retry does not claim that a failed attempt had no external effects. Expired native
+questions and permission replies are not reused.
+
+Worker and coordinator results use the existing Main author, file import, delivery and receipt
+owners. They return once to the accepted conversation, including after a call ends. A self-handled
+coordinator result keeps its real publisher identity; it never becomes a fake Worker or Main run.
+The existing outbox and maintenance tick own notification, retry and recovery. No additional
+clock, presenter, approval queue or delivery ledger is introduced.
+
+Original task text and owned file references have no additional courier character or count
+ceiling. Display previews stay distinct from complete sources. Native/model capacity remains
+the admission owner; it must report unavailable capacity truthfully, never silently clip input.
+For Native body routes, legacy memory backfill uses the existing idle maintenance owner instead
+of holding the reply before Native admission. Schedule setup is deferred until actual work needs it.
+
+Workers discover relevant available capabilities and prefer background browser or app operations
+that preserve the user's foreground tab, focus and input. Shared desktop control is used when
+needed or requested. Existing authorization and real operating-system consent boundaries remain.
+Action-capable conversation-backed Native coordination inherits the same compiled capability guide
+as mission workspaces. Control-only coordination retains its restricted action surface. Structural
+guidance precedes the single current Feelings capsule, using the existing declared Native tail.
 
 An exact selected clause defines a worker's assignment; the complete original source and its
 applicable conditions, limits and output requirements remain context. Context must not assign

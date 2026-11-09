@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import shlex
+import hashlib
 import subprocess
 from pathlib import Path
 
@@ -39,6 +40,34 @@ def test_easy_install_missing_mongodb_hint_uses_supported_preflight_flag() -> No
 
     assert "bin/viventium preflight --apply" in function_def
     assert "bin/viventium preflight --fix" not in function_def
+
+
+@pytest.mark.parametrize('interval', [300, 3600])
+def test_remote_mapping_worker_recovers_a_failed_renewal_without_waiting_a_full_interval(tmp_path, interval):
+    launcher = REPO_ROOT / 'viventium_v0_4/viventium-librechat-start.sh'
+    function = extract_shell_function(launcher.read_text(), 'start_remote_call_mapping_refresh_worker')
+    helper = tmp_path / 'refresh.sh'
+    helper.write_text('n=$(cat "$COUNT" 2>/dev/null || echo 0)\nn=$((n+1))\necho "$n" > "$COUNT"\n[ "$n" -ne 1 ]\n')
+    state = tmp_path / 'state.json'
+    state.write_text('{}')
+    values = {'VIVENTIUM_REMOTE_CALL_TUNNEL_SCRIPT': helper,
+              'VIVENTIUM_PUBLIC_NETWORK_STATE_FILE': state,
+              'VIVENTIUM_REMOTE_CALL_MAPPING_REFRESH_SECONDS': interval,
+              'VIVENTIUM_REMOTE_CALL_MAPPING_REFRESH_PID_FILE': tmp_path / 'pid',
+              'VIVENTIUM_REMOTE_CALL_MAPPING_REFRESH_LOG_FILE': tmp_path / 'log',
+              'PYTHON_BIN': '/bin/bash', 'COUNT': tmp_path / 'count', 'DELAYS': tmp_path / 'delays'}
+    setup = '\n'.join(f'export {k}={shlex.quote(str(v))}' for k, v in values.items())
+    script = '''set -eu
+validation_runtime_is_quiesced() { return 1; }
+remote_call_public_edge_mode() { return 0; }
+remote_call_mapping_state_supports_refresh() { return 0; }
+remote_call_mapping_refresh_pid_is_running() { return 1; }
+log_info() { :; }
+steps=0
+sleep() { echo "$1" >> "$DELAYS"; SECONDS=$((SECONDS+$1)); steps=$((steps+1)); if [ "$steps" -eq 4 ]; then exit 0; fi; }
+'''
+    subprocess.run(['bash', '-c', setup + '\n' + script + function + '\nstart_remote_call_mapping_refresh_worker\nwait\n'], check=True, capture_output=True, text=True, timeout=5)
+    assert (tmp_path / 'delays').read_text().splitlines() == [str(interval), '60', str(interval), str(interval)]
 
 
 @pytest.mark.parametrize("host", ["127.0.0.1", "0.0.0.0"])
@@ -297,6 +326,9 @@ def test_native_matchers_reject_reused_pid_lookalikes_and_livekit_prefixes(
                 "MEILI_PORT='12700'\n"
                 f"LIVEKIT_CFG_FILE={shlex.quote(str(livekit_config))}\n"
                 "LIVEKIT_NODE_IP='192.0.2.10'\n"
+                "LIVEKIT_NATIVE_BINARY='/opt/synthetic/livekit-server'\n"
+                "process_executable_path() { if [[ $1 == 401 ]]; then printf '/opt/synthetic/livekit-server-helper'; else printf '/opt/synthetic/livekit-server'; fi; }\n"
+                "canonical_existing_path() { printf '%s' \"$1\"; }\n"
                 "VIVENTIUM_INSTALL_EXPERIENCE='legacy'\n"
                 "MONGODB_NATIVE_BINARY='/opt/viventium/pinned/mongod'\n"
                 "ps() {\n"
@@ -618,6 +650,9 @@ def test_livekit_meta_matches_expected_accepts_matching_runtime_meta(tmp_path: P
     script_text = NATIVE_STACK_PATH.read_text(encoding="utf-8")
     function_def = extract_shell_function(script_text, "livekit_meta_matches_expected")
     meta_file = tmp_path / "livekit.runtime.env"
+    config_file = tmp_path / "livekit.yaml"
+    config_file.write_text("port: 7888\n")
+    config_hash = hashlib.sha256(config_file.read_bytes()).hexdigest()
     meta_file.write_text(
         "\n".join(
             [
@@ -625,6 +660,8 @@ def test_livekit_meta_matches_expected_accepts_matching_runtime_meta(tmp_path: P
                 "LIVEKIT_HTTP_PORT=7888",
                 "LIVEKIT_TCP_PORT=7889",
                 "LIVEKIT_UDP_PORT=7890",
+                "LIVEKIT_BINARY_SHA256=synthetic-release-hash",
+                f"LIVEKIT_CONFIG_SHA256={config_hash}",
             ]
         )
         + "\n",
@@ -638,6 +675,8 @@ def test_livekit_meta_matches_expected_accepts_matching_runtime_meta(tmp_path: P
             (
                 "set -euo pipefail\n"
                 f"LIVEKIT_META_FILE='{meta_file}'\n"
+                f"LIVEKIT_CFG_FILE='{config_file}'\n"
+                "LIVEKIT_NATIVE_BINARY_SHA256=synthetic-release-hash\n"
                 "LIVEKIT_NODE_IP='192.0.2.10'\n"
                 "LIVEKIT_HTTP_PORT='7888'\n"
                 "LIVEKIT_TCP_PORT='7889'\n"
@@ -1146,3 +1185,34 @@ def test_start_livekit_never_restarts_managed_listener_when_runtime_meta_drifted
     assert completed.returncode == 1
     assert not mutation_marker.exists()
     assert "Native LiveKit startup is not a verified release path" in completed.stderr
+
+
+@pytest.mark.parametrize("fail_first", [False, True])
+def test_lan_reconciliation_rebinds_media_before_publishing_and_retries(tmp_path, fail_first):
+    launcher = REPO_ROOT / 'viventium_v0_4/viventium-librechat-start.sh'
+    functions = '\n'.join(extract_shell_function(launcher.read_text(), name) for name in
+                          ('publish_remote_call_lan_ready', 'reconcile_remote_call_lan'))
+    setup = "\n".join(f'{key}={shlex.quote(str(value))}' for key, value in {
+        'VIVENTIUM_STATE_ROOT': tmp_path, 'EVENTS': tmp_path / 'events',
+        'VIVENTIUM_LAN_HTTPS': 'true', 'VIVENTIUM_LIVEKIT_RUNTIME': 'native',
+        'SKIP_LIVEKIT': 'false', 'LIVEKIT_API_HOST_WAS_CONFIGURED': 'false',
+        'VIVENTIUM_LAN_RUNTIME_READY': 'true', 'last_reconciled_lan_ip': '192.168.1.20',
+        'VIVENTIUM_LAN_IP': '192.168.1.20', 'LIVEKIT_API_HOST': 'http://localhost:7888',
+        'VIVENTIUM_REMOTE_CALL_TUNNEL_SCRIPT': 'helper', 'VIVENTIUM_PUBLIC_NETWORK_STATE_FILE': 'state',
+        'PYTHON_BIN': 'publish', 'fail_first': int(fail_first),
+    }.items())
+    stubs = r'''
+set -eu
+native_livekit_lan_ip() { echo 10.0.0.20; }
+log_info() { :; }
+log_success() { :; }
+prepare_remote_call_access() { echo edge >> "$EVENTS"; VIVENTIUM_LAN_IP=10.0.0.20; }
+run_native_livekit() { echo "$1" >> "$EVENTS"; if [ "$1" = start-livekit-only ] && [ "$fail_first" = 1 ]; then fail_first=0; return 1; fi; }
+write_livekit_config() { echo config >> "$EVENTS"; }
+wait_for_http() { echo healthy >> "$EVENTS"; }
+publish() { echo ready >> "$EVENTS"; }
+'''
+    calls = 'reconcile_remote_call_lan || true\nreconcile_remote_call_lan\nreconcile_remote_call_lan\n'
+    subprocess.run(['bash', '-c', setup + '\n' + stubs + functions + calls], check=True, timeout=5)
+    expected = ['edge', 'stop-livekit-only', 'config', 'start-livekit-only', 'healthy', 'ready']
+    assert (tmp_path / 'events').read_text().splitlines() == (expected[:4] + expected if fail_first else expected)

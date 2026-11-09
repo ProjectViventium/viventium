@@ -7214,7 +7214,7 @@ def test_workbench_context_links_prompt_history_evals_and_qa(tmp_path: Path, mon
 
     assert context["promptId"] == "main.identity"
     assert any(family["id"] == "main_identity_style" for family in context["linkedEvals"]["families"])
-    assert any(row["id"] == "PW-004" for row in context["qaCoverage"])
+    assert any(row["id"] == "PWB-004" for row in context["qaCoverage"])
     assert str(Path.home()) not in encoded
 
 
@@ -8911,3 +8911,33 @@ const Panel = loaded.exports.ScheduledPromptsPanel;
         timeout=30,
     )
     assert result.returncode == 0, result.stdout + result.stderr
+
+
+def test_native_surface_execution_route_validates_declared_hashed_model_identity(tmp_path, monkeypatch):
+    output_dir=tmp_path / "native-hashed"
+    output_dir.mkdir()
+    command=[f"--output-dir={output_dir}"]
+    write_verified_synthetic_native_surface_artifact(command, case_ids=["telegram_case"])
+    monkeypatch.setattr(evals, "_configured_execution_route", lambda _target: {
+        "provider":"synthetic-provider", "model":"synthetic-model", "effort":"medium", "fallbacks":[]})
+    monkeypatch.setattr(evals, "_configured_execution_agent_hash", lambda _target: evals._sha("synthetic-main-agent"))
+    artifact=output_dir / "native-surface-playwright-qa.json"
+    payload=json.loads(artifact.read_text())
+    frame=payload["cases"][0]["private"]["completionFrames"][0]
+    for key in ["provider","model","requested_provider","requested_model","effective_provider","effective_model"]:
+        frame[key]="h"+evals._sha(frame[key])
+    frame["route_identity_hashed"]=True
+    def evaluate():
+        artifact.write_text(json.dumps(payload))
+        return evals._native_surface_execution_route(output_dir, execution_target=None,
+            selected_case_ids=["telegram_case"], requested_surface="telegram", semantic_judge_required=True)
+    assert evaluate()["status"]=="verified"
+    saved=frame["model"]
+    frame["effective_model"]="h"+evals._sha("other-model")
+    assert evaluate()["status"]!="verified"
+    frame["effective_model"]=saved
+    frame["requested_model"]="malformed-hash"
+    assert evaluate()["status"]!="verified"
+    frame["requested_model"]=saved
+    frame.pop("route_identity_hashed")
+    assert evaluate()["status"]!="verified"

@@ -232,7 +232,15 @@ def unpack(archive: Path, digest_path: Path, output_root: Path) -> Path:
                 raise TransportError("candidate archive expands beyond the safety limit")
         if "candidate" not in seen:
             raise TransportError("candidate archive root is missing")
-        tar.extractall(path=output_root, members=members, filter="data")
+        def candidate_filter(member: tarfile.TarInfo, destination: str):
+            filtered = tarfile.data_filter(member, destination)
+            # data_filter discards directory modes. This transport's validated
+            # candidate contract requires 0755 even under a restrictive umask.
+            if filtered is not None and filtered.isdir():
+                filtered = filtered.replace(mode=0o755)
+            return filtered
+
+        tar.extractall(path=output_root, members=members, filter=candidate_filter)
     extracted = output_root / "candidate"
     validate_source(extracted)
     return extracted

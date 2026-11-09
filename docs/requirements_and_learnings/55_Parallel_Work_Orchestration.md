@@ -740,8 +740,11 @@ Parallel Work extends rather than replaces the existing logical-turn revision co
   source ready; claim waits for these exact sources rather than admitting partial context. Mongo or
   attachment lookup failure keeps the source available for the same-source retry. A bounded wait
   returns a typed retryable `source_input_persistence_pending` condition, never a successful empty
-  turn or a generic transport conflict. Exceeding the existing source count/byte limits returns
-  `source_input_capacity` before retained references can be evicted.
+  turn or a generic transport conflict. Retention and claim use the same exact-source normalizer
+  in Memory and Redis. Later revisions preserve accepted text, files, order and provenance;
+  earlier claim receipts remain unchanged. Typed upstream overflow or invalid source returns
+  `source_input_capacity` before accepted state changes. Native capacity admission owns dispatch;
+  the courier must not evict originals by source count or byte size.
 - Slow Telegram preparation belongs to the existing authenticated ingress event, with original
   text, the minimal Telegram preparation envelope, and prepared attachments in the existing
   owned Message/File storage. Preparation holds no Main turn. An expired preparation lease is
@@ -2344,10 +2347,15 @@ same prepare, file, disposition, persistence and delivery owners. A saved result
 new permission to publish: existing Stop, restore-hold, accepted-result and delivery-authority
 fences still govern it. A queue or message continuation does not erase an earlier result merely
 because another run starts. This recovery does not automatically revive historical deadletters.
+Typed temporary synthesis availability failures defer on the existing backoff without spending
+the deterministic failure budget. An exact claim CAS owns that deferral. Persist the last failure
+stage, code and HTTP status, including when deterministic retries are exhausted. A selected retained
+file can use the existing accepted-callback import path even when no earlier presentation imported
+it; preserve owner, conversation, result and publication fences.
 Do not create a new model request to recover a completed answer or relax immutable idempotency
 conflicts. A first dispatch adds no recovery lookup.
-Normal and recovered follow-up files keep the validated native emitter message ID. Recovery
-preserves that emitter even when the original invocation receipt is missing. Do not substitute the parent message ID or fabricate a full invocation identity.
+Normal and recovered files keep the validated native emitter message ID even when the original invocation
+receipt is missing. Do not substitute the parent message ID or fabricate a full invocation identity.
 
 A retry keeps the same authored message; it does not regenerate Main. Superseded results and fixed
 errors retain their existing rejection behavior. The existing warning records only bounded stage
@@ -2592,6 +2600,39 @@ mission manager, semantic routing rules or complaint-specific presentation filte
   worker, grant unrelated consent, or make the user navigate a worker console.
 - Reuse native session readiness, durable callbacks, current-generation fences and the shared
   speech facade. A catalog advertisement is not proof that the session's required tools resolved.
+- A result delivery retry reuses its persisted Main message. Read the existing owner-scoped
+  delivery projection by exact conversation, parent and delivery IDs; do not require private
+  fields that this projection omits. Verify the saved message's owner, conversation, parent and
+  delivery metadata before the existing channel outbox resumes. This applies to both delegated
+  work and native coordinator work that finishes without a separate worker or file.
+- A saved native result retains the existing typed Main result authority before publication.
+  General cortex recovery defers to that result's channel owner. An accepted HTTP callback is
+  not a user delivery receipt; the observed channel receipt settles the author ledger. A failed
+  transport does not become intentional silence. Recovery keeps the same message, content and
+  history and checks current ownership, Stop and restore holds before another send.
+- Independent native results use their trusted event identity as an optional publication scope
+  in the existing insight ledger. They keep the same original source and conversation parents.
+  Legacy batches retain their stored scope; exact candidate IDs select them without rewriting
+  immutable envelopes. One result cannot claim, settle or suppress another result's batch.
+  Active work projects a self-handled goal's exact current Main/Cortex required and presented
+  receipts; stopped, held, stale or missing proof remains unconfirmed.
+- A native coordinator may finish an accepted request directly without creating a helper goal.
+  Its genuine accepted turn is the result owner. The existing outbox publishes its canonical saved
+  assistant reply through the same Main, insight and channel owners as goal results. The source
+  retains the exact turn, request, run, revision, digest and original input; it does not invent a
+  goal or Worker. Internal result-wake turns and turns already represented by a goal's durable
+  dispatch or execution binding do not send another completion. An accepted, unstarted intent
+  alone cannot hide the native turn's saved answer. It remains unstarted; transport does not invent
+  goal completion. Stop, restore hold and supersession still block publication.
+- An unpublished native result keeps its existing owner across an author crash. Recovery claims
+  its exact saved admission, prepares current cognition and reuses the native presenter. Exhausted
+  transport attempts do not discard useful accepted evidence. If Main was saved before its ledger
+  receipt, recovery repairs that receipt and reuses the same message; deleted, invalid or ambiguous
+  saved messages block republication.
+- Native retained publication metadata proves the origin of older, unpublished results after the
+  goal moves to another run. The owner-scoped reader exposes only existing outbox identities and
+  source references. It cannot authorize stale work, replay an expired callback or extend its
+  deadline. Current source, goal, result, Stop and hold checks still govern every publication.
 - Keep admission receipts when a turn is interrupted. Internal memory maintenance retains its
   own authority; a live call's tool restrictions do not become its permissions.
 

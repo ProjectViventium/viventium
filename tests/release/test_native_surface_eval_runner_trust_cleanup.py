@@ -1417,3 +1417,141 @@ def test_existing_db_observations_reach_same_judge_without_sensitive_payloads() 
 """
     completed = _node(script)
     assert completed.returncode == 0, completed.stderr
+
+
+def test_telegram_seeds_keep_one_real_conversation_and_cleanup_receipts() -> None:
+    script = r"""
+const assert = require('assert');
+const runner = require(process.argv[1]);
+const posted = [];
+let turns = 0;
+global.fetch = async (url, options={}) => {
+ if (url.endsWith('/source-order')) {
+  const body=JSON.parse(options.body);
+  const sourceOrderScope=runner.buildTelegramSourceOrderScope({ownerId:'qa-owner',
+   telegramUserId:body.telegramUserId,telegramChatId:body.telegramChatId});
+  return new Response(JSON.stringify({observed:true,stale:false,sourceOrderScope,
+   sourceEventId:runner.buildTelegramSourceEventId({sourceOrderScope,sourceSequence:body.sourceSequence}),
+   latestSourceSequence:body.sourceSequence}),{status:200});
+ }
+ if (options.method==='POST') {
+  posted.push(JSON.parse(options.body));turns++;
+  return new Response(JSON.stringify({streamId:'stream-'+turns}),{status:200});
+ }
+ const event={final:true,conversation:{conversationId:'qa-conversation'},
+  responseMessage:{messageId:'qa-answer-'+turns,text:'Answer '+turns},
+  requestMessage:{messageId:'qa-request-'+turns}};
+ return new Response('data: '+JSON.stringify(event)+'\n\n',{status:200});
+};
+(async()=>{
+ const result=await runner.runTelegramSurface({args:{apiBase:'http://synthetic.invalid',
+  agentId:'qa-agent',qaRunId:'qa-run',timeoutMs:1000},env:{},
+  qaAuth:{userId:'qa-owner',syntheticTelegramUserId:'123'},
+  testCase:{id:'qa-case',surface:'telegram',seed_prompts:['Start real work.'],prompt:'What is six times seven?'}});
+ assert.ok(result.ok);
+ assert.strictEqual(posted.length,2);
+ assert.strictEqual(posted[0].conversationId,'new');
+ assert.strictEqual(posted[1].conversationId,'qa-conversation');
+ assert.strictEqual(posted[1].parentMessageId,'qa-answer-1');
+ assert.strictEqual(result.seedEvidence.length,1);
+ assert.strictEqual(result.cleanupFinalMetas.length,2);
+ assert.ok(posted[1].sourceSequence>posted[0].sourceSequence);
+})().catch(error=>{console.error(error);process.exit(1)});
+"""
+    result = _node(script)
+    assert result.returncode == 0, result.stderr
+
+
+def test_background_observation_uses_owned_adjudication_and_actual_delayed_files() -> None:
+    script = r"""
+const assert=require('assert');
+const runner=require(process.argv[1]);
+const queries=[];
+const messages=[
+ {messageId:'seed-answer',user:'qa-owner',text:'I will do that.'},
+ {messageId:'late',user:'qa-owner',text:'The badge is ready.',attachments:[
+  {file_id:'actual-file',filename:'badge.svg',type:'image/svg+xml',bytes:80}]},
+ {messageId:'primary',user:'qa-owner',text:'42.'},
+ {messageId:'other-late',user:'qa-owner',text:'Not this mission.'},
+];
+const db={collection:name=>({find:(filter)=>{
+ queries.push({name,filter});
+ const rows=name==='messages'?messages:[{state:'completed',followUpMessageId:'late'}];
+ return {sort:()=>({toArray:async()=>rows}),toArray:async()=>rows};
+}})};
+(async()=>{
+ const result={finalMeta:{conversationId:'qa-conversation',responseMessageId:'primary'},
+  observeBackgroundResults:true,hasCortexActivation:false};
+ const evidence=await runner.observePostCaseDbEvidence({db,result,maxObserveMs:10,followUpGraceMs:0});
+ assert.strictEqual(evidence.delayedMessageCount,1);
+ assert.strictEqual(evidence.delayedVisibleText,'The badge is ready.');
+ assert.deepStrictEqual(evidence.missionAdjudications,[{state:'completed',hasFollowUp:true}]);
+ assert.deepStrictEqual(queries.find(x=>x.name==='viventium_glasshive_mission_evidence').filter,
+  {conversationId:'qa-conversation',ownerId:'qa-owner'});
+ assert.strictEqual(evidence.normalAttachmentObservations.attachments[0].filename,'badge.svg');
+ assert.strictEqual(evidence.normalAttachmentObservations.attachments[0].owner_download_verified,false);
+ const missing=await runner.readConversationEvidence({db,result:{...result,
+  finalMeta:{responseMessageId:'missing'}},conversationId:'qa-conversation'});
+ assert.strictEqual(missing.delayedMessageCount,0);
+ assert.deepStrictEqual(missing.missionAdjudications,[]);
+ const judge=runner.buildJudgePrompt({id:'real-background',familyId:'phase_b_followup',
+  prompt:'What is six times seven?',rubric:['The later badge result is delivered.']},
+  {...result,ok:true,text:'42.',postCaseEvidence:evidence});
+ assert.ok(judge.includes('Score the later authored result'));
+ assert.ok(judge.includes('The badge is ready.'));
+ assert.ok(judge.includes('No mission, a pending row, deadletter'));
+})().catch(error=>{console.error(error);process.exit(1)});
+"""
+    result = _node(script)
+    assert result.returncode == 0, result.stderr
+
+
+def test_background_result_gate_requires_the_declared_decision_and_real_file() -> None:
+    script = r"""
+const assert=require('assert');
+const {inspectBackgroundResultObservation:inspect}=require(process.argv[1]);
+const silent={missionAdjudications:[{state:'silent',hasFollowUp:false}],delayedMessageCount:0};
+const visible={missionAdjudications:[{state:'completed',hasFollowUp:true}],delayedMessageCount:1,
+ normalAttachmentObservations:{attachments:[{filename:'badge.svg',status:'attached'}]}};
+assert.deepStrictEqual(inspect({expected_decision:'suppress'},silent),{ok:true});
+assert.strictEqual(inspect({expected_decision:'suppress'},visible).error,'background_result_unexpected_delivery');
+assert.strictEqual(inspect({expected_decision:'surface'},silent).error,'background_result_missing_delivery');
+assert.deepStrictEqual(inspect({expected_decision:'surface',required_background_attachment:'badge.svg'},visible),{ok:true});
+assert.strictEqual(inspect({expected_decision:'surface',required_background_attachment:'missing.svg'},visible).error,'background_result_missing_attachment');
+assert.strictEqual(inspect({expected_decision:'suppress'},{...silent,
+ missionAdjudications:[]}).error,'background_result_not_adjudicated');
+for(const state of ['pending','processing','superseded','deadletter'])assert.strictEqual(
+ inspect({expected_decision:'suppress'},{...silent,missionAdjudications:[{state,hasFollowUp:false}]}).ok,false);
+assert.strictEqual(inspect({expected_decision:'suppress'},{...silent,delayedMessageCount:1}).ok,false);
+assert.strictEqual(inspect({expected_decision:'suppress'},{...silent,
+ missionAdjudications:[{state:'silent',hasFollowUp:true}]}).ok,false);
+"""
+    result = _node(script)
+    assert result.returncode == 0, result.stderr
+
+
+def test_background_cleanup_adopts_only_current_qa_callback_descendants() -> None:
+    script = r"""
+const assert=require('assert'), runner=require(process.argv[1]);
+const scope={userId:'qa-user',conversationId:'qa-conversation',qaRunId:'qa-run',runStartedAt:new Date('2026-11-01T00:00:00Z')};
+const base={user:'qa-user',conversationId:'qa-conversation',createdAt:'2026-11-01T00:01:00Z',isCreatedByUser:false};
+const seed={...base,messageId:'seed',metadata:{viventium:{qaRun:true,qaRunId:'qa-run'}}};
+const callback={...base,messageId:'callback',parentMessageId:'seed',metadata:{viventium:{type:'glasshive_worker_callback'}}};
+const followup={...base,messageId:'followup',parentMessageId:'callback',metadata:{viventium:{type:'cortex_followup'}}};
+assert.deepStrictEqual(runner.ownedQaBackgroundDescendants([followup,callback,seed],scope).map(r=>r.messageId),['callback','followup']);
+for(const changed of [
+ {...callback,user:'other'}, {...callback,conversationId:'other'}, {...callback,createdAt:'2026-10-01T00:00:00Z'},
+ {...callback,parentMessageId:'unrelated'}, {...callback,isCreatedByUser:true},
+ {...callback,metadata:{viventium:{type:'cortex_followup',qaRunId:'other-run'}}},
+ {...callback,metadata:{viventium:{type:'cortex_followup',qaRun:false}}},
+ {...callback,metadata:{viventium:{type:'ordinary'}}},
+]) assert.deepStrictEqual(runner.ownedQaBackgroundDescendants([seed,changed],scope),[]);
+const writes=[];const db={collection(){return {find(){return {limit(){return this},async toArray(){return [seed,callback,followup]}}},
+ async updateOne(query,update){writes.push({query,update});return {matchedCount:1}}}}};
+(async()=>{assert.strictEqual(await runner.tagQaBackgroundDescendants({db,...scope}),2);
+assert.ok(writes.every(w=>w.query.user==='qa-user' && w.query.isCreatedByUser===false && w.query['metadata.viventium.qaRunId'].$exists===false));
+assert.deepStrictEqual(writes.map(w=>w.query.parentMessageId),['seed','callback']);
+})().catch(e=>{console.error(e);process.exit(1)});
+"""
+    result = _node(script)
+    assert result.returncode == 0, result.stderr

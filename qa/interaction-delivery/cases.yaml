@@ -68,6 +68,14 @@ journeys:
     degradedAndRecovery: Superseded callback settles once; permanent destination failure reaches typed delivery exhaustion at the existing limit and keeps authored text. Unlinked older owners cannot starve a linked owner.
     persistenceAndCleanup: Restart preserves result, attempts, exact owner and target; no worker replay or re-authoring.
     evidence: [authored message identity, accepted callback fence, delivery attempts and terminal state, visible result and native request count]
+  - id: worker-result-after-file-publication-failure
+    requirements: [PW-071, PW-076, PW-110]
+    userAction: Delegate a delayed task with a valid output and an unavailable attachment. Ask a separate question while it runs.
+    surfaces: [Telegram, callback]
+    expectedResult: Main acknowledges accepted work and answers the separate question. Completion and verified files arrive once without a follow-up, with an explicit note for any unavailable attachment.
+    degradedAndRecovery: A quoted file reference in the original input cannot block acceptance. A crash before callback creation recovers the marked generation without replaying unmarked legacy work.
+    persistenceAndCleanup: Reuse the terminal callback and saved presentation. Keep private files out of the result and do not rerun the worker.
+    evidence: [visible transcript, original input, terminal run, callback outbox, delivery receipt, exact attachment bytes]
 
   - id: durable-chat-source-currency-after-retention
     requirements: [CC-043, CC-047, CC-048, HARD-005, HARD-021]
@@ -86,3 +94,12 @@ journeys:
     degradedAndRecovery: Partial marker fragments stay hidden. A failed or stale stream cannot commit success. Use the actual attachment sender for confirmed file, confirmed unavailable notice, unknown send, missing receipt, failed notice and partial file acceptance. Uncertain files with no confirmed answer text record failed presentation with confirmed item references. A confirmed ordinary answer instead commits only confirmed text/file references and remains eligible for accepted memory; unknown file items are excluded and never resent. Acknowledgment outage retries only its durable receipt. A zero-item quiet acknowledgment failure stays silent, creates no pending retry/removal notice and retries the same saved final on input recovery. Check both cached and expired completed Main jobs through the actual Core input recovery consumer; failed presentation settles lease and retry to zero without model/action replay or changing Main's answer.
     persistenceAndCleanup: Replaying the same saved final retains its turn and revision, produces an idempotent acknowledgment, and neither reruns the model nor delivers a duplicate item. A body/source/current-author-validated completed final outranks the legacy unfinished presentation flag; absent or foreign proof cannot claim completed production. A useful later Cortex or worker result retains its separate ledger receipt after a zero-item Main receipt, without a duplicate Main send or raw status.
     evidence: [visible silence and idle status, exact source and turn, canonical final, acknowledgment and ingress state, provider request count, authorized attachment receipt]
+
+  - id: retained-result-file-inventory
+    requirements: [PW-071, PW-110, HARD-021]
+    userAction: Ask Main to find an authorized retained result file among many file-free results, one invalid legacy row, and valid sibling files; then open the selected file.
+    surfaces: [Web, Telegram, retained result-file inventory]
+    expectedResult: File-free evidence is excluded and accepted callbacks are checked in one batch with no courier row cap. Only files with the exact accepted authority tuple appear; invalid legacy rows grant nothing and do not hide valid siblings.
+    degradedAndRecovery: Reject foreign owners and mismatched origin, work, run, attempt, callback, revision, digest, or accepted operation/generation. Missing or malformed historical proof never grants access. Unexpected store failures remain failures.
+    persistenceAndCleanup: Reload preserves exact file identity. Selecting or publishing a file still revalidates its current accepted-result fence; inventory alone cannot publish it. Remove only synthetic rows and artifacts.
+    evidence: [file-bearing query and batch count, exact authority mutation negatives, valid sibling inventory, selected-file fence, opened bytes, reload]

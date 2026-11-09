@@ -249,8 +249,8 @@ stale_case_catalog_audit:
   markers_in_untracked_current_files: 11
   existing_case_catalog_date_resets: 0
   current_marker_as_of: 2026-09-25
-  current_recent_marker_total: 264
-  post_initial_audit_recent_marker_delta: 178
+  current_recent_marker_total: 267
+  post_initial_audit_recent_marker_delta: 181
   current_stale_triage_marker_total: 168
   current_total_stale_marker_delta_after_initial_audit: 4
   method: read_only_current_marker_comparison_against_head
@@ -410,7 +410,7 @@ sources:
         case_ids: [PROMPT-001, PROMPT-002, PROMPT-003, PROMPT-004, PROMPT-005, PROMPT-006, PROMPT-007]
         use_case_ids: [PROMPT-UC-001, PROMPT-UC-004, PROMPT-UC-005, PROMPT-UC-006, PROMPT-UC-007]
       - owner: qa/prompt-workbench/cases.md
-        case_ids: [PW-001, PW-005, PW-009]
+        case_ids: [PWB-001, PWB-005, PWB-009]
     disposition: captured_acceptance_partial
     disposition_as_of: 2026-08-30
     remaining_gap: >-
@@ -476,7 +476,7 @@ sources:
         case_ids: [SCHED-016]
         use_case_ids: [SCHED-UC-016]
       - owner: qa/prompt-workbench/cases.md
-        case_ids: [PW-027]
+        case_ids: [PWB-027]
     disposition: captured_live_acceptance_passed
     disposition_as_of: 2026-08-30
     remaining_gap: The proven route remains subject to the wider scheduler clean-install and degraded-state release gates.

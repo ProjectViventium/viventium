@@ -274,6 +274,36 @@ properties:
       network:
         type: object
         properties:
+          lan_https:
+            type: boolean
+            default: false
+            description: Enable LAN-only HTTPS through the existing Caddy edge. Set lan_domain and lan_dns for trusted HTTPS with no client setup; raw-IP mode needs explicit local-CA trust.
+          lan_domain:
+            type: string
+            description: Optional owned LAN DNS domain. Native Caddy DNS validation provides trusted HTTPS without client certificate setup.
+          lan_playground_https_port:
+            type: integer
+            default: 8443
+            minimum: 1024
+            maximum: 65535
+            description: Stable LAN call-page listener. Must differ from the LAN LiveKit listener.
+          lan_livekit_https_port:
+            type: integer
+            default: 8444
+            minimum: 1024
+            maximum: 65535
+            description: Stable LAN LiveKit signaling listener. Must differ from the LAN call-page listener.
+          lan_dns:
+            type: object
+            properties:
+              zone:
+                type: string
+              provider:
+                type: string
+                enum: [godaddy, cloudflare]
+              api_token:
+                type: string
+                description: keychain:// credential reference. Only the Caddy child resolves the secret; it is never compiled into service environments.
           remote_call_mode:
             type: string
             enum: [auto, disabled, cloudflare_quick_tunnel, tailscale_tailnet_https, netbird_selfhosted_mesh, public_https_edge, custom_domain, custom_domain_public_edge, public_custom_domain]
@@ -288,6 +318,11 @@ properties:
           livekit_api_host:
             type: string
             description: Explicit HTTP(S) LiveKit API endpoint; empty uses the managed local server.
+          livekit_runtime:
+            type: string
+            enum: [docker, native]
+            default: docker
+            description: Managed LiveKit server. Docker stays the default; native uses the pinned macOS ARM64 server and host LAN media interfaces.
           public_glasshive_origin:
             type: string
           livekit_node_ip:
@@ -541,6 +576,21 @@ properties:
   integrations:
     type: object
     properties:
+      chrome_devtools:
+        type: object
+        additionalProperties: false
+        description: Optional owner-only Chrome connection through the existing per-user MCP pool.
+        properties:
+          enabled:
+            type: boolean
+            default: false
+      local_media:
+        type: object
+        additionalProperties: false
+        properties:
+          config:
+            type: string
+            default: ""
       health:
         type: object
         properties:

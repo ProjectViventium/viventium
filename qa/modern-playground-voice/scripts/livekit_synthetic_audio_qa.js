@@ -2026,6 +2026,7 @@ async function run() {
   await client.connect();
   const db = client.db();
   let browser;
+  let page;
   let seeded;
   let cleanup = null;
   const consoleMessages = [];
@@ -2181,7 +2182,7 @@ async function run() {
     await context.grantPermissions(["microphone"], {
       origin: args.browserPlaygroundUrl,
     });
-    const page = await context.newPage();
+    page = await context.newPage();
     page.on("console", (message) => {
       const type = message.type();
       const text = message.text();

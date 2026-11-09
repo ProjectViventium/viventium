@@ -53,6 +53,11 @@ Research basis:
 
 This is the proposed v0.5 shell, not a claim about the current shipped runtime. The concept uses no LibreChat or LiveKit code. In the product, LibreChat can remain hidden behind chat and Cortex Editor, GlassHive remains the worker plane, and Prompt Workbench remains internal.
 
+The [proposed integration constraints](PRODUCT.md#product-principles) use typed frontend and
+backend ports, reuse the existing authenticated backend, and preserve capability before removal.
+Making this the ordinary UI and retiring a backend are separate delivery claims; this concept
+completes neither.
+
 ## Artifact location
 
 New concept:

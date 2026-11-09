@@ -788,8 +788,9 @@ def test_cmd_start_netbird_preserves_explicit_livekit_node_ip(monkeypatch, tmp_p
     assert saved["livekit_node_ip"] == "100.64.0.12"
 
 
+@pytest.mark.parametrize("lan_fault", ["", "success", "trusted", "dns", "address", "bind", "probe", "probe_restart"])
 def test_cmd_start_public_https_edge_autogenerates_sslip_origins_and_media_mappings(
-    monkeypatch, tmp_path: Path
+    monkeypatch, tmp_path: Path, lan_fault
 ) -> None:
     module = load_module()
 
@@ -804,6 +805,14 @@ def test_cmd_start_public_https_edge_autogenerates_sslip_origins_and_media_mappi
     monkeypatch.setattr(module.fcntl, "flock", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(module, "load_state", lambda _path: {})
     monkeypatch.setattr(module, "ensure_caddy", lambda _auto_install: "/opt/homebrew/bin/caddy")
+    if lan_fault == "dns":
+        def invalid_dns(): raise RuntimeError("Missing DNS credential")
+        monkeypatch.setattr(module, "lan_dns_settings", invalid_dns)
+    elif lan_fault == "trusted":
+        monkeypatch.setattr(module, "lan_dns_settings", lambda: {
+            "domain": "lan.example.test", "zone": "example.test", "provider": "godaddy", "configuration_digest": "synthetic-digest"})
+        monkeypatch.setattr(module, "ensure_lan_caddy", lambda binary, *_args: binary)
+
     monkeypatch.setattr(module, "ensure_upnpc", lambda _auto_install: "/opt/homebrew/bin/upnpc")
     monkeypatch.setattr(
         module,
@@ -816,9 +825,12 @@ def test_cmd_start_public_https_edge_autogenerates_sslip_origins_and_media_mappi
         lambda _bin: {"external_ip": "203.0.113.42", "local_ip": "192.168.50.10", "mappings": {}},
     )
     monkeypatch.setattr(module, "discover_public_ipv4", lambda _bin=None: "203.0.113.42")
+    monkeypatch.setattr(module, "assigned_local_ipv4s", lambda: set() if lan_fault == "address" else {"192.168.50.10"})
     monkeypatch.setattr(module, "pick_caddy_admin_port", lambda: 2019)
-    ports = iter([4080, 4443])
-    monkeypatch.setattr(module, "pick_free_port", lambda: next(ports))
+    ports = iter([4080, 4443, 8443, 8444])
+    def pick_port(*args):
+        return next(ports)
+    monkeypatch.setattr(module, "pick_free_port", pick_port)
     created_mappings: list[tuple[str, int, int]] = []
     monkeypatch.setattr(
         module,
@@ -827,7 +839,29 @@ def test_cmd_start_public_https_edge_autogenerates_sslip_origins_and_media_mappi
             (protocol, external_port, internal_port)
         ),
     )
-    monkeypatch.setattr(module, "start_caddy_process", lambda *_args, **_kwargs: 777)
+    starts = []
+    def start_caddy(*_args, **_kwargs):
+        starts.append(True)
+        if lan_fault == "bind" and len(starts) == 1:
+            raise RuntimeError("LAN listener cannot bind")
+        return 777
+    monkeypatch.setattr(module, "start_caddy_process", start_caddy)
+    def failed_probe(*_args):
+        raise module.ssl.SSLError("LAN IP certificate verification failed")
+    monkeypatch.setattr(module, "verify_lan_tls", failed_probe, raising=False)
+    if lan_fault in {"success", "trusted"}:
+        monkeypatch.setattr(module, "verify_lan_tls", lambda lan, *_args: {
+            **lan, "tls_verified": True, "ca_file": "/tmp/test-ca.crt", "ca_sha256": "test-fingerprint",
+        })
+    removed_mappings = []
+    stopped = []
+    monkeypatch.setattr(module, "stop_pid", lambda pid: stopped.append(pid))
+    def forbidden_cleanup(*_args, **_kwargs):
+        if lan_fault == "probe_restart":
+            removed_mappings.append((_kwargs["protocol"], _kwargs["external_port"]))
+            return
+        raise AssertionError("Optional LAN failure removed a public mapping")
+    monkeypatch.setattr(module, "remove_upnp_mapping", forbidden_cleanup)
     written_configs: dict[str, str] = {}
 
     original_write_text = Path.write_text
@@ -838,11 +872,11 @@ def test_cmd_start_public_https_edge_autogenerates_sslip_origins_and_media_mappi
 
     monkeypatch.setattr(Path, "write_text", capture_write_text)
     waited: list[tuple[list[str], int, int]] = []
-    monkeypatch.setattr(
-        module,
-        "wait_for_public_caddy_hosts",
-        lambda hostnames, *, https_port, timeout_seconds: waited.append((hostnames, https_port, timeout_seconds)),
-    )
+    def wait_hosts(hostnames, *, https_port, timeout_seconds):
+        waited.append((hostnames, https_port, timeout_seconds))
+        if lan_fault == "probe_restart" and len(waited) == 2:
+            raise RuntimeError("Public fallback health check failed")
+    monkeypatch.setattr(module, "wait_for_public_caddy_hosts", wait_hosts)
     monkeypatch.setattr(
         module,
         "resolve_public_edge_livekit_cert_pair",
@@ -879,12 +913,19 @@ def test_cmd_start_public_https_edge_autogenerates_sslip_origins_and_media_mappi
         public_glasshive_origin="",
         livekit_node_ip="",
         caddy_data_dir="",
+        lan_https=bool(lan_fault),
         provider="public_https_edge",
         auto_install=False,
         timeout_seconds=5,
         command="start",
     )
 
+    if lan_fault == "probe_restart":
+        with pytest.raises(RuntimeError, match="Public fallback health check failed"):
+            module.cmd_start(args)
+        assert removed_mappings == [("TCP", 80), ("TCP", 443), ("TCP", 7889), ("UDP", 7890), ("TCP", 5349)]
+        assert stopped == [777, 777]
+        return
     assert module.cmd_start(args) == 0
 
     assert created_mappings == [
@@ -906,7 +947,7 @@ def test_cmd_start_public_https_edge_autogenerates_sslip_origins_and_media_mappi
             4443,
             5,
         )
-    ]
+    ] * (2 if lan_fault == "probe" else 1)
     assert saved["public_client_url"] == "https://app.203.0.113.42.sslip.io"
     assert saved["public_api_url"] == "https://api.203.0.113.42.sslip.io"
     assert saved["public_playground_url"] == "https://playground.203.0.113.42.sslip.io"
@@ -929,6 +970,24 @@ def test_cmd_start_public_https_edge_autogenerates_sslip_origins_and_media_mappi
     assert saved["livekit_turn_tls_port"] == 5349
     assert saved["livekit_turn_cert_file"] == "/tmp/livekit-turn.crt"
     assert saved["livekit_turn_key_file"] == "/tmp/livekit-turn.key"
+
+    assert len(starts) == (2 if lan_fault in {"bind", "probe"} else 1)
+    if lan_fault == "probe":
+        assert "dynamic_dns" not in written_configs[config_path]
+        assert "bind 192.168.50.10" not in written_configs[config_path]
+    if lan_fault in {"success", "trusted"}:
+        assert saved["lan"]["tls_verified"] is True
+        hostname = "playground.lan.example.test" if lan_fault == "trusted" else "192.168.50.10"
+        livekit_hostname = "livekit.lan.example.test" if lan_fault == "trusted" else "192.168.50.10"
+        assert saved["lan_playground_url"] == f"https://{hostname}:8443"
+        assert saved["lan_livekit_url"] == f"wss://{livekit_hostname}:8444"
+        assert saved["lan"]["requires_client_trust"] is (lan_fault != "trusted")
+        assert saved["caddy"]["admin_port"] == 0
+    elif lan_fault:
+        assert "LAN HTTPS is unavailable" in saved["lan_error"]
+        assert "lan_playground_url" not in saved
+        assert "lan_livekit_url" not in saved
+        assert saved["caddy"]["pid"] == 777
 
 
 def test_public_https_edge_rebuilds_when_requested_glasshive_surface_is_missing() -> None:
@@ -1113,6 +1172,71 @@ def test_render_caddyfile_can_serve_directory_instance_document() -> None:
     assert "handle /.well-known/viventium-instance.json" in caddyfile
     assert 'header Content-Type application/json' in caddyfile
     assert 'respond "{\\"app\\":\\"Viventium\\"}" 200' in caddyfile
+
+
+def test_lan_https_is_bound_to_the_host_network_without_changing_public_routes():
+    module = load_module()
+    result = module.render_caddyfile(
+        admin_port=0, surfaces=[("voice.example.test", 3300)], tls_internal=False,
+        http_port=4080, https_port=4443,
+        lan_surfaces=[("https://192.168.1.20:8443", 3300), ("https://192.168.1.20:8444", 7888)],
+    )
+    assert "voice.example.test {\n    reverse_proxy 127.0.0.1:3300" in result
+    assert result.count("bind 192.168.1.20") == 2
+    assert result.count("ca viventium-lan") == 3
+    assert "skip_install_trust" in result
+    assert "admin off" in result
+    assert "admin 127.0.0.1" not in result
+    assert "reverse_proxy 127.0.0.1:7888" in result
+
+
+@pytest.mark.parametrize("ports", [(8443, 8444), (18443, 18444)])
+def test_lan_listener_addresses_survive_restart_and_network_change(monkeypatch, tmp_path, ports):
+    module = load_module()
+    args = types.SimpleNamespace(playground_port=3300, livekit_port=7888, auto_install=False,
+        lan_playground_https_port=ports[0], lan_livekit_https_port=ports[1])
+    monkeypatch.setattr(module, "lan_dns_settings", lambda: {"domain": "lan.example.test"})
+    monkeypatch.setattr(module, "ensure_lan_caddy", lambda *args: "/synthetic/caddy")
+    random_ports = iter(range(41000, 41010))
+    monkeypatch.setattr(module, "pick_free_port", lambda *args: next(random_ports))
+    addresses = []
+    for address in ("192.168.51.10", "192.168.51.10", "192.168.52.20"):
+        monkeypatch.setattr(module, "assigned_local_ipv4s", lambda: {address})
+        _, lan, sites = module.prepare_lan_sites(args, "/synthetic/caddy", address, tmp_path / "edge.json")
+        assert lan["ip"] == address
+        assert sites == [(f"https://playground.lan.example.test:{ports[0]}", 3300),
+                         (f"https://livekit.lan.example.test:{ports[1]}", 7888)]
+        addresses.append((lan["playground_url"], lan["livekit_url"]))
+    assert len(set(addresses)) == 1
+
+
+def test_mesh_caddy_keeps_loopback_admin_for_existing_certificate_trust():
+    result = load_module().render_caddyfile(admin_port=2019, surfaces=[("voice.mesh.example:3443", 3300)])
+    assert "admin 127.0.0.1:2019" in result
+    assert "admin off" not in result
+
+
+@pytest.mark.parametrize("origin", ["http://192.168.1.20:8443", "https://127.0.0.1:8443", "https://198.51.100.20:8443", "https://192.168.1.20"])
+def test_lan_https_refuses_unsafe_or_non_network_origins(origin):
+    with pytest.raises((RuntimeError, ValueError)):
+        load_module().render_caddyfile(admin_port=2019, surfaces=[], lan_surfaces=[(origin, 3300)])
+
+
+def test_lan_https_state_rebuilds_for_configuration_and_address_drift(monkeypatch):
+    module = load_module()
+    args = types.SimpleNamespace(lan_https=True, playground_port=3300)
+    state = {"playground": {"target": "http://localhost:3300", "public_url": "https://voice.example.test"}}
+    assert not module.state_matches_requested_public_edge_surfaces(args, state)
+    state["lan"] = {"ip": "192.168.1.20", "tls_verified": True,
+                    "playground_url": "https://192.168.1.20:8443",
+                    "livekit_url": "wss://192.168.1.20:8444"}
+    monkeypatch.setattr(module, "assigned_local_ipv4s", lambda: {"192.168.1.20"})
+    assert module.state_matches_requested_public_edge_surfaces(args, state)
+    args.lan_playground_https_port = 18443
+    assert not module.state_matches_requested_public_edge_surfaces(args, state)
+    args.lan_playground_https_port = 8443
+    monkeypatch.setattr(module, "assigned_local_ipv4s", lambda: {"192.168.1.21"})
+    assert not module.state_matches_requested_public_edge_surfaces(args, state)
 
 
 def test_render_caddyfile_redacts_opaque_glasshive_refs_from_runtime_errors() -> None:
@@ -1897,3 +2021,263 @@ def test_status_reuses_one_fresh_interface_observation(monkeypatch, tmp_path, ca
     assert module.cmd_status(types.SimpleNamespace(state_file=str(path))) == 0
     assert json.loads(capsys.readouterr().out)["healthy"] is True
     assert scans == [True]
+
+
+def test_trusted_lan_uses_native_dns_modules_without_client_ca(monkeypatch):
+    module = load_module()
+    values = {"VIVENTIUM_LAN_DOMAIN": "lan.example.test", "VIVENTIUM_LAN_DNS_ZONE": "example.test",
+              "VIVENTIUM_LAN_DNS_PROVIDER": "godaddy", "VIVENTIUM_LAN_DNS_SECRET_REF": "keychain://synthetic-lan-dns"}
+    for k, v in values.items(): monkeypatch.setenv(k, v)
+    monkeypatch.setattr(module, "resolve_lan_dns_token", lambda: "synthetic-key:synthetic-secret")
+    settings = module.lan_dns_settings()
+    config = module.render_caddyfile(admin_port=0, surfaces=[("voice.example.test", 3300)], tls_internal=False,
+        lan_surfaces=[("https://playground.lan.example.test:8443", 3300), ("https://livekit.lan.example.test:8444", 7888)],
+        lan_dns=settings, lan_ip="192.168.1.20")
+    assert "dynamic_dns {" in config
+    assert "persist_config off" in config
+    assert "example.test playground.lan livekit.lan" in config
+    assert "ip_source static 192.168.1.20" in config
+    assert config.count("bind 192.168.1.20") == 2
+    assert config.count("dns godaddy {env.VIVENTIUM_LAN_DNS_TOKEN}") == 2
+    assert config.count("propagation_delay 30s") == 2
+    assert "issuer internal" not in config and "pki {" not in config
+    assert "synthetic-key" not in config and "synthetic-secret" not in str(settings)
+    old = settings["configuration_digest"]
+    monkeypatch.setattr(module, "resolve_lan_dns_token", lambda: "rotated-synthetic-key:synthetic-secret")
+    assert module.lan_dns_settings()["configuration_digest"] != old
+
+
+@pytest.mark.parametrize("domain,zone", [("example.test", "example.test"), ("lan.other.test", "example.test"),
+    ("lan.example.test\nadmin off", "example.test"), ("lan.example.test:443", "example.test")])
+def test_trusted_lan_rejects_invalid_dns_configuration(monkeypatch, domain, zone):
+    module = load_module()
+    for k, v in {"VIVENTIUM_LAN_DOMAIN": domain, "VIVENTIUM_LAN_DNS_ZONE": zone,
+                 "VIVENTIUM_LAN_DNS_PROVIDER": "godaddy", "VIVENTIUM_LAN_DNS_SECRET_REF": "keychain://synthetic-token"}.items():
+        monkeypatch.setenv(k, v)
+    with pytest.raises(RuntimeError): module.lan_dns_settings()
+
+
+@pytest.mark.parametrize("os_address", ["192.168.1.20", "192.168.1.99"])
+def test_trusted_lan_verifies_public_trust_and_host_address(monkeypatch, tmp_path, os_address):
+    module = load_module()
+    names = []
+    for host in ["playground.lan.example.test", "livekit.lan.example.test"]:
+        certificate = tmp_path / "caddy" / "certificates" / "acme.test" / host / f"{host}.crt"
+        certificate.parent.mkdir(parents=True, exist_ok=True); certificate.touch()
+    class Connection:
+        def __enter__(self): return self
+        def __exit__(self, *_args): pass
+    class Context:
+        def wrap_socket(self, _connection, *, server_hostname):
+            names.append(server_hostname); return Connection()
+    monkeypatch.setattr(module.ssl, "create_default_context", lambda: Context())
+    monkeypatch.setattr(module.socket, "getaddrinfo", lambda *_a, **_k: [(2, 1, 6, "", (os_address, 8443))])
+    monkeypatch.setattr(module, "fresh_lan_dns_addresses", lambda hostname: {"192.168.1.20"})
+    targets = []
+    monkeypatch.setattr(module.socket, "create_connection", lambda target, **_k: (targets.append(target) or Connection()))
+    lan = {"ip": "192.168.1.20", "dns": {"domain": "lan.example.test"}, "requires_client_trust": False,
+           "playground_url": "https://playground.lan.example.test:8443", "livekit_url": "wss://livekit.lan.example.test:8444"}
+    actual = module.verify_lan_tls(lan, tmp_path)
+    assert actual["tls_verified"] and not actual["requires_client_trust"] and "ca_file" not in actual
+    assert names == ["playground.lan.example.test", "livekit.lan.example.test"]
+    assert targets == [("192.168.1.20", 8443), ("192.168.1.20", 8444)]
+
+
+def test_trusted_lan_does_not_publish_dns_for_a_different_machine(monkeypatch, tmp_path):
+    module = load_module()
+    for host in ["playground.lan.example.test", "livekit.lan.example.test"]:
+        certificate = tmp_path / "caddy" / "certificates" / "acme.test" / host / f"{host}.crt"
+        certificate.parent.mkdir(parents=True, exist_ok=True); certificate.touch()
+    clock = iter([0, 0, 6])
+    monkeypatch.setattr(module, "fresh_lan_dns_addresses", lambda hostname: {"192.168.1.99"})
+    monkeypatch.setattr(module.time, "monotonic", lambda: next(clock))
+    monkeypatch.setattr(module.socket, "getaddrinfo", lambda *_a, **_k: [(2,1,6,"",("192.168.1.99",8443))])
+    with pytest.raises(RuntimeError, match="LAN DNS does not resolve"):
+        module.verify_lan_tls({"ip":"192.168.1.20", "dns":{"domain":"lan.example.test"},
+            "playground_url":"https://playground.lan.example.test:8443",
+            "livekit_url":"wss://livekit.lan.example.test:8444"},tmp_path)
+
+
+def test_dns_credential_is_injected_only_into_the_caddy_child(monkeypatch, tmp_path):
+    module = load_module()
+    monkeypatch.setenv("VIVENTIUM_LAN_DNS_TOKEN", "stale-parent-token")
+    monkeypatch.setattr(module, "resolve_lan_dns_token", lambda: "synthetic-key:synthetic-secret")
+    environments = []
+    def spawn(*_args, **kwargs):
+        environments.append(kwargs["env"])
+        return types.SimpleNamespace(pid=123, poll=lambda: None)
+    monkeypatch.setattr(module.subprocess, "Popen", spawn)
+    monkeypatch.setattr(module.time, "sleep", lambda *_args: None)
+    kwargs = dict(config_path=tmp_path / "Caddyfile", data_dir=tmp_path, log_file=tmp_path / "caddy.log")
+    module.start_caddy_process("caddy", lan_dns={"provider": "godaddy"}, **kwargs)
+    module.start_caddy_process("caddy", **kwargs)
+    assert environments[0]["VIVENTIUM_LAN_DNS_TOKEN"] == "synthetic-key:synthetic-secret"
+    assert "VIVENTIUM_LAN_DNS_TOKEN" not in environments[1]
+    assert module.os.environ["VIVENTIUM_LAN_DNS_TOKEN"] == "stale-parent-token"
+
+
+def test_caddy_recovery_preserves_the_failed_attempt_log(monkeypatch, tmp_path):
+    module = load_module()
+    log_file = tmp_path / "caddy.log"
+    log_file.write_text("previous certificate validation failure\n")
+    def spawn(*_args, **kwargs):
+        kwargs["stdout"].write("public-only recovery started\n")
+        return types.SimpleNamespace(pid=123, poll=lambda: None)
+    monkeypatch.setattr(module.subprocess, "Popen", spawn)
+    monkeypatch.setattr(module.time, "sleep", lambda *_args: None)
+    module.start_caddy_process("caddy", config_path=tmp_path / "Caddyfile", data_dir=tmp_path, log_file=log_file)
+    assert log_file.read_text() == "previous certificate validation failure\npublic-only recovery started\n"
+
+
+def test_missing_lan_certificate_never_queries_dns(monkeypatch, tmp_path):
+    module = load_module()
+    clock = iter([0, 121])
+    monkeypatch.setattr(module.time, "monotonic", lambda: next(clock))
+    def unexpected_lookup(*_args, **_kwargs):
+        raise AssertionError("Do not cache NXDOMAIN before native certificate issuance")
+    monkeypatch.setattr(module.socket, "getaddrinfo", unexpected_lookup)
+    with pytest.raises(RuntimeError, match="certificate issuance"):
+        module.verify_lan_tls({"ip":"192.168.1.20", "dns":{"domain":"lan.example.test"},
+            "playground_url":"https://playground.lan.example.test:8443",
+            "livekit_url":"wss://livekit.lan.example.test:8444"}, tmp_path)
+
+
+@pytest.mark.parametrize("recovers", [True, False])
+def test_expired_lan_certificate_gets_a_bounded_native_renewal_window(monkeypatch, tmp_path, recovers):
+    module = load_module()
+    for host in ["playground.lan.example.test", "livekit.lan.example.test"]:
+        certificate = tmp_path / "caddy" / "certificates" / "acme.test" / host / f"{host}.crt"
+        certificate.parent.mkdir(parents=True, exist_ok=True); certificate.touch()
+    clock = [0]
+    monkeypatch.setattr(module.time, "monotonic", lambda: clock[0])
+    monkeypatch.setattr(module.time, "sleep", lambda seconds: clock.__setitem__(0, clock[0] + seconds))
+    class Connection:
+        def __enter__(self): return self
+        def __exit__(self, *_args): pass
+    class Context:
+        def wrap_socket(self, *_args, **_kwargs):
+            if not recovers or clock[0] < 7:
+                error = module.ssl.SSLCertVerificationError(1, "expired certificate")
+                error.verify_code = 10
+                raise error
+            return Connection()
+    monkeypatch.setattr(module.ssl, "create_default_context", lambda: Context())
+    monkeypatch.setattr(module.socket, "getaddrinfo", lambda *_a, **_k: [(2,1,6,"",("192.168.1.20",8443))])
+    monkeypatch.setattr(module.socket, "create_connection", lambda *_a, **_k: Connection())
+    lan = {"ip":"192.168.1.20", "dns":{"domain":"lan.example.test"},
+        "playground_url":"https://playground.lan.example.test:8443", "livekit_url":"wss://livekit.lan.example.test:8444"}
+    if recovers:
+        assert module.verify_lan_tls(lan, tmp_path)["tls_verified"]
+        assert clock[0] == 7
+    else:
+        with pytest.raises(module.ssl.SSLCertVerificationError):
+            module.verify_lan_tls(lan, tmp_path)
+        assert clock[0] == 120
+
+
+@pytest.mark.parametrize("public_ip", [None, "8.8.4.4"])
+def test_public_ipv4_failure_keeps_verified_lan_calls_without_router_mappings(monkeypatch, tmp_path, public_ip):
+    module = load_module()
+    address = "192.168.51.10"
+    args = types.SimpleNamespace(
+        auto_install=False, client_port=3190, api_port=3180, playground_port=3300,
+        livekit_port=7888, caddy_data_dir="", lan_https=True,
+        livekit_tcp_port=7889, livekit_node_ip="1.1.1.1",
+    )
+    monkeypatch.setattr(module, "ensure_caddy", lambda _: "/synthetic/caddy")
+    monkeypatch.setattr(module, "resolve_binary", lambda _: None)
+    monkeypatch.setattr(module, "detect_lan_ipv4", lambda: address)
+    monkeypatch.setattr(module, "assigned_local_ipv4s", lambda: {address})
+    monkeypatch.setattr(module, "lan_dns_settings", lambda: {})
+    ports = iter([41000, 41001, 41002])
+    monkeypatch.setattr(module, "pick_free_port", lambda *args: next(ports))
+
+    def discover(_):
+        if public_ip is None:
+            raise RuntimeError("public IPv4 unavailable")
+        return public_ip
+
+    monkeypatch.setattr(module, "discover_public_ipv4", discover)
+    monkeypatch.setattr(module, "start_caddy_process", lambda *args, **kwargs: 42)
+    monkeypatch.setattr(module, "verify_lan_tls", lambda lan, _: {**lan, "tls_verified": True})
+    monkeypatch.setattr(module, "probe_local_endpoint", lambda _: True)
+    monkeypatch.setattr(module, "pid_is_running", lambda pid: pid == 42)
+    state_path = tmp_path / "edge.json"
+
+    state = module.start_public_https_edge(args, state_path=state_path, log_dir=tmp_path)
+
+    assert state["lan_only"] and state["livekit_node_ip"] == address
+    assert state["lan_playground_url"] == f"https://{address}:8443"
+    assert "public_client_url" not in state and "router" not in state
+    assert state_path.with_suffix(".Caddyfile").read_text().count(f"bind {address}") == 2
+    assert module.state_is_healthy(state)
+    assert not module.state_is_healthy(state, assigned_ipv4s={"192.168.52.10"})
+
+
+@pytest.mark.parametrize("lan_enabled", [False, True])
+def test_public_tls_unreachable_keeps_verified_lan_independent(monkeypatch, tmp_path, lan_enabled):
+    module = load_module()
+    address = "192.168.51.10"
+    args = types.SimpleNamespace(
+        auto_install=False, client_port=0, api_port=0, playground_port=3300,
+        livekit_port=7888, caddy_data_dir="", lan_https=lan_enabled,
+        livekit_tcp_port=7889, livekit_udp_port=7890, livekit_turn_tls_port=0,
+        livekit_node_ip="", public_playground_origin="https://voice.example.test",
+        public_livekit_url="wss://media.example.test", timeout_seconds=1,
+    )
+    monkeypatch.setattr(module, "ensure_caddy", lambda _: "/synthetic/caddy")
+    monkeypatch.setattr(module, "resolve_binary", lambda _: None)
+    monkeypatch.setattr(module, "detect_lan_ipv4", lambda: address)
+    monkeypatch.setattr(module, "assigned_local_ipv4s", lambda: {address})
+    monkeypatch.setattr(module, "discover_public_ipv4", lambda _: "8.8.4.4")
+    monkeypatch.setattr(module, "validate_local_public_media_address", lambda *a, **k: None)
+    monkeypatch.setattr(module, "lan_dns_settings", lambda: {})
+    ports = iter(range(41000, 41010))
+    monkeypatch.setattr(module, "pick_free_port", lambda *a: next(ports))
+    started, stopped, public_probes = [], [], []
+    def start(*a, **k):
+        pid = 40 + len(started)
+        started.append(pid)
+        return pid
+    def public_unreachable(*a, **k):
+        public_probes.append(True)
+        raise RuntimeError("Public HTTPS is unreachable")
+    monkeypatch.setattr(module, "start_caddy_process", start)
+    monkeypatch.setattr(module, "stop_pid", stopped.append)
+    monkeypatch.setattr(module, "wait_for_public_caddy_hosts", public_unreachable)
+    monkeypatch.setattr(module, "verify_lan_tls", lambda lan, _: {**lan, "tls_verified": True})
+    monkeypatch.setattr(module, "probe_local_endpoint", lambda _: True)
+    monkeypatch.setattr(module, "pid_is_running", lambda pid: pid in started and pid not in stopped)
+    if lan_enabled:
+        state = module.start_public_https_edge(args, state_path=tmp_path / "edge.json", log_dir=tmp_path)
+        assert state["lan_only"] and state["lan"]["tls_verified"]
+        assert state["lan_ip"] == address
+        assert "public_playground_url" not in state and "router" not in state
+        assert state["public_error"] == "Public HTTPS is unreachable"
+        assert module.state_is_healthy(state)
+        assert started == [40, 41]
+    else:
+        with pytest.raises(RuntimeError, match="Public HTTPS is unreachable"):
+            module.start_public_https_edge(args, state_path=tmp_path / "edge.json", log_dir=tmp_path)
+        assert started == [40]
+    assert stopped == [40]
+    assert len(public_probes) == 1
+
+
+@pytest.mark.parametrize('matches,assigned,healthy', [(True,True,True), (False,True,True), (True,False,True), (True,True,False)])
+def test_lan_ready_publishes_only_current_healthy_identity(tmp_path, monkeypatch, matches, assigned, healthy):
+    module = load_module()
+    path = tmp_path / 'network.json'
+    original = {'lan_ip': '10.0.0.20' if matches else '192.168.1.20', 'lan_runtime_ready': False}
+    module.save_state(path, original)
+    monkeypatch.setattr(module, 'assigned_local_ipv4s', lambda: {'10.0.0.20'} if assigned else set())
+    monkeypatch.setattr(module, 'state_is_healthy', lambda state: healthy)
+    args = types.SimpleNamespace(state_file=str(path), lan_ip='10.0.0.20')
+    if matches and assigned and healthy:
+        assert module.cmd_lan_ready(args) == 0
+        assert module.load_state(path)['lan_runtime_ready'] is True
+        assert path.stat().st_mode & 0o777 == 0o600
+    else:
+        with pytest.raises(RuntimeError, match='LAN identity changed'):
+            module.cmd_lan_ready(args)
+        assert module.load_state(path) == original

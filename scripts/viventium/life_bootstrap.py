@@ -36,6 +36,31 @@ EXCLUDED_PREFIXES = {
 }
 
 
+def validate_life_location(path: Path, *, new_selection: bool = False) -> None:
+    """Keep owner data outside product checkouts, including linked worktrees."""
+    path = path.expanduser().resolve()
+    ancestors = (path, *path.parents) if new_selection else path.parents
+    if any((parent / ".git").exists() or (parent / ".git").is_symlink() for parent in ancestors):
+        raise ValueError("Choose a personal workspace outside Git checkouts.")
+
+
+def recorded_life_dir(state_dir: Path) -> Path:
+    """Read the newest existing owner-only bootstrap receipt without printing its location."""
+    roots = []
+    for receipt in (state_dir / "life-bootstrap.json", state_dir / "life/bootstrap.json"):
+        try:
+            metadata = receipt.lstat()
+            if not (stat.S_ISREG(metadata.st_mode) and metadata.st_uid == os.getuid()
+                    and not stat.S_IMODE(metadata.st_mode) & 0o077 and metadata.st_size <= 1024 * 1024):
+                continue
+            root = Path(json.loads(receipt.read_bytes())["life_dir"])
+            if root.is_absolute():
+                roots.append((metadata.st_mtime_ns, root))
+        except (OSError, KeyError, TypeError, ValueError):
+            continue
+    return max(roots, default=(0, DEFAULT_LIFE_DIR))[1]
+
+
 def _is_excluded(relative_path: Path) -> bool:
     if any(part in EXCLUDED_NAMES for part in relative_path.parts):
         return True
@@ -117,6 +142,7 @@ def bootstrap_life(
         life_dir = resolved_life_dir
     else:
         life_dir = life_dir.resolve()
+    validate_life_location(life_dir)
     if not template_dir.is_dir():
         raise ValueError(f"LIFE template is not a directory: {template_dir}")
 
@@ -229,23 +255,17 @@ def main() -> int:
             life_dir=Path(life_dir),
             state_file=args.state_file,
         )
-    except (OSError, RuntimeError, ValueError) as error:
-        print(f"LIFE bootstrap failed: {error}", file=sys.stderr)
+    except (OSError, RuntimeError, ValueError):
+        print("LIFE bootstrap failed: Check the selected folder and its permissions.", file=sys.stderr)
         return 2
     print(
-        "LIFE ready: "
-        f"{record['life_dir']} "
-        f"({len(record['created_files'])} files added, {len(record['preserved_files'])} preserved)"
+        f"LIFE ready ({len(record['created_files'])} files added, "
+        f"{len(record['preserved_files'])} preserved)"
     )
     if record["conflicts"]:
-        conflict_paths = ", ".join(
-            str(conflict["path"]) for conflict in record["conflicts"][:8]
-        )
-        remainder = len(record["conflicts"]) - min(len(record["conflicts"]), 8)
-        suffix = f" (+{remainder} more)" if remainder else ""
         print(
             "LIFE preserved personalized conflicts and could not add every template "
-            f"item: {conflict_paths}{suffix}",
+            f"item ({len(record['conflicts'])} conflicts)",
             file=sys.stderr,
         )
         return 2

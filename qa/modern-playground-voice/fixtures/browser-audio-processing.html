@@ -1,0 +1,149 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Phone sound check</title>
+<style>
+  :root { color-scheme: dark; font: 16px system-ui, sans-serif; background: #101114; color: #f4f4f5; }
+  body { max-width: 36rem; margin: 3rem auto; padding: 0 1.25rem; }
+  h1 { font-size: 1.75rem; letter-spacing: -.04em; }
+  p { line-height: 1.6; color: #b9bbc4; }
+  button { display: block; width: 100%; padding: 1rem; margin: .75rem 0; text-align: left; border: 1px solid #454751; border-radius: .8rem; background: #202228; color: inherit; font: inherit; }
+  button:focus-visible { outline: 3px solid #98b8ff; outline-offset: 3px; }
+  [hidden] { display: none; }
+  #status { min-height: 3rem; } pre { white-space: pre-wrap; overflow-wrap: anywhere; }
+</style>
+<h1>Phone sound check</h1>
+<p>Each test plays the same quiet six-second tone. Listen during the middle of the tone.
+Tests 1–3 compare microphone processing. Tests 4–5 also check routing and microphone release.
+Nothing is recorded or uploaded.</p>
+<p>Start in a fresh browser session. Run 1, 2, 3, then 1 again. Some phone browsers keep
+audio-processing state even after a reload; mixed results need a full browser restart, not just
+a page reload. Keep the same volume and grip. Note crackle, loudness and speaker or earpiece for
+each test. Echo control off is a diagnostic, not a call setting. This quiet tone cannot rule out
+distortion that occurs only during louder speech.</p>
+<button data-mode="none">1. Sound only</button>
+<button data-mode="off">2. Sound + microphone · echo control off</button>
+<button data-mode="on">3. Sound + microphone · echo control on</button>
+<button data-mode="off-session">4. Speaker route check · echo control off</button>
+<button data-mode="released">5. Speaker after microphone stops</button>
+<button id="outputs">Check speaker options · silent</button>
+<button id="outputs-with-mic" hidden>Allow mic to list speaker options · silent</button>
+<button id="stop">Stop</button>
+<p id="status" role="status">Ready. Start at a comfortable speaker volume.</p>
+<details><summary>Test details</summary><pre id="details"></pre></details>
+<script>
+  let stream, context, generation = 0;
+  const status = document.querySelector('#status'), details = document.querySelector('#details');
+  async function release() {
+    stream?.getTracks().forEach(track => track.stop()); stream = undefined;
+    const previous = context; context = undefined;
+    if (previous && previous.state !== 'closed') await previous.close();
+    if (navigator.audioSession) navigator.audioSession.type = 'auto';
+  }
+  async function run(mode) {
+    const current = ++generation;
+    await release();
+    if (current !== generation) return;
+    status.textContent = 'Preparing sound…';
+    try {
+      let settings = null;
+      if (mode === 'off-session' && !navigator.audioSession) {
+        status.textContent = 'This browser does not support the speaker route check.';
+        return;
+      }
+      if (mode !== 'none') {
+        // Match the installed call client's audio defaults. Only echoCancellation differs.
+        const acquired = await navigator.mediaDevices.getUserMedia({audio: {
+          echoCancellation: mode === 'on' || mode === 'released', autoGainControl: true,
+          noiseSuppression: true, voiceIsolation: true, channelCount: 1
+        }});
+        if (current !== generation) { acquired.getTracks().forEach(track => track.stop()); return; }
+        stream = acquired; settings = stream.getAudioTracks()[0].getSettings();
+      }
+      // Diagnostic only: test explicit call routing without enabling echo processing.
+      // A loudspeaker result is not proof of echo-free, two-way calling.
+      if (mode === 'off-session') navigator.audioSession.type = 'play-and-record';
+      if (mode === 'released') {
+        status.textContent = 'Opening the microphone, then releasing it before sound…';
+        await new Promise(resolve => setTimeout(resolve, 1000));
+        if (current !== generation) return;
+        stream.getTracks().forEach(track => track.stop()); stream = undefined;
+        if (navigator.audioSession) navigator.audioSession.type = 'playback';
+        await new Promise(resolve => setTimeout(resolve, 800));
+        if (current !== generation) return;
+      }
+      if (current !== generation) return;
+      context = new AudioContext(); await context.resume();
+      if (current !== generation) return;
+      const oscillator = context.createOscillator(), gain = context.createGain(), start = context.currentTime + .1;
+      oscillator.frequency.value = 330;
+      gain.gain.setValueAtTime(0, start); gain.gain.linearRampToValueAtTime(.1, start + .05);
+      gain.gain.setValueAtTime(.1, start + 5.95); gain.gain.linearRampToValueAtTime(0, start + 6);
+      oscillator.connect(gain).connect(context.destination);
+      details.textContent = JSON.stringify({mode, microphone: settings, audioSession: navigator.audioSession?.type, outputSampleRate: context.sampleRate, userAgent: navigator.userAgent}, null, 2);
+      status.textContent = 'Playing. Listen for crackling during the steady tone.';
+      oscillator.onended = async () => {
+        if (current !== generation) return;
+        await release();
+        if (current === generation) status.textContent = 'Finished. Microphone released. Try the next test.';
+      };
+      oscillator.start(start); oscillator.stop(start + 6);
+    } catch (error) {
+      if (current !== generation) return;
+      await release();
+      if (current === generation) status.textContent = 'Test could not start: ' + error.name;
+    }
+  }
+  document.querySelectorAll('[data-mode]').forEach(button => button.onclick = () => run(button.dataset.mode));
+  async function inspectOutputs(withMicrophone = false) {
+    // Optional capture exposes device labels on browsers that require it. Never record,
+    // play sound, select a route, or infer a speaker from the default device.
+    if (stream || context) {
+      status.textContent = 'Stop the sound test before checking speaker options.';
+      return;
+    }
+    const current = ++generation;
+    let probe;
+    try {
+      if (withMicrophone) {
+        status.textContent = 'Reading speaker options. The microphone will close automatically.';
+        probe = await navigator.mediaDevices.getUserMedia({audio: true});
+        if (current !== generation) return;
+        stream = probe;
+      }
+      const devices = await navigator.mediaDevices.enumerateDevices();
+      if (current !== generation) return;
+      const outputs = devices.filter(device => device.kind === 'audiooutput');
+      const supported = typeof HTMLMediaElement.prototype.setSinkId === 'function';
+      document.querySelector('#outputs-with-mic').hidden = !supported || outputs.length > 0 || withMicrophone;
+      details.textContent = JSON.stringify({
+        checkedWithMicrophone: withMicrophone,
+        setSinkId: supported,
+        selectAudioOutput: typeof navigator.mediaDevices.selectAudioOutput === 'function',
+        outputs: outputs.map(device => ({label: device.label || '(label unavailable)',
+          defaultDevice: device.deviceId === 'default', hasDeviceId: Boolean(device.deviceId)})),
+        userAgent: navigator.userAgent
+      }, null, 2);
+      details.parentElement.open = true;
+      status.textContent = !supported ? 'This browser does not expose output selection.'
+        : outputs.length ? 'Available outputs are shown below. No sound was played.'
+        : 'No outputs are exposed with the current permission. No sound was played.';
+      if (withMicrophone) status.textContent += ' Microphone released.';
+    } catch (error) {
+      if (current === generation) status.textContent = 'Speaker options could not be read: ' + error.name;
+    } finally {
+      probe?.getTracks().forEach(track => track.stop());
+      if (stream === probe) stream = undefined;
+    }
+  }
+  document.querySelector('#outputs').onclick = () => inspectOutputs();
+  document.querySelector('#outputs-with-mic').onclick = () => inspectOutputs(true);
+  document.querySelector('#stop').onclick = async () => {
+    const current = ++generation;
+    await release();
+    if (current === generation) status.textContent = 'Stopped. Microphone released.';
+  };
+  addEventListener('pagehide', () => { ++generation; void release(); });
+</script>
+</html>

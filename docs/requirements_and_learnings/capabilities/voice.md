@@ -198,9 +198,16 @@ promise detection, forced delegation, or another routing layer to make a case pa
 ### Queen execution and worker execution are separate settings
 
 In the Queen/worker configuration, the Voice Queen owns the conversation and exact work
-coordination. The configured workers execute action requests, including small actions. A plain
+coordination. The existing Native coordinator or its configured Workers execute action requests, including small actions. A plain
 action request must reach the durable delegation tool without the user naming a provider or handoff.
 The worker profile, model, effort and fallback remain independent of the Queen execution mode.
+A saved `tool_mode: coordination` also disables native action tools on that participant's signed
+provider bundle. Its authorized broker and exact work controls remain available. Independently
+launched workers retain their own full native capability policy and file-delivery contract.
+The same saved coordination setting carries original selected input and inherited context on
+Direct, Codex and Claude routes. It does not switch the selected model or worker effort.
+Ordinary action requests and actual returned files must still
+pass real-surface acceptance; capability restriction alone does not prove automatic delegation.
 A Direct Queen still runs inside xPerfect and uses its existing authorized broker, context,
 worker receipts and callbacks; it is not a separate host-side manager.
 
@@ -226,35 +233,17 @@ cognition to label a route fast.
 #### Should / fixes · Direct Queen
 
 This is the approved flow, shared by Text, Telegram and Voice. It defines expected behavior;
-dated [candidate results](../../../qa/voice/reports/2026-10-21-prepared-direct-queen.md) define what
-has actually passed. The Queen and Worker Bee names describe existing roles, not extra services.
+dated [candidate results](../../../qa/parallel-orchestrator/reports/2026-10-23-should-flow-acceptance.md)
+define what has actually passed. The [regression map](../../../qa/parallel-orchestrator/cases.md#approved-flow-regression-map)
+connects each outcome to existing automated checks and real-channel QA. The Queen and Worker Bee
+names describe existing roles, not extra services.
 
-```mermaid
-flowchart TB
-    Input["You send A, B, C…<br/>Text, speech, files, history<br/>Any supported surface"]
-    Ordered["Keep A, B, C in order<br/>Preserve every original segment<br/>Only update a reply still in progress"]
-    Context["Shared cognitive context<br/>Memory · Feelings · prompts<br/>Tools · files · history · allowed access<br/>Same prepared conversation"]
-    Queen["Queen / Main · Direct & Fast<br/>One manager and speaking personality<br/>Answer / start work / steer exact work<br/>hand_off_to · list_workers"]
-    A["Worker Bee A<br/>Independent durable work<br/>Configured native harness and fallback"]
-    N["Worker Bees B … N<br/>Run beside A<br/>Full relevant native capabilities<br/>Within configured capacity"]
-    Callback["Existing durable worker callbacks<br/>Results · files · actual failures · needed input<br/>Evidence for Queen, not another speaker"]
-    Status["Internal status → Active Work / logs<br/>No raw-status chat or speech"]
-    Subconscious["Parallel subconscious<br/>Selected Cortices run in parallel<br/>Does not hold Main's first response"]
-    Batch["One finite useful batch<br/>Activated set settles<br/>Exclude silent NTA results<br/>Do not wait for unrelated Bees"]
-    Reply["Main-authored conversation<br/>Answer C now; useful result later<br/>Write the public reply once; stream it<br/>Ask only for an answer truly needed"]
-    Presenter["One presenter for each item<br/>Its own identity and durable receipt<br/>Text / Call stream / Telegram audio<br/>Files in linked chat / Active Work"]
-    Input --> Ordered --> Queen
-    Context --> Queen
-    Ordered --> Subconscious --> Batch
-    Batch -. "Useful findings to the same Queen" .-> Queen
-    Queen -->|"Original selected input + shared context; no rewritten brief"| A
-    Queen --> N
-    A --> Callback
-    N --> Callback
-    Callback --> Queen
-    Callback --> Status
-    Queen --> Reply --> Presenter
-```
+![Fast Queen, original-source handoff, native coordinator and High Workers](../../architecture/assets/fast-queen/flow.svg)
+
+The [canonical pattern](../../architecture/cognitive-system.md#one-relationship-with-a-fast-queen-and-capable-workers)
+owns this shared diagram. Inference profiles remain configurable; its benchmark reference uses
+warm native Claude Code Opus 5 Low, which is distinct from Direct inference. The background
+coordinator and Workers inherit authorized originals through the existing context readers.
 
 Viventium carries the original input, cognitive context and presentation. **xPerfect owns Queen
 and worker execution, handoff, work controls and callbacks.** Do not add another routing agent,
@@ -274,7 +263,10 @@ the selected Main route. This uses the same existing compactor, not another comp
 - **Full context without broken telephone:** the handoff selects the original input and exact
   work target. Existing authorized snapshots and readers supply conversation, prepared awareness,
   memory, Feelings, files/history and relevant tools. Queen must not generate a substitute brief.
-  Historical context is evidence, not permission to repeat old actions; unrelated private data
+  A new Main handoff uses the zero-argument flag for the complete current request. The native
+  coordinator or a declared individual-Worker tool may select an exact original clause for an
+  assignment; existing-work controls may carry exact guidance. The source owner validates any
+  clause, and full shared context remains available. Main writes no replacement brief. Historical context is evidence, not permission to repeat old actions; unrelated private data
   and credentials never cross the boundary.
 - **Fast acknowledgement, independent execution:** acknowledge only after the durable acceptance
   receipt, without waiting for completion. Reuse a valid authored reply after acceptance where
@@ -327,9 +319,10 @@ The canonical Voice default uses xPerfect Direct xAI / Grok 4.7 / Low, with coor
 Low is the lowest supported effort, not disabled thinking. Main and native worker effort remain
 independent; saved explicit alternatives are preserved.
 
-- The Fast Direct Queen uses the existing orchestration option `tool_mode: coordination`.
-  Its action interface is `hand_off_to` and `list_workers`. The handoff starts configured work or
-  applies the existing exact-work controls; it does not wait for the worker's result. Schedules,
+- The Queen uses the existing orchestration option `tool_mode: coordination` across supported profiles.
+  New work uses the zero-argument `hand_off_to` flag. Existing work uses `active_work_action`,
+  and `list_workers` retains the roster view. Admission does not wait for assignment planning or
+  the Worker’s result. Schedules,
   web and file search, diagnostics and other action capabilities remain on workers. Do not remove
   those capabilities globally, add action-category routing, or restore the whole action catalog
   to the Queen as a substitute for a working handoff. The explicit `full` option retains the wider
@@ -347,9 +340,11 @@ independent; saved explicit alternatives are preserved.
 - Worker handoff preserves the full authorized conversation/context and tool access through the
   existing context owner. Distinguish included prompt content from source references that require
   retrieval. Do not call a limited inline preview a full copied prompt, and do not make the Queen
-  write a fresh recap to reconstruct context for each worker. The handoff selects a worker and,
-  when needed, a short task focus; the existing context owner supplies the exact authorized source
-  conversation. A model-authored `instruction` must not be a required substitute for inheritance.
+  write a fresh recap to reconstruct context for each worker. The new Main flag accepts the
+  complete current request; the Native coordinator chooses assignments after admission. Exact
+  source clauses belong to coordinator or individual-Worker assignment tools and existing-work
+  controls, not a new Main brief. The existing context owner supplies the full authorized source
+  conversation. A model-authored summary must not replace inheritance.
   Share context through existing snapshots/readers or native conversation binding, preserving
   roles and provenance. Do not copy credentials, raw tool configuration or hidden authority from
   a provider journal, and do not fabricate another owner’s conversation records.
@@ -429,6 +424,10 @@ Background completion display retains the full authored text while speech keeps 
 follow-up cleanup and length cap. Voice controls stay hidden from display. Owner, mode, presentation,
 speech-permit and playback checks remain in force, and link visibility does not change file access
 or Call participant grants.
+A result authored for Voice uses this same clean display projection when the call has ended and
+its completion continues as linked text. Current audio eligibility does not make provider speech
+controls part of the visible transcript. Ordinary Web or Telegram text retains its own literal
+content rules.
 
 The Call offers **Open in chat** during and after the call, including an ended-page reload, using its current or canonical result
 conversation and the existing verified opener origin. It opens the normal authenticated chat,
@@ -480,7 +479,44 @@ public loopback checks to each call or voice turn.
 - Telegram `/call` mints one browser-facing link through the same call-session service as the web
   call button. The link uses the configured public playground origin and carries a single-use
   launch bearer only in its fragment; a replayed or expired link is denied honestly.
-- The link bootstraps only where the public HTTPS edge is reachable. A device on the serving Wi-Fi
+- **Call on local network** means a phone or another device reaching the hosting computer's
+  detected private LAN address. It must never point at `localhost` or `127.0.0.1`: those names
+  refer to the device opening the link. The macOS helper's **Call on this Mac…** remains the
+  separate same-computer entry.
+- The ordinary LAN experience must work from another device without downloading certificates or
+  installing client profiles. Reuse native LAN address discovery, the existing HTTPS ingress and
+  LiveKit. A trusted hostname that resolves to the LAN address can provide this experience;
+  opening an IP-address page alone does not prove browser microphone or media access. The manual
+  local-CA mode below is an explicit setup variant, not proof of this no-client-setup outcome.
+- `runtime.network.lan_https: true` enables LAN call entrypoints on the existing public Caddy
+  edge. The listeners bind only the detected LAN IPv4, use separate ports that are not forwarded
+  by the router. With `lan_domain` and `lan_dns`, Caddy's native DNS modules publish only the two
+  configured LAN names and obtain/renew publicly trusted certificates. Each name resolves directly
+  to the detected private address; clients need no files or profiles. Public DNS answers and
+  certificate validation do not relay the call: the browser connects to the host's private address
+  for the LAN page and media. The shared Caddy process has separate private-bound listeners.
+  Without that DNS configuration,
+  the explicit raw-IP variant uses a dedicated local CA and needs one-time client trust. Startup
+  never installs or trusts that CA automatically. See the Remote Access owner for server setup.
+- `/call` offers available choices as **Same Wi-Fi** and **Other Wi-Fi or mobile data**.
+  A ready LAN choice does not require a public route. `/call lan` (also `/call local`) requests
+  only the LAN choice; `/call public` requires the public route. Both choices use the same conversation, session and single-use launch;
+  selecting either consumes that launch. Missing LAN setup is distinct from missing public HTTPS.
+  The LAN page must receive the corresponding LAN LiveKit WSS address, never the phone's loopback.
+  The existing network worker checks the assigned LAN address every 15 seconds. After a change,
+  it refreshes the edge and existing LAN DNS records, rewrites and restarts the native media
+  listener, then publishes readiness. Request a fresh call link after reconnection. Both the API
+  and Playground read that current identity on each request and reject stale or unready links.
+  DNS and trusted TLS must be verified before the link is offered. If a phone still caches the previous DNS address, retry
+  after its cache updates.
+  If the public IPv4 address is unavailable or no longer matches the configured public media
+  address, the edge can serve verified LAN calls without public listeners or router mappings.
+- Browser microphone access requires trusted HTTPS for a LAN address. Do not substitute LAN HTTP,
+  click through certificate warnings, install trust silently, or claim that page/signaling success
+  proves usable media. Record the selected media candidate and actual received audio separately.
+- Creating the call link runs outside Telegram's event loop. If Telegram rejects a call button,
+  `/call` supplies the same available links as text without substituting a different route. No new authentication, orchestration or media pipeline is introduced.
+- The public link bootstraps only where the public HTTPS edge is reachable. A device on the serving Wi-Fi
   reaches the public hostname only when the router provides NAT loopback or an equivalent split-DNS
   or mesh route; that precondition is owned by
   [remote access](../47_Remote_Access_and_Tunneling.md). A same-network timeout with off-network
@@ -572,6 +608,24 @@ the matching owner and current-call delivery, checks its accepted result and spe
 speaks Main's validated text through the existing renderer. A later foreground turn does not
 erase that independent delivery. Listen-Only, Stop, ended calls and completed presentations keep
 their existing speech fences. Neutral worker callbacks do not acquire speech authority.
+A self-handled accepted Native goal or direct Native turn uses this same independent Main-result
+delivery owner with its distinct typed source proof. The gateway retains scheduled Main v1 and
+Native Main v2 (goal or turn) presentations through the same claim, speech permit and audible
+acknowledgement path. It checks the typed carrier; Core verifies current Native authority before
+issuing or renewing the permit. Current binding, original source, goal or turn/request, run, result revision and
+digest, persisted Cortex claim and Main message must agree before a speech permit is issued.
+The proof creates no Worker callback, schedule admission or foreground generation job. A barge-in
+can suppress the original foreground task while this accepted work keeps its own result owner.
+Only the same active original Call may hear that result; an ended or replaced Call keeps linked
+text without speech. Duplicate publication and reconnect use the existing delivery claim and
+playback receipt. A valid persisted Main result may be a child or a promoted parent.
+The same Native source proof also preserves the original configured Telegram destination, checked
+against the current owner mapping and topic. Text delivery does not depend on an active Call;
+Telegram-origin work needs no Call identity. These surface checks do not widen the result's audience.
+An ordinary Phase-B presentation runs with its declared empty tool graph. Native providers use the
+existing signed zero-tool capability on a separate participant copy, with the same Main cognition.
+Presenting an insight cannot acquire work controls through Main's saved MCP declarations. Ordinary
+Main, the Native coordinator and Workers keep their own declared action capabilities.
 When an older worker observer reaches an already-sent result, the existing claim response
 can return its exact owner/current-Call settled receipt after checking the accepted callback
 operation. The observer stops once its known terminal callbacks are settled. Empty claims,
@@ -747,8 +801,9 @@ endurance or installed-release acceptance.
 ### Scheduler admission and audible proof
 
 Managed LiveKit media preserves the configured public IPv4 route and retains native local and
-loopback ICE candidates through the published media ports. Local callers do not require router
-hairpin NAT. The pinned server uses native external-IP discovery at startup to keep both candidate
+loopback ICE candidates through the published media ports. Same-host candidates can avoid router
+hairpin NAT; second-device LAN acceptance requires its actual selected candidate and received audio.
+The pinned server uses native external-IP discovery at startup to keep both candidate
 types; discovered public IPv4 mappings must equal the configured node IP before startup is accepted.
 Additional IPv6 candidates do not invalidate that explicit IPv4 assertion.
 Private or mesh node addresses, IPv6 and deliberately configured external LiveKit endpoints keep
@@ -757,13 +812,68 @@ public-IP container with an older candidate configuration is not reused as a mat
 
 When the configured voice-worker load threshold is unlimited, report zero scheduler load so the
 LiveKit server does not reject the only available worker during model startup. Finite thresholds
-retain SDK load calculation. This is worker admission behavior and does not enable the unsupported
-native LiveKit deployment mode.
+retain SDK load calculation. Worker admission and the server deployment mode are independent;
+the explicit native server option is described below.
+
+### Explicit native LiveKit server
+
+`runtime.network.livekit_runtime` selects `docker` (the default) or `native`. The native option
+uses the exact LiveKit 1.13.4 Homebrew ARM64 bottle on macOS 15 or newer. The launcher verifies its
+archive and executable hashes and version; it never adopts an arbitrary PATH binary. It starts
+after the network edge has supplied the existing host certificate paths, using the same generated
+configuration, ports, credentials, dispatch and voice workers. Early native bootstrap still skips it.
+
+Native execution runs the media server as the host user, outside Docker isolation. It is an explicit
+operator choice, not an automatic fallback or a default change. It retains public-IP discovery while
+advertising only the assigned LAN IPv4 and its discovered public mapping. Native startup reuses the
+edge's address detector and assigned-address check even when LAN HTTPS is disabled. If no private
+LAN address is assigned at startup, chat starts with calls disabled. Restart Viventium once the
+network is ready. An address that goes stale before LiveKit binds still fails the media safety
+check. The existing native CIDR filter excludes VPN, link-local, loopback and other interface addresses from advertisement. Signaling binds to loopback behind the
+existing Caddy edge. TURN binds to the LAN address and retains LiveKit's default denial of private,
+loopback, link-local, multicast and unspecified relay peers; do not grant restricted peer CIDRs.
+RTC TCP's native listener still binds all interfaces; the candidate filter is not a firewall.
+Docker retains only its own internal interfaces; a successful
+same-host call does not establish second-device LAN support. Compare actual selected ICE pairs and
+received audio from both the phone and an off-LAN client before claiming those paths ready.
+
+Normal stop/restart uses the existing native PID, executable-path and configuration receipts.
+An unowned listener, changed receipt, unsupported platform or invalid artifact fails closed. No
+models, prompts, client permissions, call orchestration or additional public ports change.
 
 Real browser audio QA observes the rendered remote audio element: unmuted, positive volume,
 active playback, decoded data and a live enabled media track. The playground's bounded
 `data-viventium-audio-*` marker and `[ViventiumVoiceAudio]` event support correlation with that
 call. Neither server TTS completion nor this browser state replaces human audible evidence.
+
+### Phone speaker quality
+
+Clean received PCM does not prove clean phone-speaker playback. When crackling is reported,
+separate source/stream continuity, network loss and browser microphone processing before changing
+providers or buffers. The local [audio-processing fixture](../../../qa/modern-playground-voice/fixtures/browser-audio-processing.html)
+compares the same tone without a microphone, with echo control, and without echo control. It
+records and uploads no microphone audio. Preserve effective track settings and the listener's
+actual result privately. Browser processing state may survive a reload, so repeat an inconsistent
+comparison from a fresh browser session.
+
+An [open WebKit report](https://bugs.webkit.org/show_bug.cgi?id=326286) describes Safari 27 speaker
+crackle during echo-cancelled capture. A matching browser version is a lead, not causal proof.
+Disabling echo control can change the audio route or volume and allow speaker feedback; do not
+silently apply it, mute the microphone during replies, or remove interruption to make a test pass.
+Phone speaker quality and physical microphone acceptance remain separate from SDK audio checks.
+
+Output-selection support is capability-based. A browser API or successful `setSinkId` call does
+not prove the built-in speaker is active; use an enumerated output and verify the audible route.
+A default output follows the system route. The diagnostic first lists capabilities without capture or a route change. If output enumeration
+is empty, an explicit second action can briefly acquire and release the microphone to obtain
+permission-dependent device information. It plays and records nothing. Empty enumeration before
+capture is not proof that outputs can never become available.
+
+A native client may use the existing LiveKit software echo-cancellation path to avoid platform
+voice processing. [Swift SDK 2.16.0](https://github.com/livekit/client-sdk-swift/releases/tag/2.16.0)
+includes a corresponding loudspeaker correction. This is a candidate, not delivered acceptance:
+validate continuous capture, echo rejection, spoken interruption, existing authentication and a
+sustainable installation route before recommending it as a completed phone solution.
 
 ### Live-call audio eligibility
 

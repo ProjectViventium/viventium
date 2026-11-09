@@ -18,11 +18,17 @@ Access to an organized LIFE folder is not permission to inject the whole folder 
 
 - Default unknown personal material to private.
 - Never copy private content into public artifacts, external prompts, logs, screenshots, or QA.
+- Keep personal appearance preferences, visual references and related source materials under
+  `Self/Identity/`. When the owner requests a location, use that folder for the files and
+  previews. Keep local-only work out of generic deliverable folders and remote attachments.
 - Never store passwords, OAuth tokens, API keys, cookies, private keys, or secret-bearing URLs here.
 - Credentials belong in the operating-system keychain or Viventium runtime configuration.
 - Keep facts, assumptions, decisions, tests, results, corrections, and remaining uncertainty
   distinct. A model-generated conclusion is derived until the user accepts it.
 - Never interpret an unavailable source or failed retrieval as proof that no evidence exists.
+- For a privacy audit, name the roots and file types checked. Verify exact copies with file sizes
+  and fingerprints before expanding the search. Record interrupted scans and unreadable roots
+  separately from completed checks.
 - High-stakes health, legal, financial, safety, and relationship changes default to a proposal.
 - Do not send, publish, share, buy, delete, deploy, or make another irreversible external change
   without explicit authority for that action.

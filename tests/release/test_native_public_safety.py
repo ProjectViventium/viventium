@@ -68,6 +68,32 @@ def test_native_public_safety_accepts_a_clean_candidate(tmp_path: Path) -> None:
     assert '"status":"pass"' in completed.stdout
 
 
+@pytest.mark.parametrize("entry", ["reserved-path", "template-metadata"])
+def test_native_public_safety_rejects_personal_workspace_data(tmp_path: Path, entry: str) -> None:
+    candidate = candidate_fixture(tmp_path)
+    if entry == "reserved-path":
+        write(candidate / "payload/runtime/Life/private-fixture.txt")
+    else:
+        write(candidate / "payload/templates/life-v0.01/notes.md",
+              "file:%2f%2f%2fhome%2fsynthetic%2f" + "Life%2fprivate-fixture.txt")
+    completed = run_verifier(candidate)
+    assert completed.returncode == 2
+    assert "personal workspace" in completed.stderr
+    assert "private-fixture" not in completed.stderr
+
+
+def test_native_public_safety_rejects_renamed_identity_bytes(tmp_path: Path, monkeypatch) -> None:
+    life = tmp_path / "private-folder"
+    monkeypatch.setenv("VIVENTIUM_LIFE_DIR", str(life))
+    source = write(life / "Self/Identity/fixture.bin", b"synthetic identity bytes")
+    candidate = candidate_fixture(tmp_path)
+    write(candidate / "payload/runtime/add-on/asset.bin", source.read_bytes())
+    checked = run_verifier(candidate)
+    assert checked.returncode == 2
+    assert "private identity bytes" in checked.stderr
+    assert "fixture.bin" not in checked.stderr
+
+
 def test_native_public_safety_rejects_forbidden_artifacts(tmp_path: Path) -> None:
     candidate = candidate_fixture(tmp_path)
     write(candidate / "payload" / "runtime" / "librechat" / "logs" / ".request-audit.json")
@@ -187,7 +213,7 @@ def test_vendored_browser_paths_keep_secret_and_producer_checks(tmp_path: Path) 
 
 @pytest.mark.parametrize("private_path", [
     "/home/synthetic-owner/project/", "/home/sandbox-adjacent/project/",
-    "/Users/synthetic-owner/project/", "/private/var/folders/synthetic/",
+    "/Users/" + "synthetic-owner/project/", "/private/var/folders/synthetic/",
 ])
 def test_vendored_browser_rejects_nonvirtual_private_paths(tmp_path: Path, private_path: str) -> None:
     candidate = candidate_fixture(tmp_path)

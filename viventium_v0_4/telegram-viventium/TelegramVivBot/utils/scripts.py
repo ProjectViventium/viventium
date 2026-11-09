@@ -33,6 +33,7 @@ import uuid
 import shutil
 import subprocess
 from dataclasses import dataclass
+from pathlib import PurePath
 from typing import Optional, Tuple, List, Dict
 try:
     import config
@@ -116,12 +117,19 @@ class TelegramTranscriptionResult:
             self.error_text = TelegramTranscriptionNotice(self.error_text, self.error_code)
 
 
+@dataclass
+class TelegramVideoNoteResult(TelegramTranscriptionResult):
+    frame_grid: Optional[bytes] = None
+    frame_error: Optional[str] = None
+
+
 class TelegramTranscriptionNotice(str):
     """Keep typed preparation status through the existing string notice contract."""
 
-    def __new__(cls, text: str, error_code: str):
+    def __new__(cls, text: str, error_code: str, *, continues: bool = False):
         value = super().__new__(cls, text)
         value.error_code = error_code
+        value.continues = continues
         return value
 
 def detect_mime_from_path(file_path: str) -> str:
@@ -130,6 +138,17 @@ def detect_mime_from_path(file_path: str) -> str:
         return "application/octet-stream"
     ext = "." + file_path.rsplit(".", 1)[-1].lower() if "." in file_path else ""
     return EXTENSION_TO_MIME.get(ext, "application/octet-stream")
+
+
+def _telegram_mp4_upload(message):
+    media = message.video or message.document
+    if not media:
+        return None
+    filename_type = detect_mime_from_path(getattr(media, "file_name", None))
+    media_type = getattr(media, "mime_type", None)
+    if filename_type == "application/octet-stream":
+        filename_type = media_type or ("video/mp4" if message.video else "")
+    return media if filename_type == "video/mp4" else None
 
 
 def _transcription_download_error(media_label: str, error_code: Optional[str]) -> TelegramTranscriptionResult:
@@ -405,14 +424,17 @@ def _local_stt_lock() -> asyncio.Lock:
 
 
 async def _transcribe_audio_bytes(
-    file_bytes: bytes, timeout_s: int, *, decoded_audio=None, selection=None, timing=None,
+    file_bytes: bytes, timeout_s: int, *, decoded_audio=None, selection=None, timing=None, input_format=None,
 ):
     # === VIVENTIUM START === Exact source silence cannot become authored transcript text.
     from .telegram_audio import decode_audio_bytes, TelegramAudioDecodeError
     if decoded_audio is None:
         decode_started = time.monotonic()
         decoded_audio = await asyncio.wait_for(
-            asyncio.to_thread(decode_audio_bytes, file_bytes, timeout_s), timeout=timeout_s,
+            asyncio.to_thread(
+                decode_audio_bytes, file_bytes, timeout_s,
+                **({"input_format": input_format} if input_format else {}),
+            ), timeout=timeout_s,
         )
         if timing:
             timing("decode", (time.monotonic() - decode_started) * 1000,
@@ -483,13 +505,13 @@ def resolve_telegram_listening_selection(route: dict, *, environment=None) -> di
 
 async def _download_transcription_input(
     file_id, context, *, filename, mime_type, telegram_user_id=None, telegram_chat_id=None,
-    telegram_message_thread_id=None, timing=None,
+    telegram_message_thread_id=None, timing=None, allow_visual_only=False,
 ):
     """Read current owner selection alongside the independent media download."""
     route_task = None
     if telegram_user_id is not None or telegram_chat_id is not None:
         bridge = getattr(config, "ChatGPTbot", None)
-        if not bridge or not hasattr(bridge, "get_voice_route"):
+        if not allow_visual_only and (not bridge or not hasattr(bridge, "get_voice_route")):
             from .telegram_stt import TelegramSTTError
             raise TelegramSTTError("voice_route_unavailable")
         async def current_route():
@@ -527,6 +549,8 @@ async def _download_transcription_input(
             return download, selection
         except Exception as error:
             from .telegram_stt import TelegramSTTError
+            if allow_visual_only:
+                return download, TelegramSTTError("voice_route_unavailable")
             raise TelegramSTTError("voice_route_unavailable") from error
     finally:
         if route_task is not None:
@@ -622,26 +646,71 @@ async def transcribe_video(
     telegram_user_id=None,
     telegram_chat_id=None,
     telegram_message_thread_id=None,
+    frame_duration: Optional[int] = None,
+    filename: str = "video.mp4",
 ) -> TelegramTranscriptionResult:
-    from .telegram_audio import TelegramAudioDecodeError
+    """Use one download for speech and an optional grid. A zero duration probes the MP4."""
     timing = _telegram_stt_timing()
 
     try:
         if telegram_user_id is None and telegram_chat_id is None and not ffmpeg_runtime_ready():
             return _transcription_runtime_error(media_label, "media_decoder_unavailable")
         download_result, selection = await _download_transcription_input(
-            file_id, context, filename="video.mp4", mime_type="video/mp4",
+            file_id, context, filename=filename, mime_type="video/mp4",
             telegram_user_id=telegram_user_id, telegram_chat_id=telegram_chat_id,
             telegram_message_thread_id=telegram_message_thread_id,
-            timing=timing,
+            timing=timing, allow_visual_only=frame_duration is not None,
         )
         if not download_result.file_bytes:
             return _transcription_download_error(media_label, download_result.error_code)
+    except asyncio.TimeoutError:
+        return _transcription_runtime_error(media_label, "timeout")
+    except Exception as error:
+        return _transcription_runtime_error(media_label, getattr(error, "code", "transcription_failed"))
 
+    speech = _transcribe_video_audio(
+        download_result.file_bytes, selection, media_label, timing,
+        input_format="mov" if frame_duration == 0 else None,
+    )
+    if frame_duration is None:
+        return await speech
+    transcript, (grid, frame_error) = await asyncio.gather(
+        speech, _prepare_video_note_grid(download_result.file_bytes, frame_duration, timing),
+    )
+    if grid and grid.has_audio is False:
+        transcript = TelegramTranscriptionResult()
+    return TelegramVideoNoteResult(
+        text=transcript.text, error_text=transcript.error_text, error_code=transcript.error_code,
+        frame_grid=grid.jpeg if grid else None, frame_error=frame_error,
+    )
+
+
+async def _prepare_video_note_grid(file_bytes, duration, timing):
+    from .telegram_video import VideoNoteFrameError, extract_video_note_grid
+
+    started = time.monotonic()
+    try:
+        grid = await asyncio.to_thread(extract_video_note_grid, file_bytes, duration)
+    except (VideoNoteFrameError, OSError, ValueError) as error:
+        code = getattr(error, "code", "video_frames_decode_failed")
+        timing("video_frames", (time.monotonic() - started) * 1000, {"error_code": code})
+        return None, code
+    timing("video_frames", (time.monotonic() - started) * 1000,
+           {"frames": grid.frame_count, "bytes": len(grid.jpeg)})
+    return grid, None
+
+
+async def _transcribe_video_audio(file_bytes, selection, media_label, timing, *, input_format):
+    from .telegram_audio import TelegramAudioDecodeError
+    from .telegram_stt import TelegramSTTError
+
+    try:
+        if isinstance(selection, TelegramSTTError):
+            raise selection
         # === VIVENTIUM START === Decode original video audio once, without an intermediate MP3.
         timeout_s = int(os.environ.get("LOCAL_WHISPER_TIMEOUT_S", "120"))
         transcript = await _transcribe_audio_bytes(
-            download_result.file_bytes, timeout_s, selection=selection, timing=timing,
+            file_bytes, timeout_s, selection=selection, timing=timing, input_format=input_format,
         )
         # === VIVENTIUM END ===
 
@@ -767,8 +836,14 @@ async def GetMesage(update_message, context, voice=True, *, override_user_id: Op
         if update_message.caption:
             message = rawtext = CutNICK(update_message.caption, update_message)
 
+    upload_enabled = getattr(config, "VIVENTIUM_TELEGRAM_FILE_UPLOAD_ENABLED", True)
+    mp4_upload = (
+        _telegram_mp4_upload(update_message)
+        if voice and upload_enabled and VIVENTIUM_TELEGRAM_BACKEND == "librechat" else None
+    )
     if voice:
         voice_result = None
+        grid_filename = "video-note-frames.jpg"
         if update_message.voice:
             voice_file_id = update_message.voice.file_id
             voice_result = await get_voice(
@@ -777,13 +852,19 @@ async def GetMesage(update_message, context, voice=True, *, override_user_id: Op
                     **({'telegram_message_thread_id': message_thread_id} if message_thread_id else {})}
                    if VIVENTIUM_TELEGRAM_BACKEND == "librechat" else {}),
             )
-        elif update_message.video_note:
-            video_note_file_id = update_message.video_note.file_id
+        elif update_message.video_note or mp4_upload:
+            video = update_message.video_note or mp4_upload
+            filename = getattr(video, "file_name", None) or "video.mp4"
+            if mp4_upload:
+                grid_filename = f"{PurePath(filename).stem}-frames.jpg"
+            frame_duration = 0 if mp4_upload else (getattr(video, "duration", 0) or 0)
             voice_result = await transcribe_video(
-                video_note_file_id,
+                video.file_id,
                 context,
-                media_label="video note",
+                media_label="video" if mp4_upload else "video note",
+                filename=filename,
                 **({"telegram_user_id": user_id, "telegram_chat_id": chatid,
+                    **({'frame_duration': frame_duration} if upload_enabled else {}),
                     **({'telegram_message_thread_id': message_thread_id} if message_thread_id else {})}
                    if VIVENTIUM_TELEGRAM_BACKEND == "librechat" else {}),
             )
@@ -798,7 +879,31 @@ async def GetMesage(update_message, context, voice=True, *, override_user_id: Op
                     voice_error_text = None
                 # === VIVENTIUM END ===
 
-    if update_message.document:
+            if isinstance(voice_result, TelegramVideoNoteResult):
+                if voice_result.frame_grid:
+                    file_data_list.append(encode_file_for_agent(
+                        voice_result.frame_grid, "image/jpeg", grid_filename,
+                    ))
+                    voice_error_text = (
+                        TelegramTranscriptionNotice(
+                            "I couldn't transcribe the audio. I'll use the video frames.",
+                            voice_result.error_code, continues=True,
+                        ) if voice_error_text and voice_result.error_code != 'no_speech' else None
+                    )
+                elif voice_result.frame_error:
+                    if voice_text or (message and not voice_error_text):
+                        voice_error_text = TelegramTranscriptionNotice(
+                            "I couldn't read the video frames. I'll use the text I have.",
+                            voice_result.frame_error, continues=True,
+                        )
+                    else:
+                        voice_error_text = TelegramTranscriptionNotice(
+                            "I couldn't get usable audio or video frames. Please resend the video.",
+                            voice_result.frame_error if voice_result.error_code == 'no_speech'
+                            else voice_result.error_code or voice_result.frame_error,
+                        )
+
+    if update_message.document and not mp4_upload:
         file = update_message.document
 
         # === VIVENTIUM START ===
@@ -865,10 +970,8 @@ async def GetMesage(update_message, context, voice=True, *, override_user_id: Op
             message = rawtext = CutNICK(update_message.caption, update_message)
 
     # === VIVENTIUM START ===
-    # Feature: Treat regular Telegram video uploads as attachments. Video notes
-    # remain voice-style inputs above; regular videos should flow through the
-    # same provider-native/context/fail-loud contract as other files.
-    if update_message.video:
+    # Other containers keep the generic attachment path.
+    if update_message.video and not mp4_upload:
         file = update_message.video
         if getattr(config, "VIVENTIUM_TELEGRAM_FILE_UPLOAD_ENABLED", True):
             download_result = await download_telegram_file_result(

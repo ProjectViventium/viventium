@@ -1,5 +1,11 @@
 # Parallel Work QA Cases
 
+Broker handoff recovery includes complete authorized file and conversation resources above
+512 KiB and 1 MiB. Main must retain delegation tools, an actual browser worker must run, and a
+normal follow-up must remain usable. Check unchanged owner, tenant, expiry, revocation and digest
+refusals. Source clipping or a larger replacement byte cap does not satisfy this case.
+Selected local evidence: [handoff and context recovery report](../main-continuity/reports/2026-11-05-native-handoff-context-recovery.md).
+
 ## Locked Queen Bee and Worker Bee regression contract
 
 The normative user experience is the current
@@ -40,6 +46,33 @@ courier, without waiting for the first reply to finish. A transport acknowledgme
 proof of model uptake. Check the resulting answer, native input receipt, durable adjudication,
 exact file contents, and the originating surface after reload. A final, aborted, superseded,
 foreign-owner, or different-surface author must not receive that result.
+
+For `PWK-UC-005` and `PWK-UC-017`, also finish native coordinator work without a separate
+delegation or output file. Interrupt delivery after Main's follow-up is persisted, then retry
+through the existing callback owner. The owner-scoped public delivery projection must recover
+the same message despite omitting private owner fields. Confirm one Main generation, one
+channel delivery and the same message after reload. Foreign owner, conversation, parent,
+delivery metadata and mixed-batch substitutions must remain rejected. A deterministic replay
+supports this check; the real channel recovery remains required before an acceptance claim.
+Include source A, later conversation C, then result A: retain the original presentation-source
+parent and preserve the actual conversation-tree parent. Also publish two canonical native
+results from one accepted source. Each reaches its own batch once, including concurrent replay,
+an already-sent first result, and an intentionally silent first result. Existing generic Web
+and Telegram batches keep their original admission and recovery behavior.
+Run a separate accepted request that the native coordinator completes with its own granted
+browser tool and no goal tool. After the native process finishes, its canonical saved turn reply
+must reach Main and the current authorized surface once, including after ending the initiating
+call. Keep the actual accepted-turn work reference and original native request/run. Repeat the
+notification and restart before delivery: no extra goal, Worker, native execution or Main author
+is permitted. A goal-backed turn and an internal result-wake turn must not duplicate completion.
+Also interrupt after the Native result claim but before Main is saved. Restart, change current
+cognition, and let normal maintenance recover the exact retained admission after the original
+HTTP callback expires. Repeat after operational retry exhaustion. No generic author may take
+Native evidence. If the current goal advances to a new run, Stop or restore hold, the retained
+publication remains Native-owned and cannot be authored. Interrupt once more after Main saves
+but before its persistence receipt commits: reuse that exact message and repair one receipt,
+including a still-live claim and a restarted runtime. Deleted, unfinished, invalid, foreign or
+ambiguous saved replies must never trigger a replacement Main generation.
 
 If Main has no additional prose but still owes an accepted file, verify attachment-only delivery:
 one file, no placeholder text, no synthesized status message, and the normal authorization and
@@ -259,6 +292,20 @@ protects the shipped native-worker policy; it does not forbid a supported explic
   has no effect. An empty schedule target set performs no schedule bridge work.
 - **Evidence:** [candidate report](reports/2026-10-03-retired-origin-callback.md). Source and transaction
   checks support this branch; they do not close the full installed Web/Telegram/Voice journey.
+
+### `PWK-UC-003` accepted planning failure recovery
+
+- Trigger a settled planner failure after the original request is accepted but before a goal is
+  accepted. Keep that original, failed provider request and attempt history.
+- Repair the prerequisite, then use the failed card's Retry. Repeated clicks, a lost response and
+  reload must resolve to one accepted retry child; they must not submit a new user handoff.
+- Verify current authorized context and the exact original source reach the retry. The speaking
+  assistant stays available. One goal/result follows the existing delivery owner and destination.
+- Stop, restore hold, foreign identity, a parsed reply or already accepted source goal must prevent
+  a new planning retry. A failed retry child can be retried explicitly without a lifetime ceiling.
+- Deterministic owners: native `test_coordinator_interactive_retry.py`, Core
+  `nativeCoordinatorWork.spec.ts` and `workActionService.spec.ts`. Real Web/Telegram/Voice recovery:
+  **NOT RUN** until current user controls, persistence and one-time delivery are observed.
 
 ### `PWK-UC-014` exact original-sequence procedure
 

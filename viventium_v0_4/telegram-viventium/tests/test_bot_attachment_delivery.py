@@ -2,6 +2,7 @@ import sys
 from io import BytesIO
 from pathlib import Path
 from types import SimpleNamespace
+from unittest.mock import AsyncMock
 
 import pytest
 import httpx
@@ -54,6 +55,45 @@ class _FakeTelegramBot:
 class _FakeContext:
     def __init__(self) -> None:
         self.bot = _FakeTelegramBot()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("video_error", [None, BadRequest("unsupported video"), TimedOut()])
+async def test_mp4_delivery_preserves_exact_bytes_and_does_not_retry_unknown_send(video_error):
+    bot = _FakeTelegramBot()
+    video_bytes = b"test mp4 payload"
+
+    async def send_video(**kwargs):
+        assert kwargs["video"].read() == video_bytes
+        assert kwargs["filename"] == "clip.mp4"
+        assert kwargs["supports_streaming"] is True
+        if video_error is not None:
+            raise video_error
+        return bot.receipt()
+
+    bot.send_video = AsyncMock(side_effect=send_video)
+    permit = AsyncMock(return_value=True)
+    fetch = AsyncMock(return_value=(video_bytes, "video/mp4"))
+    attachment = {"file_id": "generated-video", "filename": "clip.mp4"}
+    receipt = await send_librechat_attachments(
+        bot=bot, base_url="http://core.test", secret="synthetic",
+        telegram_user_id="10", telegram_username="", telegram_chat_id="10",
+        attachments=[attachment, attachment], message_thread_id=2,
+        reply_to_message_id=3, fetch_bytes=fetch, before_side_effect=permit,
+    )
+    fetch.assert_awaited_once()
+    bot.send_video.assert_awaited_once()
+    assert permit.await_count == (1 if video_error is None else 2)
+    if isinstance(video_error, BadRequest):
+        assert bot.documents[0]["document"].read() == video_bytes
+    else:
+        assert bot.documents == []
+    assert len(bot.messages) == (1 if isinstance(video_error, TimedOut) else 0)
+    if bot.messages:
+        assert bot.messages[0]["text"] == "Delivery of 1 file could not be confirmed."
+    assert receipt["delivery_unknown"] is isinstance(video_error, TimedOut)
+    assert len(receipt["message_ids"]) == 1
+    assert receipt["outcomes"]["sent"] == (0 if isinstance(video_error, TimedOut) else 1)
 
 
 @pytest.mark.asyncio

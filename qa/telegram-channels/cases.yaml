@@ -5,6 +5,10 @@ requirementOwner:
   - docs/requirements_and_learnings/25_Scheduling_Telegram_UX_Fixes.md
 statusPolicy: Run results belong in dated, candidate-bound reports.
 reports:
+  - qa/telegram-channels/reports/2026-11-08-current-photo-identity.md
+  - qa/telegram-channels/reports/2026-11-05-mp4-upload.md
+  - qa/telegram-channels/reports/2026-11-05-round-video-note.md
+  - qa/telegram-channels/reports/2026-10-30-scheduled-text-and-audio.md
   - qa/telegram-channels/reports/2026-10-25-telegram-ingress-recovery.md
   - qa/modern-playground-voice/reports/2026-10-03-voice-and-telegram-acceptance.md
   - qa/modern-playground-voice/reports/2026-09-30-native-harness-parity-and-observability.md
@@ -39,11 +43,56 @@ journeys:
     persistenceAndCleanup: Restart and native follow-up preserve owner and objective; synthetic messages, files, and work are removed exactly.
     evidence: [visible Telegram exchange, message parts, delivery ledger, file hashes, logs, cleanup proof]
 
+  - id: telegram-current-photo-identity
+    requirements: [CORE-006, CORE-007, CC-048]
+    userAction: Send two different photos in succession, then a text-only reply. Also send an album and repeat an earlier photo as a new input.
+    surfaces: [Telegram, Main, configured native vision route]
+    expectedResult: Fresh image blocks match only the current accepted sources, in order. Main can distinguish the new photo from historical evidence. Repeating a photo remains valid current input.
+    degradedAndRecovery: A changed declared source fails closed. A text-only turn sends no historical photo as fresh visual input. Legacy requests use the final turn boundary.
+    persistenceAndCleanup: Historical original bytes and files remain available through existing authorized readers. Reload or retry preserves the accepted source and image hashes without changing the model, effort or account.
+    evidence: [visible Telegram exchange, exact file hashes, current source receipt, native image scope, historical file retention, model and runtime identity]
+
+  - id: telegram-long-history-handoff-restart
+    requirements: [CORE-006, CORE-007, CC-048]
+    userAction: In a synthetic conversation with 134 authorized original files, request background work while continuing to chat. Retry the same unbound goal after a preparation failure. Exercise an old draining executor beside a new executor, then refresh its grant and restart.
+    surfaces: [Telegram, Main, native coordinator, worker admission, delivery ledger]
+    expectedResult: The worker inherits the original request and all selected references without a separate 64-file courier ceiling. Main remains available. Only the executor that owns the current invocation context may claim the turn; results arrive once on the original conversation.
+    degradedAndRecovery: Missing, ambiguous or foreign references still fail before reservation. Retry preserves the accepted goal and reviewed scope. A foreign executor leaves the queued run unclaimed; missing usable grant context waits for its existing refresh path without stored-bearer fallback.
+    persistenceAndCleanup: Restart and replay retain original source and file hashes, one worker reservation and one result receipt. Preserve failed records and retire only owned synthetic resources.
+    evidence: [134-file prepare and byte retention, missing and foreign reference rejection, same-goal retry receipt, two-executor claim exclusion, grant refresh and restart recovery, real Telegram result, current model and runtime identity]
+
+  - id: telegram-image-history-continuity
+    requirements: [CORE-006, CORE-007, CC-048]
+    userAction: In a synthetic long-running conversation, retain more historical photos than one fresh image batch permits. Send text-only input, then a new photo, and retrieve an earlier original through the existing reader. Repeat after cold reconstruction and replay an admitted request.
+    surfaces: [Telegram, Core source admission, configured native route, authorized historical file reader]
+    expectedResult: Historical image count alone never rejects a new turn. Text-only input supplies zero fresh image blocks; new photos match current accepted sources in order. Earlier originals remain readable with their exact bytes.
+    degradedAndRecovery: Per-image validation and current-batch bounds remain distinct from archive size. Malformed current input remains rejected before model execution. A proved pre-admission failure may be resubmitted exactly once as a new source; it must not be called same-receipt recovery or require DB resets.
+    persistenceAndCleanup: Cold reconstruction retains historical originals without requiring current-upload metadata. Idempotent replay reuses the admitted result and performs no duplicate model or tool execution. Preserve failed records and retire only owned synthetic QA resources.
+    evidence: [baseline failing API cases, historical file hashes, current image count and source identity, cold-reconstruction reader result, real Telegram reply, native admission and delivery receipts, exact configured model and effort]
+
+  - id: telegram-round-video-note
+    requirements: [CORE-002, CORE-007, CC-048]
+    userAction: Send a round note and an MP4 with a visible change and spoken content. Upload the MP4 as a video and as a file, including a caption on one upload. Try a silent clip and a preparation failure.
+    surfaces: [Telegram, Main, configured native vision route]
+    expectedResult: One download supplies the unchanged speech path and one ordered timestamped grid per clip. Main can use both parts and any caption in the same turn. A silent clip produces a visual answer. An album preserves clip order.
+    degradedAndRecovery: A usable transcript or grid survives a failure in the other part with a short notice. An unusable note ends with one clear error. Recovery reuses the prepared attachment and transcript without a second Main result.
+    persistenceAndCleanup: Retain both parts under the original owner and source. Retire only exact synthetic QA inputs through the owning cleanup path.
+    evidence: [visible Telegram reply, media timing, prepared source, native image input, replay receipt, runtime identity]
+
   - id: ingress-outage-and-idle-typing
     requirements: [CORE-002, CORE-007, CC-048]
-    userAction: In an isolated runtime, send a current message while Core cannot accept it; restore Core and send a new message. Separately recover a cancelled retained input, then remain idle.
+    userAction: In an isolated runtime, send a current message while Core cannot accept it; restore Core and send a new message. Separately recover a cancelled retained input and a persisted unsupported Native graph interruption, then remain idle.
     surfaces: [Telegram Desktop, Core ingress, retained input recovery]
-    expectedResult: A definite pre-admission failure sends one plain reply to the exact current input without TTS, model work or typing. After recovery, the new input receives its normal answer. A terminal old presentation settles without restarting work or refreshing idle typing.
+    expectedResult: A definite pre-admission failure sends one plain reply to the exact current input without TTS, model work or typing. After recovery, the new input receives its normal answer. A terminal old presentation settles once without restarting work or refreshing idle typing, including an exact unsupported Native failure without a replay snapshot.
     degradedAndRecovery: An unknown POST outcome is never retried as fresh execution. A newer source suppresses the old notice. Transport failure and provider failure keep distinct wording. Background acknowledgement retries back off and recover without log floods. Authenticated prepared input survives an ordering outage in its existing ingress ledger; only a recoverable retained receipt permits a waiting notice. A late startup callback cannot change the identity of a cancelled pre-native reply or prevent its successor from authoring the exact sources.
     persistenceAndCleanup: Restart retains exact source and terminal facts; a newer independent message does not mark old work completed. Remove only synthetic fixtures through their owning cleanup path.
-    evidence: [visible outage and recovery, exact source and delivery receipts, canonical failure and presentation state, absence of tool replay, bounded typing start/stop logs, installed artifact identity]
+    evidence: [visible outage and recovery, exact source and delivery receipts, canonical failure and presentation state, absence of tool replay, bounded typing start/stop logs, installed artifact identity, quiet-stream read-idle counterfactual and comment lifecycle]
+
+  - id: scheduled-text-with-optional-audio
+    requirements: [CORE-007, TGVOICE-004, TGVOICE-006]
+    userAction: Trigger a synthetic conversational schedule with voice enabled, then inspect text and audio in Telegram and reload its run detail.
+    surfaces: [Scheduler, Telegram Desktop, Prompt Workbench]
+    expectedResult: Complete readable text arrives before one optional audio attachment. Semantic bubbles and model skip remain authoritative; status output stays text only.
+    degradedAndRecovery: Replay reuses each receipt; a pre-audio interruption sends only the missing audio. Lost audio receipts stop replay. Rejected or unavailable audio retains the text. Old receipts are not replayed as new parts.
+    persistenceAndCleanup: Receipts survive reopening storage; preserve owner voice settings and schedules. Retire only synthetic QA resources.
+    evidence: [real text and audio delivery, durable per-part receipts, installed scheduler identity, replay and interruption checks, visible run detail]

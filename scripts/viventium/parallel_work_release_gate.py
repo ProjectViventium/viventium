@@ -1755,6 +1755,19 @@ def _runtime_owner_state_proves_active(
     installed_root: Path | None,
     runtime_owner_state: Path | None,
 ) -> bool:
+    return _runtime_owner_receipt_proves_live_process(installed_root, runtime_owner_state)
+
+
+def _runtime_owner_receipt_proves_live_process(
+    installed_root: Path | None,
+    runtime_owner_state: Path | None,
+    *,
+    transition_owner_pid: int | None = None,
+) -> bool:
+    if transition_owner_pid is not None and (
+        type(transition_owner_pid) is not int or transition_owner_pid <= 1
+    ):
+        return False
     if installed_root is None or runtime_owner_state is None:
         return False
     try:
@@ -1833,6 +1846,14 @@ def _runtime_owner_state_proves_active(
         "ownerProcessStartedAt": expected_started_at,
         "ownerProcessCommand": expected_command,
     }
+    try:
+        owner_state_parent = (app_support / "state" / "runtime" / runtime_profile).resolve()
+    except (OSError, RuntimeError):
+        return False
+    expected_state_path = owner_state_parent / (
+        "stack-owner.json" if transition_owner_pid is None
+        else f"stack-owner.json.previous.{transition_owner_pid}"
+    )
     if (
         payload.get("contractVersion") != CONTRACT_VERSION
         or owner_root != installed
@@ -1848,8 +1869,7 @@ def _runtime_owner_state_proves_active(
         or components_lock_file != (installed / "components.lock.json").resolve(strict=True)
         or str(payload.get("ownerExecutablePath") or "") != str(owner_executable)
         or str(payload.get("ownerProcessCwd") or "") != str(owner_cwd)
-        or owner_state_path
-        != (app_support / "state" / "runtime" / runtime_profile / "stack-owner.json").resolve()
+        or owner_state_path != expected_state_path
         or owner_pid <= 1
         or str(payload.get("command") or "") not in {"start", "launch"}
         or not expected_started_at
@@ -5375,6 +5395,32 @@ def validate_runtime_owner_state_file(owner_state: Path) -> bool:
     return _runtime_owner_state_proves_active(installed_root, exact_state)
 
 
+def validate_runtime_owner_transition_file(owner_state: Path, transition_owner_pid: int) -> bool:
+    """Prove a private lifecycle snapshot; never grant active/release authority."""
+    if type(transition_owner_pid) is not int or transition_owner_pid <= 1:
+        return False
+    supplied = owner_state.expanduser()
+    if supplied.name != f"stack-owner.json.previous.{transition_owner_pid}" or supplied.is_symlink():
+        return False
+    try:
+        owner_stat = supplied.stat()
+        if (
+            not stat.S_ISREG(owner_stat.st_mode)
+            or stat.S_IMODE(owner_stat.st_mode) != 0o600
+            or (hasattr(os, "getuid") and owner_stat.st_uid != os.getuid())
+        ):
+            return False
+        payload = json.loads(supplied.read_text(encoding="utf-8"))
+        if not isinstance(payload, dict):
+            return False
+        installed_root = Path(str(payload.get("repoRoot") or "")).resolve(strict=True)
+    except (OSError, RuntimeError, TypeError, json.JSONDecodeError):
+        return False
+    return _runtime_owner_receipt_proves_live_process(
+        installed_root, supplied, transition_owner_pid=transition_owner_pid
+    )
+
+
 def main(argv: Iterable[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__, allow_abbrev=False)
     parser.add_argument(
@@ -5395,12 +5441,17 @@ def main(argv: Iterable[str] | None = None) -> int:
     snapshot_actions.add_argument("--validate-snapshot", type=Path)
     snapshot_actions.add_argument("--renew-local-qa-snapshot", type=Path)
     snapshot_actions.add_argument("--validate-owner-state", type=Path)
+    snapshot_actions.add_argument("--validate-owner-transition-state", type=Path)
+    parser.add_argument("--transition-owner-pid", type=int)
     parser.add_argument("--json", action="store_true")
     args = parser.parse_args(list(argv) if argv is not None else None)
+    if args.transition_owner_pid is not None and args.validate_owner_transition_state is None:
+        parser.error("--transition-owner-pid requires --validate-owner-transition-state")
     if (
         args.validate_snapshot is not None
         or args.renew_local_qa_snapshot is not None
         or args.validate_owner_state is not None
+        or args.validate_owner_transition_state is not None
     ):
         claim_values = (
             args.readiness_facts,
@@ -5422,6 +5473,12 @@ def main(argv: Iterable[str] | None = None) -> int:
             return 0 if validate_snapshot_file(args.validate_snapshot) else 1
         if args.renew_local_qa_snapshot is not None:
             return 0 if renew_local_qa_snapshot(args.renew_local_qa_snapshot) else 1
+        if args.validate_owner_transition_state is not None:
+            if args.transition_owner_pid is None:
+                parser.error("--validate-owner-transition-state requires --transition-owner-pid")
+            return 0 if validate_runtime_owner_transition_file(
+                args.validate_owner_transition_state, args.transition_owner_pid
+            ) else 1
         assert args.validate_owner_state is not None
         return 0 if validate_runtime_owner_state_file(args.validate_owner_state) else 1
     _require_canonical_claim_inputs(parser, args)

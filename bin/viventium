@@ -162,6 +162,8 @@ GENERATED_LIBRECHAT_ENV="$RUNTIME_DIR/service-env/librechat.env"
 LOCK_FILE="${VIVENTIUM_COMPONENTS_LOCK_FILE:-$REPO_ROOT/components.lock.json}"
 CLI_LOCK_DIR="${VIVENTIUM_CLI_LOCK_DIR:-$APP_SUPPORT_DIR/state/cli-operation.lock}"
 CLI_LOCK_OWNER=0
+CLI_LOCK_VERIFIED_PARENT_PID=""
+export -n CLI_LOCK_VERIFIED_PARENT_PID
 DETACHED_START_PID=""
 DETACHED_START_LOG_OFFSET=0
 INSTALL_WAIT_PROGRESS_ACTIVE=0
@@ -799,6 +801,14 @@ runtime_owner_process_matches_state() {
 STACK_OWNER_PREVIOUS_STATE_FILE=""
 STACK_OWNER_TRANSITION_ACTIVE=0
 
+runtime_owner_transition_snapshot_matches_state() {
+  local previous_file="${1:-}"
+  local validator="$REPO_ROOT/scripts/viventium/parallel_work_release_gate.py"
+  [[ -n "$previous_file" && -f "$validator" ]] || return 1
+  "$PYTHON_BIN" "$validator" --validate-owner-transition-state "$previous_file" \
+    --transition-owner-pid "$$" >/dev/null 2>&1
+}
+
 capture_stack_owner_state_for_transition() {
   local owner_file=""
   local previous_file=""
@@ -811,27 +821,33 @@ capture_stack_owner_state_for_transition() {
     return 0
   fi
 
+  # Validate the original file before creating a private snapshot.
+  # The current CLI owns this check even when the prior owner is another checkout.
+  if ! "$PYTHON_BIN" "$REPO_ROOT/scripts/viventium/parallel_work_release_gate.py" \
+    --validate-owner-state "$owner_file" >/dev/null 2>&1; then
+    return 0
+  fi
+
   (umask 077; cp "$owner_file" "$previous_file") || return 1
   chmod 600 "$previous_file"
-  if ! runtime_owner_process_matches_state "$previous_file"; then
+  if ! runtime_owner_transition_snapshot_matches_state "$previous_file"; then
     rm -f "$previous_file"
   fi
 }
 
-reconcile_stack_owner_state_on_exit() {
+reconcile_stack_owner_state_locked() {
   local owner_file=""
   local previous_file="${STACK_OWNER_PREVIOUS_STATE_FILE:-}"
   local restore_previous="false"
+  local reconcile_status=0
 
-  [[ "${STACK_OWNER_TRANSITION_ACTIVE:-0}" == "1" ]] || return 0
-  STACK_OWNER_TRANSITION_ACTIVE=0
   owner_file="$(stack_owner_state_file)"
   if [[ -n "$previous_file" && -f "$previous_file" ]] &&
-    runtime_owner_process_matches_state "$previous_file"; then
+    runtime_owner_transition_snapshot_matches_state "$previous_file"; then
     restore_previous="true"
   fi
 
-  "$PYTHON_BIN" - "$owner_file" "$previous_file" "$$" "$restore_previous" <<'PY'
+  "$PYTHON_BIN" - "$owner_file" "$previous_file" "$$" "$restore_previous" <<'PY' || reconcile_status=$?
 import json
 import os
 import sys
@@ -864,6 +880,50 @@ PY
     rm -f "$previous_file"
   fi
   STACK_OWNER_PREVIOUS_STATE_FILE=""
+  return "$reconcile_status"
+}
+
+reconcile_stack_owner_state_on_exit() {
+  local previous_file="${STACK_OWNER_PREVIOUS_STATE_FILE:-}"
+  local cleanup_status=0
+  [[ "${STACK_OWNER_TRANSITION_ACTIVE:-0}" == "1" ]] || return 0
+  STACK_OWNER_TRANSITION_ACTIVE=0
+
+  if [[ "${CLI_LOCK_OWNER:-0}" == "1" ]] || verified_parent_cli_lock || {
+    [[ -n "${CLI_LOCK_VERIFIED_PARENT_PID:-}" ]] &&
+      verified_parent_cli_lock "$CLI_LOCK_VERIFIED_PARENT_PID"
+  }; then
+    reconcile_stack_owner_state_locked || cleanup_status=$?
+  else
+    # Long-running Start releases the operation lock. Reacquire that same lock
+    # before reading/mutating owner state, without waiting on a Stop that may
+    # itself be waiting for this supervisor to exit.
+    (
+      CLI_LOCK_OWNER=0
+      CLI_LOCK_VERIFIED_PARENT_PID=""
+      unset VIVENTIUM_CLI_LOCK_HELD VIVENTIUM_CLI_LOCK_DIR
+      unset VIVENTIUM_CLI_LOCK_OWNER_PID VIVENTIUM_CLI_LOCK_INHERITED_ONCE
+      acquire_cli_lock "owner transition cleanup" current-process 2>/dev/null || {
+        local acquire_status=$?
+        cleanup_cli_lock
+        exit "$acquire_status"
+      }
+      local reconcile_exit=0
+      reconcile_stack_owner_state_locked || reconcile_exit=$?
+      # Bash 3.2 does not reliably run a nested EXIT trap while the parent's
+      # EXIT trap is active. Release this owned lock explicitly as well.
+      cleanup_cli_lock
+      exit "$reconcile_exit"
+    ) || cleanup_status=$?
+  fi
+  if [[ -n "$previous_file" ]]; then
+    rm -f "$previous_file"
+  fi
+  STACK_OWNER_PREVIOUS_STATE_FILE=""
+  if [[ "$cleanup_status" != "0" ]]; then
+    echo "Viventium owner recovery was skipped or failed; current owner state may need verification." >&2
+  fi
+  return "$cleanup_status"
 }
 
 start_owner_transition_exit_cleanup() {
@@ -1100,6 +1160,9 @@ verified_parent_cli_lock() {
 
 acquire_cli_lock() {
   local command_name="${1:-unknown}"
+  local pid_mode="${2:-caller}"
+  local lock_pid="$$"
+  [[ "$pid_mode" == "caller" || "$pid_mode" == "current-process" ]] || return 1
 
   if [[ "${VIVENTIUM_CLI_LOCK_HELD:-0}" == "1" && "${VIVENTIUM_CLI_LOCK_DIR:-}" == "$CLI_LOCK_DIR" ]]; then
     if [[ "${VIVENTIUM_CLI_LOCK_INHERITED_ONCE:-0}" == "1" ]]; then
@@ -1109,14 +1172,23 @@ acquire_cli_lock() {
         echo "Inherited Viventium operation lock is no longer owned by its verified parent." >&2
         exit 1
       fi
+      CLI_LOCK_VERIFIED_PARENT_PID="$existing_pid"
       unset VIVENTIUM_CLI_LOCK_HELD VIVENTIUM_CLI_LOCK_DIR
       unset VIVENTIUM_CLI_LOCK_OWNER_PID VIVENTIUM_CLI_LOCK_INHERITED_ONCE
     fi
     return 0
   fi
 
-  ensure_app_support_layout "$APP_SUPPORT_DIR"
-  mkdir -p "$(dirname "$CLI_LOCK_DIR")"
+  if [[ "$pid_mode" == "current-process" ]]; then
+    # Explicit exec removes the substitution shell on Bash 3.2. Resolve before
+    # mkdir so process discovery cannot leave an empty lock for a contender.
+    lock_pid="$(exec /bin/sh -c 'printf "%s\n" "$PPID"')" || return 1
+    [[ "$lock_pid" =~ ^[0-9]+$ && "$lock_pid" -gt 1 ]] || return 1
+    kill -0 "$lock_pid" 2>/dev/null || return 1
+  fi
+
+  ensure_app_support_layout "$APP_SUPPORT_DIR" || return 1
+  mkdir -p "$(dirname "$CLI_LOCK_DIR")" || return 1
 
   while ! mkdir "$CLI_LOCK_DIR" 2>/dev/null; do
     local existing_pid existing_command
@@ -1137,15 +1209,16 @@ acquire_cli_lock() {
     exit 1
   done
 
-  printf '%s\n' "$$" >"$CLI_LOCK_DIR/pid"
-  printf '%s\n' "$command_name" >"$CLI_LOCK_DIR/command"
-  cli_lock_process_command "$$" >"$CLI_LOCK_DIR/process_command"
-  date -u '+%Y-%m-%dT%H:%M:%SZ' >"$CLI_LOCK_DIR/created_at"
+  CLI_LOCK_OWNER=1
+  CLI_LOCK_VERIFIED_PARENT_PID=""
+  install_cli_lock_traps
+  printf '%s\n' "$lock_pid" >"$CLI_LOCK_DIR/pid" || return 1
+  printf '%s\n' "$command_name" >"$CLI_LOCK_DIR/command" || return 1
+  cli_lock_process_command "$lock_pid" >"$CLI_LOCK_DIR/process_command" || return 1
+  date -u '+%Y-%m-%dT%H:%M:%SZ' >"$CLI_LOCK_DIR/created_at" || return 1
   export VIVENTIUM_CLI_LOCK_HELD=1
   export VIVENTIUM_CLI_LOCK_DIR="$CLI_LOCK_DIR"
-  export VIVENTIUM_CLI_LOCK_OWNER_PID="$$"
-  CLI_LOCK_OWNER=1
-  install_cli_lock_traps
+  export VIVENTIUM_CLI_LOCK_OWNER_PID="$lock_pid"
 }
 
 run_preflight() {
@@ -6005,15 +6078,26 @@ user_surface_healthy() {
 
 capture_detached_start_log_offset() {
   local launch_log="${1:-}"
-  local byte_count=0
-
-  if [[ -f "$launch_log" ]]; then
-    byte_count="$(wc -c <"$launch_log" 2>/dev/null | tr -d '[:space:]' || true)"
+  local log_state
+  if ! log_state="$("$PYTHON_BIN" - "$REPO_ROOT/scripts/viventium" "$launch_log" <<'PYLOGOFFSET'
+import os
+import sys
+from pathlib import Path
+sys.dont_write_bytecode = True
+sys.path.insert(0, sys.argv[1])
+from native_runtime import open_private_runtime_log
+with open_private_runtime_log(Path(sys.argv[2])) as (selected, handle):
+    print(os.fstat(handle.fileno()).st_size)
+    print(selected)
+PYLOGOFFSET
+  )"; then
+    DETACHED_START_LOG_OFFSET=0
+    DETACHED_START_LOG_PATH=""
+    return 1
   fi
-  if [[ ! "$byte_count" =~ ^[0-9]+$ ]]; then
-    byte_count=0
-  fi
-  DETACHED_START_LOG_OFFSET="$byte_count"
+  DETACHED_START_LOG_OFFSET="${log_state%%$'\n'*}"
+  DETACHED_START_LOG_PATH="${log_state#*$'\n'}"
+  [[ "$DETACHED_START_LOG_OFFSET" =~ ^[0-9]+$ && -n "$DETACHED_START_LOG_PATH" ]]
 }
 
 launch_stack_detached() {
@@ -6077,21 +6161,21 @@ launch_stack_detached() {
   fi
 
   local launch_log="$APP_SUPPORT_DIR/logs/helper-start.log"
-  mkdir -p "$(dirname "$launch_log")"
-  capture_detached_start_log_offset "$launch_log"
   local detached_repo_root="${VIVENTIUM_DETACHED_REPO_ROOT:-$REPO_ROOT}"
   local detached_lock_file="${VIVENTIUM_DETACHED_LOCK_FILE:-$LOCK_FILE}"
   local detached_runtime_profile="${VIVENTIUM_RUNTIME_PROFILE:-isolated}"
   local detached_state_root="$APP_SUPPORT_DIR/state/runtime/$detached_runtime_profile"
   local child_pid
-  if ! child_pid="$(
-    "$PYTHON_BIN" - "$launch_log" "$detached_repo_root" "$APP_SUPPORT_DIR" "$CONFIG_FILE" "$RUNTIME_DIR" "$detached_lock_file" "$detached_state_root" "$detached_runtime_profile" "$@" <<'PY'
+  local launch_result
+  if ! launch_result="$(
+    "$PYTHON_BIN" - "$launch_log" "$REPO_ROOT/scripts/viventium" "$detached_repo_root" "$APP_SUPPORT_DIR" "$CONFIG_FILE" "$RUNTIME_DIR" "$detached_lock_file" "$detached_state_root" "$detached_runtime_profile" "$@" <<'PY'
 import os
 import json
 import subprocess
 import sys
 
-launch_log, repo_root, app_support_dir, config_file, runtime_dir, lock_file, state_root, runtime_profile, *extra_args = sys.argv[1:]
+launch_log, log_owner_source, repo_root, app_support_dir, config_file, runtime_dir, lock_file, state_root, runtime_profile, *extra_args = sys.argv[1:]
+sys.dont_write_bytecode = True
 env = os.environ.copy()
 inherit_cli_lock = env.pop("VIVENTIUM_DETACHED_INHERIT_CLI_LOCK", "0") == "1"
 if inherit_cli_lock:
@@ -6264,7 +6348,11 @@ else:
         for token in contract["detached"]["argvTemplate"]
     ]
 
-with open(launch_log, "ab", buffering=0) as log:
+sys.path.insert(0, log_owner_source)
+from pathlib import Path
+from native_runtime import open_private_runtime_log
+with open_private_runtime_log(Path(launch_log)) as (selected_log, log):
+    start_offset = os.fstat(log.fileno()).st_size
     proc = subprocess.Popen(
         cmd,
         cwd=repo_root,
@@ -6276,12 +6364,18 @@ with open(launch_log, "ab", buffering=0) as log:
         env=env,
     )
     print(proc.pid)
+    print(start_offset)
+    print(selected_log)
 PY
   )"; then
-    echo "Unable to launch Viventium: runtime owner command contract validation failed." >&2
+    echo "Unable to launch Viventium: runtime owner command contract or private log validation failed." >&2
     return 1
   fi
-  [[ "$child_pid" =~ ^[0-9]+$ ]] || return 1
+  child_pid="${launch_result%%$'\n'*}"
+  launch_result="${launch_result#*$'\n'}"
+  DETACHED_START_LOG_OFFSET="${launch_result%%$'\n'*}"
+  DETACHED_START_LOG_PATH="${launch_result#*$'\n'}"
+  [[ "$child_pid" =~ ^[0-9]+$ && "$DETACHED_START_LOG_OFFSET" =~ ^[0-9]+$ && -n "$DETACHED_START_LOG_PATH" ]] || return 1
   DETACHED_START_PID="$child_pid"
   echo "Launched Viventium in the background (pid $child_pid)."
 }
@@ -6873,7 +6967,7 @@ wait_for_install_stack_health() {
   local progress_interval="${VIVENTIUM_INSTALL_START_PROGRESS_SECONDS:-15}"
   local inline_render_interval="${VIVENTIUM_INSTALL_START_INLINE_PROGRESS_SECONDS:-0.2}"
   local inline_health_every_ticks=1
-  local launch_log="$APP_SUPPORT_DIR/logs/helper-start.log"
+  local launch_log="${DETACHED_START_LOG_PATH:-$APP_SUPPORT_DIR/logs/helper-start.log}"
   local deadline=$((SECONDS + timeout_seconds))
   local started_at="$SECONDS"
   local next_progress=$((SECONDS + progress_interval))
@@ -6965,14 +7059,15 @@ wait_for_install_stack_health() {
 start_stack_for_install() {
   local helper_grace_seconds="${VIVENTIUM_INSTALL_HELPER_GRACE_SECONDS:-8}"
   local helper_deadline=$((SECONDS + helper_grace_seconds))
-  local launch_log="$APP_SUPPORT_DIR/logs/helper-start.log"
+  local launch_log="${DETACHED_START_LOG_PATH:-$APP_SUPPORT_DIR/logs/helper-start.log}"
   local wait_status=0
 
   # Detached helper/launcher paths need their own CLI lock. Release the install
   # lock before we wait for helper auto-start or submit a detached launch.
   cleanup_cli_lock
   DETACHED_START_PID=""
-  capture_detached_start_log_offset "$launch_log"
+  capture_detached_start_log_offset "$launch_log" || return 1
+  launch_log="${DETACHED_START_LOG_PATH:-$launch_log}"
 
   if install_surfaces_healthy; then
     return 0
@@ -6993,7 +7088,8 @@ start_stack_for_install() {
   fi
 
   if ! user_surface_healthy && ! is_stack_running; then
-    launch_stack_detached
+    launch_stack_detached || return 1
+    launch_log="${DETACHED_START_LOG_PATH:-$launch_log}"
   fi
 
   wait_for_install_stack_health
@@ -7028,7 +7124,7 @@ start_stack_for_install() {
 }
 
 restart_stack_after_upgrade() {
-  local launch_log="$APP_SUPPORT_DIR/logs/helper-start.log"
+  local launch_log="${DETACHED_START_LOG_PATH:-$APP_SUPPORT_DIR/logs/helper-start.log}"
   local timeout_seconds="${VIVENTIUM_INSTALL_START_HEALTH_TIMEOUT_SECONDS:-1800}"
   local wait_status=0
   local waiting_on=""
@@ -7050,6 +7146,7 @@ restart_stack_after_upgrade() {
 
   echo "Restarting Viventium..."
   VIVENTIUM_DETACHED_INHERIT_CLI_LOCK=1 launch_stack_detached
+  launch_log="${DETACHED_START_LOG_PATH:-$launch_log}"
 
   wait_for_upgrade_runtime_health
   wait_status=$?

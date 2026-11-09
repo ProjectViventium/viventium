@@ -754,6 +754,7 @@ def _config_source_path(path_name: str) -> Path | None:
             or candidate in feeling_owners
             or candidate in worker_owners
             or candidate == (LIBRECHAT_ROOT / "packages/api/src/glasshive/conversationOrchestration.ts").resolve()
+            or candidate == (LIBRECHAT_ROOT / "packages/api/src/glasshive/nativeConversationInstructions.ts").resolve()
         )
     ):
         return candidate

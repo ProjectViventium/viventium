@@ -44,6 +44,13 @@ Use stable `PROMPT-NNN` IDs for prompt architecture cases.
   ([heart prompt live sync](reports/2026-06-25-heart-prompt-live-sync.md)); source/live sync and
   string guards passed, but exact-model/user-path eval remains pending.
 
+Runtime arrival check for this case: exercise the actual Main composer, not only the registry
+resolver. Check Web/default, nonscheduled Workbench, Telegram, playground, and admitted Voice for
+one copy of their registered channel contract. A trusted scheduled Workbench request uses the
+canonical scheduled-output contract instead of Web text instructions, even when the caller claims
+a different surface. Verify that late-result evidence duplicates neither channel instructions nor
+the admitted-Call capsule. Source resolution alone cannot prove arrival.
+
 ## `PROMPT-002` - Public-Safe Evidence Record
 
 - Requirement: public QA artifacts must be reproducible and free of secrets, personal data, local paths, raw IDs, and private screenshots.

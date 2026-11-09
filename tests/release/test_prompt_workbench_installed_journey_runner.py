@@ -59,7 +59,7 @@ def test_prompt_workbench_installed_journey_blocks_before_local_access_without_c
 
 def test_runner_is_owned_and_not_claimed_installed() -> None:
     cases = QA_OWNER.read_text(encoding="utf-8")
-    heading = "## PW-049 Complete Installed Prompt Workbench Journey"
+    heading = "## PWB-049 Complete Installed Prompt Workbench Journey"
 
     assert heading in cases
     section = cases.split(heading, 1)[1]

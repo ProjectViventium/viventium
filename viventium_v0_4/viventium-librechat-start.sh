@@ -279,10 +279,11 @@ sys.exit(0 if address.version == 4 and address.is_global else 1)' "${LIVEKIT_NOD
 
 livekit_public_mapping_matches_configured() {
   local container_id="$1"
+  local runtime_kind="${2:-docker}"
   # The pinned native transport discovers WAN mappings when local candidates
   # are retained. Keep the declared public node IP as an assertion, never an
   # implicit replacement. This check runs at startup, not on Voice turns.
-  docker logs "$container_id" 2>&1 | "${PYTHON_BIN:-python3}" -c 'import ipaddress,json,os,sys
+  { if [[ "$runtime_kind" == "native" ]]; then cat "$container_id"; else docker logs "$container_id" 2>&1; fi; } | "${PYTHON_BIN:-python3}" -c 'import ipaddress,json,os,sys
 expected = sys.argv[1]
 raw = sys.stdin.read()
 fd = os.open(sys.argv[2], os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_NOFOLLOW, 0o600)
@@ -302,6 +303,16 @@ for line in raw.splitlines():
     if public == {expected} and data.get("advertiseInternalIP") is True:
         sys.exit(0)
 sys.exit(1)' "$LIVEKIT_NODE_IP" "$LOG_DIR/livekit-startup.log"
+}
+
+run_native_livekit() {
+  # Full-stack startup invokes this only after the edge supplies host certificate paths.
+  VIVENTIUM_APP_SUPPORT_DIR="$VIVENTIUM_APP_SUPPORT_ROOT" \
+    VIVENTIUM_LIVEKIT_CFG_DIR="$VIVENTIUM_STATE_ROOT/livekit" \
+    VIVENTIUM_NATIVE_LIVEKIT_LOG_FILE="$LOG_DIR/livekit-native.log" \
+    VIVENTIUM_NATIVE_LIVEKIT_LATE_START=1 \
+    VIVENTIUM_NATIVE_STACK_SKIP_LIVEKIT=0 \
+    "$VIVENTIUM_CORE_DIR/scripts/viventium/native_stack.sh" "$1"
 }
 
 livekit_managed_container_matches_release() {
@@ -1257,6 +1268,9 @@ if [[ "$USE_PRIVATE_OVERLAY_ENV" == "true" ]]; then
   fi
 fi
 
+# DNS credentials belong only to the Caddy child, resolved from Keychain by the edge helper.
+unset VIVENTIUM_LAN_DNS_TOKEN
+
 # === VIVENTIUM START ===
 # Feature: Use the compiled LibreChat runtime configuration when requested.
 # Purpose: The compiler adds runtime-only service authentication headers that
@@ -1628,6 +1642,11 @@ fi
 # Reason: secure remote-device calls can succeed at HTTPS/WSS signaling while still failing WebRTC
 # ICE if LiveKit advertises only `127.0.0.1` candidates.
 export LIVEKIT_NODE_IP="${LIVEKIT_NODE_IP:-$(detect_livekit_node_ip)}"
+export VIVENTIUM_LIVEKIT_RUNTIME="${VIVENTIUM_LIVEKIT_RUNTIME:-docker}"
+case "$VIVENTIUM_LIVEKIT_RUNTIME" in
+  docker|native) ;;
+  *) log_error "VIVENTIUM_LIVEKIT_RUNTIME must be docker or native"; exit 1 ;;
+esac
 # === VIVENTIUM END ===
 # Default agent name for LiveKit dispatch (preserve explicit empty if desired)
 export LIVEKIT_AGENT_NAME="${LIVEKIT_AGENT_NAME-viventium}"
@@ -2254,7 +2273,7 @@ export VIVENTIUM_PLAYGROUND_SOURCE_REF="$PLAYGROUND_SOURCE_REF"
 
 # Service enable/disable flags (env overrides)
 START_GOOGLE_MCP="${START_GOOGLE_MCP:-true}"
-START_MS365_MCP="${START_MS365_MCP:-true}"
+START_MS365_MCP="${START_MS365_MCP:-false}"
 START_SCHEDULING_MCP="${START_SCHEDULING_MCP:-true}"
 START_GLASSHIVE="${START_GLASSHIVE:-true}"
 START_RAG_API="${START_RAG_API:-true}"
@@ -2272,8 +2291,8 @@ START_TELEGRAM="${START_TELEGRAM:-true}"
 START_TELEGRAM_CODEX="${START_TELEGRAM_CODEX:-false}"
 TELEGRAM_BACKEND="${VIVENTIUM_TELEGRAM_BACKEND:-librechat}"
 START_CODE_INTERPRETER="${START_CODE_INTERPRETER:-true}"
-START_SEARXNG="${START_SEARXNG:-true}"
-START_FIRECRAWL="${START_FIRECRAWL:-true}"
+START_SEARXNG="${START_SEARXNG:-false}"
+START_FIRECRAWL="${START_FIRECRAWL:-false}"
 START_PROMPT_WORKBENCH="${START_PROMPT_WORKBENCH:-${VIVENTIUM_PROMPT_WORKBENCH_ENABLED:-false}}"
 if truthy_env_value "$START_PROMPT_WORKBENCH"; then
   START_PROMPT_WORKBENCH=true
@@ -2378,6 +2397,7 @@ mkdir -p "$LOG_DIR"
 CLEANUP_ENABLED=false
 STARTUP_HANDOFF_COMPLETE=false
 LIVEKIT_STARTED_BY_SCRIPT=false
+NATIVE_LIVEKIT_STARTED_BY_SCRIPT=false
 LIBRECHAT_STARTED_BY_SCRIPT=false
 PLAYGROUND_STARTED_BY_SCRIPT=false
 VOICE_GATEWAY_STARTED_BY_SCRIPT=false
@@ -4090,6 +4110,7 @@ parallel_work_runtime_instance() {
 # proxies are attached to that network by GlassHive after their immutable
 # substrate has been attested.
 configure_parallel_work_proxy_substrate() {
+  export GLASSHIVE_RUNTIME_PORT
   local instance
   instance="$(parallel_work_runtime_instance)"
 
@@ -6117,12 +6138,17 @@ ensure_mongodb_ready() {
     return 1
   fi
 
-  if [[ "$SKIP_DOCKER" == "true" ]]; then
+  if [[ "${VIVENTIUM_INSTALL_MODE:-docker}" == "native" ]]; then
+    if ! VIVENTIUM_APP_SUPPORT_DIR="$VIVENTIUM_APP_SUPPORT_ROOT" \
+      VIVENTIUM_NATIVE_STACK_SKIP_LIVEKIT=1 \
+      VIVENTIUM_NATIVE_STACK_SKIP_MEILI=1 \
+      "$VIVENTIUM_CORE_DIR/scripts/viventium/native_stack.sh" start; then
+      return 1
+    fi
+  elif [[ "$SKIP_DOCKER" == "true" ]]; then
     log_error "MongoDB not reachable and --skip-docker is enabled"
     return 1
-  fi
-
-  if ! start_local_mongodb_container; then
+  elif ! start_local_mongodb_container; then
     if ! start_local_mongodb_native; then
       return 1
     fi
@@ -6912,6 +6938,9 @@ PY
 }
 
 clear_remote_call_runtime_exports() {
+  unset VIVENTIUM_LAN_PLAYGROUND_URL
+  unset VIVENTIUM_LAN_IP
+  unset VIVENTIUM_LAN_LIVEKIT_URL
   unset VIVENTIUM_PUBLIC_CLIENT_URL
   unset VIVENTIUM_PUBLIC_SERVER_URL
   unset VIVENTIUM_PUBLIC_PLAYGROUND_URL
@@ -7083,6 +7112,11 @@ prepare_remote_call_access() {
     --client-port "$client_port"
     --api-port "$api_port"
   )
+  if [[ "${VIVENTIUM_LAN_HTTPS:-false}" == "true" ]]; then
+    helper_args+=(--lan-https
+      --lan-playground-https-port "${VIVENTIUM_LAN_PLAYGROUND_HTTPS_PORT:-8443}"
+      --lan-livekit-https-port "${VIVENTIUM_LAN_LIVEKIT_HTTPS_PORT:-8444}")
+  fi
   if [[ -n "$playground_port" ]]; then
     helper_args+=(--playground-port "$playground_port")
   fi
@@ -7132,9 +7166,21 @@ prepare_remote_call_access() {
     return 0
   fi
 
+  if is_truthy "$(json_state_value "$state_json" "lan_only")"; then
+    clear_remote_call_runtime_exports
+    log_warn "Public access is unavailable. Verified local network call access is available."
+  fi
   public_client_url="$(json_state_value "$state_json" "public_client_url")"
   public_api_url="$(json_state_value "$state_json" "public_api_url")"
   public_playground_url="$(json_state_value "$state_json" "public_playground_url")"
+  local lan_playground_url lan_livekit_url
+  lan_playground_url="$(json_state_value "$state_json" "lan_playground_url")"
+  lan_livekit_url="$(json_state_value "$state_json" "lan_livekit_url")"
+  if [[ -n "$lan_playground_url" && -n "$lan_livekit_url" && -n "${VIVENTIUM_LAN_DOMAIN:-}" ]]; then
+    export VIVENTIUM_LAN_IP="$(json_state_value "$state_json" "lan_ip")"
+    export VIVENTIUM_LAN_PLAYGROUND_URL="$lan_playground_url"
+    export VIVENTIUM_LAN_LIVEKIT_URL="$lan_livekit_url"
+  fi
   public_livekit_url="$(json_state_value "$state_json" "public_livekit_url")"
   public_glasshive_url="$(json_state_value "$state_json" "public_glasshive_url")"
   livekit_node_ip="$(json_state_value "$state_json" "livekit_node_ip")"
@@ -7255,6 +7301,37 @@ remote_call_mapping_refresh_pid_is_running() {
   return 0
 }
 
+# The existing edge owner also reconciles native LAN bindings after a network change.
+# Publish readiness only after Caddy/DNS and LiveKit agree; API consumers read that identity.
+publish_remote_call_lan_ready() {
+  [[ -n "${VIVENTIUM_LAN_IP:-}" ]] || return 0
+  "$PYTHON_BIN" "$VIVENTIUM_REMOTE_CALL_TUNNEL_SCRIPT" lan-ready \
+    --state-file "$VIVENTIUM_PUBLIC_NETWORK_STATE_FILE" --lan-ip "$VIVENTIUM_LAN_IP" || return 1
+  VIVENTIUM_LAN_RUNTIME_READY=true
+}
+
+reconcile_remote_call_lan() {
+  [[ "${VIVENTIUM_LAN_HTTPS:-false}" == "true" && "${VIVENTIUM_LIVEKIT_RUNTIME:-docker}" == "native" ]] || return 0
+  [[ "$SKIP_LIVEKIT" != "true" && "$LIVEKIT_API_HOST_WAS_CONFIGURED" != "true" ]] || return 0
+  local current_ip
+  current_ip="$(VIVENTIUM_LAN_IP= native_livekit_lan_ip)" || return 1
+  [[ "$current_ip" != "${last_reconciled_lan_ip:-}" || "${VIVENTIUM_LAN_RUNTIME_READY:-false}" != "true" ]] || return 0
+  log_info "Network changed; reconciling local call access"
+  # The edge must discard the old node override before discovering its new network.
+  VIVENTIUM_LAN_RUNTIME_READY=false
+  unset VIVENTIUM_LAN_IP VIVENTIUM_LAN_PLAYGROUND_URL VIVENTIUM_LAN_LIVEKIT_URL LIVEKIT_NODE_IP
+  prepare_remote_call_access
+  [[ "${VIVENTIUM_LAN_IP:-}" == "$current_ip" ]] || return 1
+  run_native_livekit stop-livekit-only || return 1
+  (umask 077; write_livekit_config "$VIVENTIUM_STATE_ROOT/livekit/livekit.yaml" \
+    "${LIVEKIT_TURN_CERT_FILE:-}" "${LIVEKIT_TURN_KEY_FILE:-}") || return 1
+  run_native_livekit start-livekit-only || return 1
+  wait_for_http "$LIVEKIT_API_HOST" "LiveKit" || return 1
+  publish_remote_call_lan_ready || return 1
+  last_reconciled_lan_ip="$current_ip"
+  log_success "Local call access follows the current network"
+}
+
 start_remote_call_mapping_refresh_worker() {
   if validation_runtime_is_quiesced; then
     return 0
@@ -7265,7 +7342,7 @@ start_remote_call_mapping_refresh_worker() {
   if [[ ! -f "$VIVENTIUM_REMOTE_CALL_TUNNEL_SCRIPT" || ! -f "$VIVENTIUM_PUBLIC_NETWORK_STATE_FILE" ]]; then
     return 0
   fi
-  if ! remote_call_mapping_state_supports_refresh; then
+  if [[ "${VIVENTIUM_LAN_HTTPS:-false}" != "true" ]] && ! remote_call_mapping_state_supports_refresh; then
     return 0
   fi
   if remote_call_mapping_refresh_pid_is_running; then
@@ -7279,11 +7356,25 @@ start_remote_call_mapping_refresh_worker() {
 
   mkdir -p "$(dirname "$VIVENTIUM_REMOTE_CALL_MAPPING_REFRESH_LOG_FILE")"
   (
+    last_reconciled_lan_ip="${VIVENTIUM_LAN_IP:-}"
+    next_mapping_refresh=$((SECONDS + refresh_seconds))
+    next_sleep="$refresh_seconds"
+    [[ "${VIVENTIUM_LAN_HTTPS:-false}" == "true" ]] && next_sleep=15
     while true; do
-      sleep "$refresh_seconds"
-      "$PYTHON_BIN" "$VIVENTIUM_REMOTE_CALL_TUNNEL_SCRIPT" refresh-mappings \
-        --state-file "$VIVENTIUM_PUBLIC_NETWORK_STATE_FILE" \
-        >/dev/null 2>>"$VIVENTIUM_REMOTE_CALL_MAPPING_REFRESH_LOG_FILE" || true
+      sleep "$next_sleep"
+      reconcile_remote_call_lan >>"$VIVENTIUM_REMOTE_CALL_MAPPING_REFRESH_LOG_FILE" 2>&1 || true
+      if (( SECONDS >= next_mapping_refresh )); then
+        if "$PYTHON_BIN" "$VIVENTIUM_REMOTE_CALL_TUNNEL_SCRIPT" refresh-mappings \
+          --state-file "$VIVENTIUM_PUBLIC_NETWORK_STATE_FILE" \
+          >/dev/null 2>>"$VIVENTIUM_REMOTE_CALL_MAPPING_REFRESH_LOG_FILE"; then
+          next_mapping_refresh=$((SECONDS + refresh_seconds))
+        else
+          next_mapping_refresh=$((SECONDS + 60))
+        fi
+      fi
+      next_sleep=$((next_mapping_refresh - SECONDS))
+      (( next_sleep > 0 )) || next_sleep=1
+      [[ "${VIVENTIUM_LAN_HTTPS:-false}" == "true" ]] && next_sleep=15
     done
   ) &
   echo "$!" >"$VIVENTIUM_REMOTE_CALL_MAPPING_REFRESH_PID_FILE"
@@ -7860,6 +7951,10 @@ stop_running_services() {
     if [[ -n "$livekit_containers" ]]; then
       docker rm -f $livekit_containers >/dev/null 2>&1 || true
     fi
+  fi
+
+  if [[ -e "${VIVENTIUM_STATE_ROOT:-}/livekit/livekit.pid" || -e "${VIVENTIUM_STATE_ROOT:-}/livekit/livekit.runtime.env" ]]; then
+    run_native_livekit stop-livekit-only || return 1
   fi
 
   if ! stop_recorded_native_mongo_engine; then
@@ -8897,17 +8992,50 @@ start_prompt_workbench_watchdog() {
   log_info "Started Prompt Workbench watchdog (pid: $watchdog_pid, interval: ${interval_s}s)"
 }
 
+native_livekit_lan_ip() {
+  # Reuse the edge's detector and assigned-address proof, including without LAN HTTPS.
+  "${PYTHON_BIN:-python3}" - "$VIVENTIUM_REMOTE_CALL_TUNNEL_SCRIPT" "${VIVENTIUM_LAN_IP:-}" <<'PY'
+import ipaddress, runpy, sys
+edge = runpy.run_path(sys.argv[1])
+candidate = sys.argv[2] or edge["detect_lan_ipv4"]()
+try:
+    address = ipaddress.ip_address(candidate)
+except ValueError:
+    raise SystemExit("Native LiveKit requires an assigned private LAN IPv4 address")
+networks = ("10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16")
+if address.version != 4 or not any(address in ipaddress.ip_network(n) for n in networks) or candidate not in edge["assigned_local_ipv4s"]():
+    raise SystemExit("Native LiveKit LAN address is unavailable or no longer assigned; repair the network and restart")
+print(address)
+PY
+}
+
 write_livekit_config() {
   local config_file="$1"
   local turn_cert_file="$2"
   local turn_key_file="$3"
+  local native_lan_ip=""
+  if [[ "${VIVENTIUM_LIVEKIT_RUNTIME:-docker}" == "native" ]]; then
+    native_lan_ip="$(native_livekit_lan_ip)" || return 1
+  fi
 
   cat > "$config_file" <<EOF
 port: ${LIVEKIT_HTTP_PORT}
+EOF
+  if [[ -n "$native_lan_ip" ]]; then
+    printf 'bind_addresses: ["127.0.0.1", "::1"]\n' >> "$config_file"
+  fi
+  cat >> "$config_file" <<EOF
 rtc:
   tcp_port: ${LIVEKIT_TCP_PORT}
   udp_port: ${LIVEKIT_UDP_PORT}
 EOF
+  if [[ -n "$native_lan_ip" ]]; then
+    cat >> "$config_file" <<EOF
+  ips:
+    includes: ["${native_lan_ip}/32"]
+  enable_loopback_candidate: false
+EOF
+  fi
 
   if livekit_public_node_ip_configured; then
     # LiveKit 1.13.4 only retains internal candidates in native external-IP
@@ -8917,8 +9045,10 @@ EOF
   use_external_ip: true
   advertise_internal_ip: true
   skip_external_ip_validation: true
-  enable_loopback_candidate: true
 EOF
+    if [[ -z "$native_lan_ip" ]]; then
+      printf '  enable_loopback_candidate: true\n' >> "$config_file"
+    fi
   fi
 
   if [[ -n "${LIVEKIT_TURN_DOMAIN:-}" && -n "${LIVEKIT_TURN_TLS_PORT:-}" && -n "$turn_cert_file" && -n "$turn_key_file" ]]; then
@@ -8930,6 +9060,12 @@ turn:
   cert_file: "${turn_cert_file}"
   key_file: "${turn_key_file}"
 EOF
+    if [[ -n "$native_lan_ip" ]]; then
+      cat >> "$config_file" <<EOF
+  bind_addresses: ["${native_lan_ip}"]
+  allow_restricted_peer_cidrs: []
+EOF
+    fi
   fi
 
   cat >> "$config_file" <<EOF
@@ -9903,6 +10039,9 @@ cleanup() {
   if [[ "$SKIP_DOCKER" != "true" && "$LIVEKIT_STARTED_BY_SCRIPT" == "true" && -n "${LIVEKIT_CONTAINER_ID:-}" ]]; then
     docker rm -f "${LIVEKIT_CONTAINER_ID}" >/dev/null 2>&1 || true
   fi
+  if [[ "$NATIVE_LIVEKIT_STARTED_BY_SCRIPT" == "true" ]]; then
+    run_native_livekit stop-livekit-only || true
+  fi
   stop_recorded_native_mongo_engine || return 1
   if [[ "$MEILI_NATIVE_STARTED_BY_SCRIPT" == "true" && -f "$MEILI_NATIVE_PID_FILE" ]]; then
     local meili_native_pid
@@ -10511,6 +10650,7 @@ start_glasshive() {
 
   # Host workers read context beyond the inline budget through this owned runtime.
   export GLASSHIVE_PEER_RUNTIME_BASE_URL="${GLASSHIVE_PEER_RUNTIME_BASE_URL:-http://127.0.0.1:${GLASSHIVE_RUNTIME_PORT}}"
+  export GLASSHIVE_DOCKER_RUNTIME_BASE_URL="${GLASSHIVE_DOCKER_RUNTIME_BASE_URL:-http://host.docker.internal:8080}"
 
   local runtime_log mcp_log ui_log
   runtime_log="$(viventium_preserve_runtime_log "$LOG_DIR/glasshive_runtime.log")" || return 1
@@ -12355,6 +12495,7 @@ PY
     VIVENTIUM_TELEGRAM_HOLDING_TAIL_TIMEOUT_S
     VIVENTIUM_TELEGRAM_TAIL_TIMEOUT_S
     VIVENTIUM_TELEGRAM_CALL_LINK_CACHE_TTL_S
+    VIVENTIUM_LAN_DOMAIN
     VIVENTIUM_TELEGRAM_DEFAULT_TIMEZONE
     VIVENTIUM_TELEGRAM_INCLUDE_CORTEX_INSIGHTS
     VIVENTIUM_TELEGRAM_INSIGHT_FALLBACK
@@ -13044,6 +13185,11 @@ ensure_restart_livekit_prerequisite() {
       log_error "Restart refused: configured LiveKit endpoint is unavailable. Repair LIVEKIT_API_HOST and retry; current services were kept."
       return 1
     fi
+  elif [[ "${VIVENTIUM_LIVEKIT_RUNTIME:-docker}" == "native" ]]; then
+    if ! run_native_livekit prepare-livekit-only; then
+      log_error "Restart refused: the pinned native LiveKit artifact is unavailable; current services were kept."
+      return 1
+    fi
   elif [[ "$SKIP_DOCKER" == "true" ]] || ! ensure_docker_daemon_for_service "LiveKit"; then
     log_error "Restart refused: managed LiveKit requires Docker. Start Docker Desktop and retry; current services were kept."
     return 1
@@ -13106,6 +13252,18 @@ if [[ "$SKIP_PLAYGROUND" != "true" ]]; then
   fi
 fi
 
+# A Mac can start before Wi-Fi has an address. Keep the core usable and
+# leave the LAN media boundary closed until a start on the new network.
+if [[ "$SKIP_LIVEKIT" != "true" && "${VIVENTIUM_LIVEKIT_RUNTIME:-docker}" == "native" && "$LIVEKIT_API_HOST_WAS_CONFIGURED" != "true" ]]; then
+  if ! native_livekit_lan_ip >/dev/null; then
+    log_warn "Voice is unavailable until a private LAN address is assigned. Chat will start. Restart Viventium after connecting to the network to enable calls."
+    SKIP_LIVEKIT=true
+    SKIP_PLAYGROUND=true
+    SKIP_VOICE_GATEWAY=true
+    export VIVENTIUM_VOICE_ENABLED=false
+  fi
+fi
+
 prepare_remote_call_access
 
 export LIVEKIT_NODE_IP="${LIVEKIT_NODE_IP:-$(detect_livekit_node_ip)}"
@@ -13118,17 +13276,41 @@ if [[ -n "${VIVENTIUM_PUBLIC_CLIENT_URL:-}" || -n "${VIVENTIUM_PUBLIC_PLAYGROUND
   [[ -n "${VIVENTIUM_PUBLIC_LIVEKIT_URL:-}" ]] && echo -e "  LiveKit:     ${GREEN}${VIVENTIUM_PUBLIC_LIVEKIT_URL}${NC}"
   [[ -n "${VIVENTIUM_PUBLIC_GLASSHIVE_URL:-}" ]] && echo -e "  GlassHive:   ${GREEN}${VIVENTIUM_PUBLIC_GLASSHIVE_URL}${NC}"
 fi
-start_remote_call_mapping_refresh_worker
 
 # ----------------------------
-# LiveKit server (Docker)
+# LiveKit server (explicit managed runtime, or configured external endpoint)
 # ----------------------------
 # === VIVENTIUM START ===
 # Feature: Idempotent LiveKit startup (reuse container, avoid mid-session restarts)
 # Added: 2026-01-11
 # === VIVENTIUM END ===
+VIVENTIUM_LIVEKIT_RUNTIME="${VIVENTIUM_LIVEKIT_RUNTIME:-docker}"
 if [[ "$SKIP_LIVEKIT" != "true" ]]; then
-  if [[ "$SKIP_DOCKER" == "true" ]]; then
+  if [[ "$VIVENTIUM_LIVEKIT_RUNTIME" == "native" && "$LIVEKIT_API_HOST_WAS_CONFIGURED" != "true" ]]; then
+    LIVEKIT_CFG_DIR="$VIVENTIUM_STATE_ROOT/livekit"
+    mkdir -p "$LIVEKIT_CFG_DIR"
+    LIVEKIT_CFG="$LIVEKIT_CFG_DIR/livekit.yaml"
+    if ! (umask 077; write_livekit_config "$LIVEKIT_CFG" "${LIVEKIT_TURN_CERT_FILE:-}" "${LIVEKIT_TURN_KEY_FILE:-}"); then
+      log_error "Native LiveKit configuration could not prove its LAN interface; no server was started."
+      exit 1
+    fi
+    native_livekit_result="$(run_native_livekit start-livekit-only)" || {
+      log_error "Pinned native LiveKit startup failed; no Docker or PATH fallback was attempted."
+      exit 1
+    }
+    printf '%s\n' "$native_livekit_result"
+    if [[ "$native_livekit_result" == *"VIVENTIUM_NATIVE_LIVEKIT_STARTED=1"* ]]; then
+      NATIVE_LIVEKIT_STARTED_BY_SCRIPT=true
+    fi
+    if ! wait_for_http "$LIVEKIT_API_HOST" "LiveKit"; then
+      log_error "Native LiveKit did not respond; check the native LiveKit log."
+      exit 1
+    fi
+    if livekit_public_node_ip_configured && ! livekit_public_mapping_matches_configured "$LOG_DIR/livekit-native.log" native; then
+      log_error "Native LiveKit WAN discovery did not match the configured node IP."
+      exit 1
+    fi
+  elif [[ "$SKIP_DOCKER" == "true" ]]; then
     if [[ "$LIVEKIT_API_HOST_WAS_CONFIGURED" != "true" ]]; then
       log_error "No external LiveKit endpoint was configured and --skip-docker is enabled."
       log_error "Configure LIVEKIT_API_HOST or use --skip-livekit to start without Voice."
@@ -14191,6 +14373,10 @@ fi
 STARTUP_HANDOFF_COMPLETE=true
 clear_runtime_start_claim_after_handoff
 prewarm_remote_call_access
+if [[ "$SKIP_LIVEKIT" != "true" ]]; then
+  publish_remote_call_lan_ready || log_warn "Local calls are waiting for network readiness"
+fi
+start_remote_call_mapping_refresh_worker
 
 echo ""
 if detached_start_requested; then

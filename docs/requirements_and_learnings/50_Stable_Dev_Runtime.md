@@ -102,6 +102,12 @@ confusing upstream component boundaries.
   uses the existing Developer ID release path. Protected-folder opt-in selects the checkout; it does
   not grant macOS access. Keep the selected checkout and complete its normal narrow folder consent.
   See [Apple's code identity guidance](https://developer.apple.com/documentation/technotes/tn3127-inside-code-signing-requirements).
+  A bundle-only refresh pauses the validated native job before retiring a running helper, so
+  KeepAlive cannot reload the old executable during activation. After commit it restores that
+  exact job once; it does not also open a second helper. Failed activation restores the old bundle
+  before its job resumes. An initially stopped helper remains stopped. Acceptance compares the
+  running process's mapped executable identity with the installed candidate, not just its path.
+  Normal installer launch reuses the same validated native owner instead of opening a second helper.
 
 
 - Telegram recovery keeps the existing owner chain: bot watchdog for ordinary process loss,
@@ -143,10 +149,30 @@ confusing upstream component boundaries.
   supported restart at a proven idle window; do not interrupt active work with periodic healthy
   restarts or claim automatic hot re-enable. Initial deferred Redis handoff still restores the
   flags before Core starts when readiness arrives within its existing bounded window.
+- Whole-runtime automatic repair currently uses the declared owners for the API, frontend,
+  required playground, Telegram, xPerfect, scheduling and Voice gateway. Other enabled sidecars
+  report attention and retain their existing scoped startup or recovery owners; their failed
+  readiness alone does not authorize replacing the healthy conversation runtime. An explicit
+  operator restart remains separate from automatic repair.
 - Managed readiness checks include the configured xPerfect and Voice gateway endpoints. Each
   endpoint uses its own health/protocol status contract; HTTP503 is unready, but remains reachable
   when checking whether an owned local service has stopped. Remote dependencies are excluded from
   Stop completion. Native releases do not infer developer-only ports.
+- When either active Redis flag is enabled, managed readiness and CLI status require a bounded
+  command reply from the configured Redis endpoint. A private Unix socket takes precedence over
+  a TCP URI; disabled Redis needs no probe. An open port, a live bot, and successful Core HTTP
+  health do not prove this dependency ready. Failure shows attention while the existing live
+  services retain their recovery ownership; it does not authorize a Core or bot restart. The
+  probe changes no stored data. PING proves command availability, while each real intake or
+  delivery operation still proves its own durable write and acknowledgement.
+  The helper retains the same snapshot's local process/reachability facts. If those local
+  services remain alive, dependency attention ends that supervision pass before recording a
+  launch attempt or submitting a restart. An actually missing local service retains the existing
+  owner-bound recovery path.
+  Durable stream clients default to unlimited connection reconnection attempts, so a recovered
+  Redis can rejoin through the existing connection. Explicit finite overrides remain valid;
+  the per-request retry limit remains three. This reconnect policy does not bound a connected
+  server that accepts traffic but does not answer commands.
 - Explicit Start/Stop writes a new intent revision under one short helper-config lock. Observed
   health/backoff writes require the same current intent revision and approved runtime binding.
   A later Stop or repeated Start therefore wins over an older asynchronous completion; settings
@@ -372,6 +398,12 @@ active runtime reports the sidecar as ready.
   atomically restores the selected runtime's PID receipt for an exact MongoDB, Meilisearch, or
   metadata-aligned LiveKit listener, including over a stale receipt. Zero, multiple, or foreign
   listener PIDs fail closed; a healthy port alone is never adoption authority.
+- After launcher restart stops a local MongoDB, native installs restore it through the existing
+  native stack owner using the selected runtime's data and engine policy. This database readiness
+  step skips Meilisearch and LiveKit; their own startup paths retain control. `--skip-docker`
+  continues to prevent Docker startup and does not prevent the selected native database from
+  returning. Native owner failure cannot fall back to a different engine. External database
+  endpoints and already-ready local databases retain their existing behavior.
 
 ## Do And Do Not
 

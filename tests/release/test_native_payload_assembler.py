@@ -548,6 +548,26 @@ def load_native_assembler(monkeypatch):
     return module
 
 
+def test_publisher_reads_only_committed_life_template(tmp_path, monkeypatch):
+    assembler = load_native_assembler(monkeypatch)
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    git = ["git", "-C", str(repo), "-c", "user.name=Fixture", "-c", "user.email=qa@example.com",
+           "-c", "core.hooksPath=/dev/null"]
+    subprocess.run([*git, "init", "-q"], check=True)
+    template = repo / "templates/life-v0.01"
+    file(template / "README.md", "committed template")
+    subprocess.run([*git, "add", "--", "templates"], check=True)
+    subprocess.run([*git, "commit", "-qm", "fixture"], check=True)
+    revision = subprocess.check_output([*git, "rev-parse", "HEAD"], text=True).strip()
+    file(template / "README.md", "changed on producer")
+    file(template / "private-fixture.md", "untracked on producer")
+    output = tmp_path / "output"
+    assembler.stage_committed_life_template(repo, output, revision, 1700000000)
+    assert (output / "README.md").read_text() == "committed template"
+    assert not (output / "private-fixture.md").exists()
+
+
 def load_native_installer(monkeypatch):
     monkeypatch.syspath_prepend(str(NATIVE_INSTALLER.parent))
     spec = importlib.util.spec_from_file_location("native_installer_under_test", NATIVE_INSTALLER)
@@ -2580,6 +2600,8 @@ def test_native_glasshive_path_resolves_the_host_admission_probes(tmp_path, monk
     # GlassHive admits host work only after its process, memory and disk probes succeed.
     probes = ("ps", "sysctl", "df") + (("vm_stat",) if sys.platform == "darwin" else ())
     assert [name for name in probes if shutil.which(name, path=env["PATH"]) is None] == []
+
+
 
 
 def test_native_glasshive_socket_is_private_before_server_start(tmp_path):

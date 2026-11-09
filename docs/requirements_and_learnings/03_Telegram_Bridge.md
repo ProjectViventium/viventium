@@ -22,6 +22,10 @@ not select the main Viventium Telegram bridge's model.
 - Typing belongs only to an admitted foreground presentation. Never use a typing action as a
   blocked-account probe. Start and stop boundaries are logged without enabling detailed telemetry.
   A retained terminal input must settle its presentation receipt instead of reclaiming forever.
+  A saved unsupported Native interruption has a typed terminal error and no replay snapshot.
+  Its exact owned failed acknowledgement settles the existing ingress; a missing snapshot alone
+  does not turn it into a transient retry. Source, response, turn, revision and active-job fences
+  still apply.
   Recovery polling starts no indicator until Core returns the exact presentation or logical turn.
   That recovered presentation must also pass the existing durable current-source check; an authentic
   old binding alone cannot show activity after a restart or conversation change.
@@ -234,6 +238,10 @@ not select the main Viventium Telegram bridge's model.
   checks. A changed or unavailable provider route remains an unavailable attachment; it does not
   trigger an alternate public fetch. Transport diagnostics retain only request hash, status,
   duration and a bounded error class, without URL, headers, credentials or response body.
+- An incoming album keeps every distinct authored caption in source order, with exact wording and
+  whitespace. Bind each caption to its attachment's upload index, including repeated filenames.
+  Keep transcripts ordered after their own source. Never replace later captions with the first
+  album caption or rewrite them into a generated task.
 - Authored captions must survive native media formatting on both the current turn and retained
   history. Known inline native media uses the existing hydrated media carrier, preserving bytes and
   distinct items while avoiding exact duplicate hydration. Unknown content stays available for
@@ -261,6 +269,14 @@ not select the main Viventium Telegram bridge's model.
   SSE publication, and replay storage are not delivery acknowledgements. Ordinary completion TTL,
   cleanup, and terminal bookkeeping must preserve an unacknowledged adapter-owned FINAL. An exact
   committed acknowledgement permits normal expiry; explicit retirement still fences stale output.
+- An authenticated Telegram SSE subscription with a live local generation producer sends a
+  transport comment every 15 seconds
+  while generation is quiet. Comments are not reply text or proof of model progress. They prevent
+  a healthy quiet connection from exhausting the bridge's read-idle timeout; generation deadlines,
+  authorization and terminal errors remain unchanged. Close, finish and write failure release the
+  timer; a terminal event or loss of the exact producer also stops comments, leaving the existing
+  read-idle failure bound intact. Reconnect-only facades cannot prove producer liveness.
+  Backpressure does not accumulate comments.
 - Successful LibreChat stream jobs must remain available briefly after completion so Telegram retry
   or resume can recover the final event. A late reconnect after a completed response must not become
   a synthetic generic connection error just because the generation job was deleted immediately.
@@ -307,6 +323,12 @@ markup do not persist in Telegram chat history. Semantic bubbles are separate Te
 messages, but they do not create duplicate conversation records or background turns. Long-message
 transport splitting still applies independently. If audio is delivered, the clean logical answer
 is synthesized once and attached once, to the final bubble; no fake typing delays are added.
+
+Scheduled conversational results follow this same text-first contract. Each text transport part and
+its optional final audio part uses a separate existing scheduler delivery receipt. A replay reuses
+confirmed receipts, resumes only an unclaimed part, and stops at an uncertain send. Audio skipped
+before sending or explicitly rejected does not discard delivered text. Existing legacy receipts are
+retained without appending a second audio message during replay. Status notices remain text only.
 
 Native xPerfect public parts may carry model-owned audio choices as complete UTF-16
 `deliveryDispositionRanges` on the canonical final `responseMessage.content` text parts.
@@ -580,6 +602,17 @@ Prompt-layer ownership and the runtime-vs-prompt boundary are also recorded in
     stripped before xAI synthesis
   - OpenAI/ElevenLabs fallbacks still strip all provider markup before synthesis
 - `/call` should open the browser into the modern voice surface using a browser-facing URL.
+- `/call` offers **Other Wi-Fi or mobile data** and, when LAN HTTPS is configured, **Same Wi-Fi**.
+  The helper’s **Call on this Mac…** is the separate same-computer entry.
+  The LAN choice uses the hosting computer's detected private IP and works from another device on
+  that network. A configured trusted LAN hostname needs no client setup; the optional raw-IP local-CA
+  variant requires explicit client trust. Never send a loopback address as a phone/LAN choice.
+  `/call lan` and `/call local` select only this route. Both choices share one signed call launch.
+  An unavailable LAN route produces an honest setup message without a dead button.
+- Call-link retrieval runs outside the Telegram event loop. A rejected optional LAN button cannot
+  suppress the public button. LAN URLs require HTTPS, an explicit port and either a private IPv4
+  address or the exact configured trusted LAN hostname bound to the current host address,
+  without embedded credentials; the host verifies that the address is currently assigned.
 - `/call` requires the selected canonical agent to pass the same global Agents `USE` and resource
   `VIEW` checks as normal Agents chat before a call link is issued.
 - The link carries a single-use `call_browser_launch_v1` bearer only in its fragment. The browser
@@ -914,9 +947,19 @@ attachment-processing error rather than silently dropping to caption-only behavi
 
 Inbound Telegram file handling is surface-parity work, not a narrow extension allowlist. The bot
 must accept photos, Telegram `Document` uploads, audio uploads, and regular video uploads into the
-same attachment contract before the LibreChat turn starts. Voice notes and video notes remain STT
-inputs; regular audio/video files are attachments unless the user explicitly sends them through the
-voice-note affordance.
+same attachment contract before the LibreChat turn starts. Voice notes use speech transcription.
+A round video note or MP4 upload uses the selected speech recognizer and prepares one timestamped
+JPEG grid from the same download. MP4 works through both Telegram's video and file upload modes.
+FFmpeg samples the clip locally. Main receives the existing image attachment, transcript and any
+authored caption in one turn. Telegram retains the original video on its source message. Other
+video containers and regular audio uploads use the generic attachment path.
+
+Frame samples run in chronological order. Their density adapts to clip length so the grid stays
+readable. The image goes to the selected vision route with the same owner and source as the note.
+A silent clip or a clip without an audio track can reach Main through its frames. A usable
+transcript or grid survives failure of the other part, with a short notice on the original message.
+In an album, transcripts and grids retain upload order. The existing preparation receipt reuses
+committed text and attachments on recovery.
 
 Trusted bridge images are already visual inputs. JPEG, PNG, and other supported image uploads must
 not be rejected because a text document parser cannot extract text from them. The upload service
@@ -925,6 +968,27 @@ conversation bundle. A worker run receives real materialized files, not attachme
 When Telegram assigns the same filename to several album photos, durable file ID owns resolution;
 filename fallback is allowed only when no durable file ID exists. Cross-owner and ambiguous matches
 fail closed.
+
+Fresh native vision input uses the current accepted source boundary. Photos from earlier messages
+remain available as historical files and retained context; they must not be appended to every new
+turn as if newly sent. A new photo after an older photo, or a text-only reply after one, must keep
+that distinction. Combined current sources and albums retain their original image order.
+
+Historical file preservation must not consume the current model invocation's image-batch budget.
+Accumulated valid photos remain readable through existing file owners without making a later text
+turn or new photo fail before admission. This includes fresh-session reconstruction, not only a
+warm session that still has old files on disk. Keep malformed-current-input rejection explicit.
+
+A background handoff preserves the accepted original request and every authorized selected file
+reference. A long conversation must not inherit a separate courier file-count ceiling. The
+xPerfect application boundary contract owns file validation and capacity. Recovery retries the
+existing unbound goal through its supported control; it must not create a replacement goal, rewrite
+the request or reset stored state.
+
+Native reload must preserve invocation ownership. An older draining executor must not claim a turn
+whose usable process-local grant belongs to a newer executor. Queued work waits for its authorized
+invocation context; missing context cannot fall back to a stored bearer. The existing native grant
+and restart owners govern recovery, while Telegram retains one result and delivery receipt per source.
 
 Telegram media groups/albums are one user turn. The bridge must coalesce updates with the same
 `media_group_id` for the same chat/thread/user, preserve the Telegram order, choose the

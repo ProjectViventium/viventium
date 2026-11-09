@@ -104,6 +104,9 @@ viventium_v0_3_py/viventium_v1/storage/memory/**/snapshots/
 output/
 .playwright-cli/
 *.claude-review.json
+# Raw local evidence is private even when it has a harmless filename or no token.
+*.private.*
+*-private.*
 # Archive and deprecated code (excluded from repo)
 viventium_v0_3_py/archive/*
 viventium_v0_3_py/archive/**/*
@@ -135,6 +138,11 @@ viventium_v0_3_py/archive/**/*
 /viventium_v0_3_py/interfaces/livekit-playground
 
 # Private/stateful paths that must not be added again
+[Ll][Ii][Ff][Ee]
+# Only this canonical product QA definition is public; all Life siblings stay private.
+!/qa/life/
+/qa/life/**
+!/qa/life/cases.yaml
 viventium_v0_4/docker/skyvern/postgres-data/
 viventium_v0_4/telegram-viventium/user_configs/
 viventium_v0_4/credentials/

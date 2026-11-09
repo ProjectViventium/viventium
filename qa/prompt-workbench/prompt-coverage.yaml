@@ -1,115 +1,115 @@
 version: 1
 scope: public-safe prompt workbench QA coverage map
 cases:
-  - id: PW-001
+  - id: PWB-001
     title: Registry render parity
     appliesTo: all
-    source: qa/prompt-workbench/cases.md#PW-001
+    source: qa/prompt-workbench/cases.md#PWB-001
     lastRun: 2026-05-22
-  - id: PW-002
+  - id: PWB-002
     title: Sync state classification
     appliesTo:
       - main.conscious_agent
-    source: qa/prompt-workbench/cases.md#PW-002
+    source: qa/prompt-workbench/cases.md#PWB-002
     lastRun: 2026-05-15
-  - id: PW-003
+  - id: PWB-003
     title: Live import draft safety
     appliesTo: all
-    source: qa/prompt-workbench/cases.md#PW-003
+    source: qa/prompt-workbench/cases.md#PWB-003
     lastRun: 2026-05-15
-  - id: PW-004
+  - id: PWB-004
     title: Source edit creates reviewed draft
     appliesTo: all
-    source: qa/prompt-workbench/cases.md#PW-004
+    source: qa/prompt-workbench/cases.md#PWB-004
     lastRun: 2026-05-15
-  - id: PW-005
+  - id: PWB-005
     title: Eval visibility and public-safe results
     appliesTo: all
-    source: qa/prompt-workbench/cases.md#PW-005
+    source: qa/prompt-workbench/cases.md#PWB-005
     lastRun: 2026-05-15
-  - id: PW-006
+  - id: PWB-006
     title: System color scheme
     appliesTo: all
-    source: qa/prompt-workbench/cases.md#PW-006
+    source: qa/prompt-workbench/cases.md#PWB-006
     lastRun: 2026-05-15
-  - id: PW-007
+  - id: PWB-007
     title: Draft review apply and discard
     appliesTo: all
-    source: qa/prompt-workbench/cases.md#PW-007
+    source: qa/prompt-workbench/cases.md#PWB-007
     lastRun: 2026-05-15
-  - id: PW-008
+  - id: PWB-008
     title: Dry-run before reviewed live push
     appliesTo:
       - main.conscious_agent
-    source: qa/prompt-workbench/cases.md#PW-008
+    source: qa/prompt-workbench/cases.md#PWB-008
     lastRun: 2026-05-15
-  - id: PW-009
+  - id: PWB-009
     title: Flow source map and lineage
     appliesTo: all
-    source: qa/prompt-workbench/cases.md#PW-009
+    source: qa/prompt-workbench/cases.md#PWB-009
     lastRun: 2026-05-22
-  - id: PW-010
+  - id: PWB-010
     title: Eval designer and results
     appliesTo: all
-    source: qa/prompt-workbench/cases.md#PW-010
+    source: qa/prompt-workbench/cases.md#PWB-010
     lastRun: 2026-05-15
-  - id: PW-011
+  - id: PWB-011
     title: Navigation and settings polish
     appliesTo: all
-    source: qa/prompt-workbench/cases.md#PW-011
+    source: qa/prompt-workbench/cases.md#PWB-011
     lastRun: 2026-05-15
-  - id: PW-012
+  - id: PWB-012
     title: Responsive user QA
     appliesTo: all
-    source: qa/prompt-workbench/cases.md#PW-012
+    source: qa/prompt-workbench/cases.md#PWB-012
     lastRun: 2026-05-15
-  - id: PW-013
+  - id: PWB-013
     title: Dockable workbench layout
     appliesTo: all
-    source: qa/prompt-workbench/cases.md#PW-013
+    source: qa/prompt-workbench/cases.md#PWB-013
     lastRun: 2026-05-15
-  - id: PW-014
+  - id: PWB-014
     title: Human-readable prompt atlas
     appliesTo: all
-    source: qa/prompt-workbench/cases.md#PW-014
+    source: qa/prompt-workbench/cases.md#PWB-014
     lastRun: 2026-05-15
-  - id: PW-015
+  - id: PWB-015
     title: Helper and CLI lifecycle
     appliesTo:
       - main.conscious_agent
-    source: qa/prompt-workbench/cases.md#PW-015
+    source: qa/prompt-workbench/cases.md#PWB-015
     lastRun: 2026-05-15
-  - id: PW-016
+  - id: PWB-016
     title: Prompt history and eval traceability
     appliesTo: all
-    source: qa/prompt-workbench/cases.md#PW-016
+    source: qa/prompt-workbench/cases.md#PWB-016
     lastRun: 2026-05-15
-  - id: PW-017
+  - id: PWB-017
     title: Eval case draft editing
     appliesTo: all
-    source: qa/prompt-workbench/cases.md#PW-017
+    source: qa/prompt-workbench/cases.md#PWB-017
     lastRun: 2026-05-16
-  - id: PW-018
+  - id: PWB-018
     title: Pending drafts block eval and push
     appliesTo: all
-    source: qa/prompt-workbench/cases.md#PW-018
+    source: qa/prompt-workbench/cases.md#PWB-018
     lastRun: 2026-05-16
-  - id: PW-019
+  - id: PWB-019
     title: Draft review guidance
     appliesTo: all
-    source: qa/prompt-workbench/cases.md#PW-019
+    source: qa/prompt-workbench/cases.md#PWB-019
     lastRun: 2026-05-16
-  - id: PW-020
+  - id: PWB-020
     title: Eval create and performance clarity
     appliesTo: all
-    source: qa/prompt-workbench/cases.md#PW-020
+    source: qa/prompt-workbench/cases.md#PWB-020
     lastRun: 2026-05-16
-  - id: PW-021
+  - id: PWB-021
     title: Prompt traces meaning
     appliesTo: all
-    source: qa/prompt-workbench/cases.md#PW-021
+    source: qa/prompt-workbench/cases.md#PWB-021
     lastRun: 2026-05-16
-  - id: PW-025
+  - id: PWB-025
     title: Operational memory prompt coverage
     appliesTo:
       - memory.transcript_summarizer
@@ -118,35 +118,35 @@ cases:
       - memory.archivist
       - main.memory_policy
       - main.conversation_recall
-    source: qa/prompt-workbench/cases.md#PW-025
+    source: qa/prompt-workbench/cases.md#PWB-025
     lastRun: 2026-05-21
-  - id: PW-026
+  - id: PWB-026
     title: Rendered Read and Raw prompt view
     appliesTo:
       - main.conscious_agent
       - memory.transcript_summarizer
-    source: qa/prompt-workbench/cases.md#PW-026
+    source: qa/prompt-workbench/cases.md#PWB-026
     lastRun: 2026-05-22
-  - id: PW-027
+  - id: PWB-027
     title: Scheduling Cortex prompt and config coverage
     appliesTo:
       - main.scheduling_self_continuity
       - mcp.scheduling_cortex.server
-    source: qa/prompt-workbench/cases.md#PW-027
+    source: qa/prompt-workbench/cases.md#PWB-027
     lastRun: 2026-05-22
-  - id: PW-037
+  - id: PWB-037
     title: Scheduled execution provenance
     appliesTo:
       - main.scheduling_self_continuity
       - mcp.scheduling_cortex.server
-    source: qa/prompt-workbench/cases.md#PW-037
+    source: qa/prompt-workbench/cases.md#PWB-037
     lastRun: 2026-07-11
-  - id: PW-038
+  - id: PWB-038
     title: Memory continuity eval and native gate
     appliesTo:
       - main.conscious_agent
       - main.memory_policy
       - main.conversation_recall
       - memory.archivist
-    source: qa/prompt-workbench/cases.md#PW-038
+    source: qa/prompt-workbench/cases.md#PWB-038
     lastRun: 2026-07-11

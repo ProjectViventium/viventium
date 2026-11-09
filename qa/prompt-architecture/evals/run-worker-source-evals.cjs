@@ -41,8 +41,8 @@ function readWorkerSource(target, bankPath) {
     return { ...snapshot, snapshotSha256: sha(bytes) };
   }
   const gh = path.join(root, "viventium_v0_4/xPerfect/runtime_phase1");
-  const script = `import json,hashlib\nfrom pathlib import Path\nfrom workers_projects_runtime import bootstrap as b, profile_runtime as p\nfiles=[Path(b.__file__),Path(p.__file__)]\nprint(json.dumps({'frames':{'harness':p.HOST_NATIVE_HARNESS_PROMPT,'project':b.GLASSHIVE_WORKER_PROJECT_CONTRACT,'agents':p.HOST_DEFAULT_AGENTS_MD,'claude':p.HOST_DEFAULT_CLAUDE_MD,'codex':p.HOST_DEFAULT_CODEX_MD},'sources':[{'path':f.name,'text':f.read_text(),'sha256':hashlib.sha256(f.read_bytes()).hexdigest()} for f in files]}))`;
-  const rendered = execFileSync(path.join(gh, ".venv/bin/python"), ["-c", script], {
+  const script = `import json,hashlib,itertools,sys\nfrom pathlib import Path\nfrom workers_projects_runtime import bootstrap as b, profile_runtime as p\nfiles=[Path(b.__file__),Path(p.__file__),Path(sys.argv[1])]\nroots=[dict(zip(('workspace','tmpdir'),pair)) for pair in itertools.product(('supported','local_only','unknown'),repeat=2)]\ndelivery_frames={json.dumps(root,sort_keys=True,separators=(',',':')):b.conversation_file_delivery_instructions(root) for root in roots}\nprint(json.dumps({'frames':{'harness':p.HOST_NATIVE_HARNESS_PROMPT,'project':b.GLASSHIVE_WORKER_PROJECT_CONTRACT,'agents':p.HOST_DEFAULT_AGENTS_MD,'claude':p.HOST_DEFAULT_CLAUDE_MD,'codex':p.HOST_DEFAULT_CODEX_MD,'delivery':b.conversation_file_delivery_instructions()},'deliveryFrames':delivery_frames,'sources':[{'path':f.name,'text':f.read_text(),'sha256':hashlib.sha256(f.read_bytes()).hexdigest()} for f in files]}))`;
+  const rendered = execFileSync(path.join(gh, ".venv/bin/python"), ["-c", script, path.join(lc, "viventium/source_of_truth/prompts/worker/conversation_file_delivery.md")], {
     encoding: "utf8", maxBuffer: 10 * 1024 * 1024,
     env: { ...process.env, PYTHONPATH: path.join(gh, "src") },
   });
@@ -50,7 +50,7 @@ function readWorkerSource(target, bankPath) {
   return { ...snapshot, snapshotSha256: sha(rendered) };
 }
 
-function sourceInstructions(source, profile) {
+function sourceInstructions(source, profile, deliveryRoots) {
   if (!WORKER_PROFILE_FIELDS[profile]) throw new Error("configured_native_worker_route_unavailable");
   const names = ["harness", "project", "agents"];
   if (profile === "codex-cli") names.push("codex");
@@ -58,10 +58,23 @@ function sourceInstructions(source, profile) {
   if (names.some((name) => typeof source.frames?.[name] !== "string" || !source.frames[name].trim())) {
     throw new Error("worker_source_frame_missing");
   }
-  return names.map((name) => source.frames[name].trim()).join("\n\n");
+  const frames = names.map((name) => source.frames[name].trim());
+  if (deliveryRoots !== undefined) {
+    const modes = new Set(["supported", "local_only", "unknown"]);
+    if (!deliveryRoots || typeof deliveryRoots !== "object" || Array.isArray(deliveryRoots)
+        || Object.keys(deliveryRoots).sort().join(",") !== "tmpdir,workspace"
+        || !modes.has(deliveryRoots.tmpdir) || !modes.has(deliveryRoots.workspace)) {
+      throw new Error("worker_source_delivery_roots_invalid");
+    }
+    const key = JSON.stringify({ tmpdir: deliveryRoots.tmpdir, workspace: deliveryRoots.workspace });
+    const delivery = source.deliveryFrames?.[key];
+    if (typeof delivery !== "string" || !delivery.trim()) throw new Error("worker_source_delivery_frame_missing");
+    frames.push(delivery.trim());
+  }
+  return frames.join("\n\n");
 }
 
-function verifyNativeRun(record, route, instructions) {
+function verifyNativeRun(record, route, instructions, nativeInstructions = instructions) {
   if (!record || record.state !== "completed") throw new Error("completed_native_worker_evidence_missing");
   const bundle = JSON.parse(record.bootstrap_bundle_json || "{}");
   const fields = WORKER_PROFILE_FIELDS[route.profile];
@@ -71,14 +84,14 @@ function verifyNativeRun(record, route, instructions) {
     throw new Error("native_worker_route_mismatch");
   }
   if (String(bundle.application_developer_instructions || bundle.developer_instructions || "") !== instructions
-      || String(bundle.developer_instructions || "") !== instructions) {
+      || String(bundle.developer_instructions || "") !== nativeInstructions) {
     throw new Error("native_worker_source_not_observed");
   }
   return { ...route, instructionsSha256: sha(instructions), runIdHash: sha(record.run_id), workerIdHash: sha(record.worker_id), state: record.state };
 }
 
-function verifiedWorkerResponse(response, native, route, instructions) {
-  const observedRoute = verifyNativeRun(native, route, instructions);
+function verifiedWorkerResponse(response, native, route, instructions, nativeInstructions = instructions) {
+  const observedRoute = verifyNativeRun(native, route, instructions, nativeInstructions);
   if (!response || response.error || response.errorClass || response.fallbackUsed) {
     throw new Error(response?.errorClass || response?.error || "worker_source_response_unavailable");
   }
@@ -108,14 +121,21 @@ async function run(args, bank, cases, qaAuth) {
   if (familyIds.size !== 1) throw new Error("worker_source_requires_one_family");
   const family = bank.families.find((item) => familyIds.has(item.id));
   const source = readWorkerSource(family.executionTarget, args.promptBank);
-  const selected = cases.map((item) => ({ testCase: item, route: configuredWorkerRoute(item.fixture?.workerSource?.route || "primary", process.env, item.fixture?.workerSource?.nativeTools ?? true) }));
+  // The existing Cortex transport is a read-only source replay, independent of its native-tool mask.
+  // Full worker permission and physical app execution remain separate real-mission acceptance.
+  const selected = cases.map((item) => ({ testCase: item, route: {
+    ...configuredWorkerRoute(item.fixture?.workerSource?.route || "primary", process.env, item.fixture?.workerSource?.nativeTools ?? true),
+    access: "read_only",
+  } }));
   requireLC("module-alias")({ base: path.join(lc, "api") });
   for (const name of ["anthropicOAuthPatch", "anthropicThinkingPatch", "openaiResponsesOutputPatch", "agentSchemaToolBindingPatch"]) require(path.join(lc, "api/server/services/viventium", name));
   const mongoose = requireLC("mongoose");
   await require(path.join(lc, "api/db")).connectDb();
   const { User } = require(path.join(lc, "api/db/models"));
   const user = await User.findById(qaAuth.userId).lean();
-  if (!user || user.role !== "USER" || !String(user.email).endsWith(".invalid")) throw new Error("synthetic_user_context_required");
+  require("./run-native-surface-playwright-qa.cjs").assertSelectedSyntheticQaUser({
+    qaEmail: args.qaEmail, ownerEmail: process.env.VIVENTIUM_QA_OWNER_EMAIL, user,
+  });
   const config = await require(path.join(lc, "api/server/services/Config")).getAppConfig();
   const { executeCortex, createBackgroundRes } = require(path.join(lc, "api/server/services/BackgroundCortexService"));
   const { HumanMessage } = requireLC("@librechat/agents/langchain/messages");
@@ -139,14 +159,16 @@ async function run(args, bank, cases, qaAuth) {
       const runId = `worker-source-${crypto.randomUUID()}`;
       const conversationId = crypto.randomUUID();
       const agentId = `worker-source-${crypto.randomUUID()}`;
-      const instructions = sourceInstructions(source, route.profile);
+      const fixture = testCase.fixture.workerSource;
+      const instructions = sourceInstructions(source, route.profile, fixture.deliveryRoots);
+      const nativeInstructions = route.nativeTools && fixture.deliveryRoots === undefined && source.frames.delivery
+        ? `${instructions}\n\n${source.frames.delivery.trim()}` : instructions;
       const agent = { id: agentId, name: "Worker source evaluation", provider: route.provider, model: route.model,
         model_parameters: { model: route.model, reasoning_effort: route.effort }, instructions,
         agent_ids: [], edges: [], tools: [], mcp: [], tool_resources: {}, tool_options: {}, background_cortices: [], viventiumProviderSessionMode: "stateless" };
       const req = { body: { conversationId }, user: { ...user, id: String(user._id), personalization: { memories: false, conversation_recall: false } }, config,
         headers: { authorization: `Bearer ${qaAuth.token}` }, _viventiumFeelingSnapshot: null };
       req.get = (name) => req.headers[String(name).toLowerCase()];
-      const fixture = testCase.fixture.workerSource;
       const messages = [new HumanMessage(`Project context and observed evidence:\n${JSON.stringify(fixture.evidence)}`),
         new HumanMessage(fixture.previousUserRequest), new HumanMessage(testCase.prompt)];
       const row = { caseId: testCase.id, familyId: testCase.familyId, requestedRoute: route,
@@ -157,7 +179,7 @@ async function run(args, bank, cases, qaAuth) {
       try {
         const response = await executeCortex({ agent, messages, runId, conversationId, req, res: createBackgroundRes(), contextMode: "minimal", mainContextBinding: "isolated", completedResultPolicy: "internal", insightMode: "user_facing", nativeTools: route.nativeTools, executionTimeoutMs: args.timeoutMs });
         const native = harness.queryGlassHiveProviderRun(process.env, runId, { ownerId: qaAuth.userId, conversationId, agentId, nativeAuthority: true });
-        const verified = verifiedWorkerResponse(response, native, route, instructions);
+        const verified = verifiedWorkerResponse(response, native, route, instructions, nativeInstructions);
         row.observedRoute = verified.observedRoute;
         row.observedRequestIdentityHash = row.requestIdentityHash; // Query above requires every exact owner/session/message binding.
         row.nativeAudit = harness.readGlassHiveRunToolAudit(native);

@@ -48,6 +48,11 @@ Explicit model-authored conversational replies remain eligible for normal presen
 - Vector resources require health, freshness, source/upload integrity, and owner-scope checks.
 - If vector recall is unavailable, any supported source-only fallback remains inside the recall tool
   path and reports the degraded state.
+- Changes in vector/source-only readiness, its diagnostic reason, or corpus observations do not
+  change an active, unbound work's authorization to the same recall resource. Resource identity,
+  owner, scope, source anchors, other capabilities, and authorization lifecycle remain enforced.
+  Tool execution checks current owned-corpus readiness and keeps the supported source-only fallback;
+  catalog reads do not run these execution checks or change the saved authorization.
 - `no relevant evidence found` means retrieval ran successfully; `no evidence retrieved in this
   run` is inconclusive. Provider failure is never flattened into absence.
 - Retrieved assistant chatter does not become new source evidence and cannot poison freshness.

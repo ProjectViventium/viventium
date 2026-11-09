@@ -145,6 +145,7 @@ CURRENT_REQUIRED_COMPONENT_FILES = (
     "viventium_v0_4/telegram-viventium/TelegramVivBot/utils/telegram_audio.py",
     "viventium_v0_4/telegram-viventium/TelegramVivBot/utils/telegram_stt.py",
     "viventium_v0_4/telegram-viventium/TelegramVivBot/utils/telegram_vad.py",
+    "viventium_v0_4/telegram-viventium/TelegramVivBot/utils/telegram_video.py",
 )
 
 

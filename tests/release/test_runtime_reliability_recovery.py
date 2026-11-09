@@ -695,3 +695,137 @@ print("config-repair-ok")
     assert 'NSLog("%@", message)' in load
     refresh = source.split("private func refreshState(force: Bool = false)", 1)[1].split("if Self.configUsesProtectedRepoRoot", 1)[0]
     assert '.unavailable("Configuration needs repair")' in refresh
+
+
+def _load_native_log_owner():
+    spec = importlib.util.spec_from_file_location("native_append_log_contract", ROOT / "scripts/viventium/native_runtime.py")
+    module = importlib.util.module_from_spec(spec)
+    assert spec.loader
+    spec.loader.exec_module(module)
+    return module
+
+
+def test_private_append_log_preserves_bytes_and_shares_the_exact_offset_descriptor(tmp_path: Path) -> None:
+    module = _load_native_log_owner()
+    log = tmp_path / "logs" / "service.log"
+    log.parent.mkdir()
+    log.write_bytes(b"earlier diagnostic\n")
+    with module.open_private_runtime_log(log) as (selected, handle):
+        assert selected == log
+        offset = os.fstat(handle.fileno()).st_size
+        assert offset == len(b"earlier diagnostic\n")
+        subprocess.run([sys.executable, "-c", "print('current attempt')"], stdout=handle, stderr=handle, check=True)
+        assert os.fstat(handle.fileno()).st_ino == selected.stat().st_ino
+    assert log.read_bytes() == b"earlier diagnostic\ncurrent attempt\n"
+    assert log.stat().st_mode & 0o777 == 0o600
+    assert log.read_bytes()[offset:] == b"current attempt\n"
+
+
+@pytest.mark.parametrize("kind", ["symlink", "hardlink", "fifo", "directory"])
+def test_private_append_log_isolates_refused_leaf_without_writing_its_target(tmp_path: Path, kind: str) -> None:
+    module = _load_native_log_owner()
+    log = tmp_path / "logs" / "service.log"
+    log.parent.mkdir()
+    target = tmp_path / "unrelated-owner-data"
+    target.write_bytes(b"keep exact bytes\n")
+    if kind == "symlink":
+        log.symlink_to(target)
+    elif kind == "hardlink":
+        os.link(target, log)
+    elif kind == "fifo":
+        os.mkfifo(log)
+    else:
+        log.mkdir()
+    with module.open_private_runtime_log(log) as (selected, handle):
+        assert selected == log.with_name("service.recovery.log")
+        handle.write(b"recovery only\n")
+    assert target.read_bytes() == b"keep exact bytes\n"
+    assert selected.read_bytes() == b"recovery only\n"
+    assert selected.stat().st_mode & 0o777 == 0o600
+
+
+def test_private_append_log_rejects_a_parent_swapped_after_preparation(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    module = _load_native_log_owner()
+    log = tmp_path / "logs" / "service.log"
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "service.log").write_bytes(b"outside bytes\n")
+    original = module.prepare_runtime_log
+    def prepare_and_swap(path, **kwargs):
+        selected = original(path, **kwargs)
+        path.parent.rename(tmp_path / "original-logs")
+        path.parent.symlink_to(outside, target_is_directory=True)
+        return selected
+    monkeypatch.setattr(module, "prepare_runtime_log", prepare_and_swap)
+    with pytest.raises((OSError, module.RuntimeError_)):
+        with module.open_private_runtime_log(log):
+            pytest.fail("A swapped parent must not be opened")
+    assert (outside / "service.log").read_bytes() == b"outside bytes\n"
+
+
+@pytest.mark.parametrize("replacement", ["symlink", "regular"])
+def test_private_append_log_rejects_a_leaf_swapped_after_open(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, replacement: str) -> None:
+    module = _load_native_log_owner()
+    log = tmp_path / "logs" / "service.log"
+    target = tmp_path / "outside"
+    target.write_bytes(b"outside bytes\n")
+    real_open = os.open
+    def swap_after_open(path, flags, *args, **kwargs):
+        descriptor = real_open(path, flags, *args, **kwargs)
+        if path == log.name and flags & os.O_APPEND:
+            log.rename(log.with_suffix(".original"))
+            if replacement == "symlink":
+                log.symlink_to(target)
+            else:
+                log.write_bytes(b"replacement bytes\n")
+                log.chmod(0o600)
+        return descriptor
+    monkeypatch.setattr(module.os, "open", swap_after_open)
+    with pytest.raises(module.RuntimeError_, match="unsafe|changed"):
+        with module.open_private_runtime_log(log):
+            pytest.fail("A swapped leaf must not be used")
+    assert target.read_bytes() == b"outside bytes\n"
+    assert log.with_suffix(".original").read_bytes() == b""
+
+
+@pytest.mark.parametrize("field,value", [("uid", 2147483646), ("nlink", 2), ("mode", 0o100644)])
+def test_private_append_log_rejects_changed_descriptor_authority(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, field: str, value: int) -> None:
+    module = _load_native_log_owner()
+    log = tmp_path / "logs" / "service.log"
+    real_open, real_fstat = os.open, os.fstat
+    opened = []
+    def note_open(path, flags, *args, **kwargs):
+        descriptor = real_open(path, flags, *args, **kwargs)
+        if flags & os.O_APPEND:
+            opened.append(descriptor)
+        return descriptor
+    def altered_fstat(descriptor):
+        result = real_fstat(descriptor)
+        if descriptor in opened:
+            values = list(result)
+            values[{"uid": 4, "nlink": 3, "mode": 0}[field]] = value
+            return os.stat_result(values)
+        return result
+    monkeypatch.setattr(module.os, "open", note_open)
+    monkeypatch.setattr(module.os, "fstat", altered_fstat)
+    with pytest.raises(module.RuntimeError_, match="unsafe|changed"):
+        with module.open_private_runtime_log(log):
+            pytest.fail("Changed descriptor authority must not be used")
+    assert log.read_bytes() == b""
+    with pytest.raises(OSError):
+        real_fstat(opened[0])
+
+
+def test_private_append_log_rejects_a_fifo_swapped_before_open_without_blocking(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    module = _load_native_log_owner()
+    log = tmp_path / "logs" / "service.log"
+    real_open = os.open
+    def swap_before_open(path, flags, *args, **kwargs):
+        if path == log.name and flags & os.O_APPEND:
+            log.unlink()
+            os.mkfifo(log)
+        return real_open(path, flags, *args, **kwargs)
+    monkeypatch.setattr(module.os, "open", swap_before_open)
+    with pytest.raises(OSError):
+        with module.open_private_runtime_log(log):
+            pytest.fail("A swapped FIFO must not be used")

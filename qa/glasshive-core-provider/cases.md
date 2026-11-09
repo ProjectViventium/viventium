@@ -77,3 +77,5 @@ outside it. A parallel author or later round retains its own history.
 - `tests/release/test_life_bootstrap.py`
 
 Supporting release regressions: `tests/release/test_native_life_command.py`. These automated checks do not replace the user-path acceptance above.
+
+Supporting release regression: `tests/release/test_native_conversation_instructions.py` checks that compiled capability authority, memory and the optional current-turn capsule reach the actual Native composer once, with the original user request unchanged. It does not prove provider inference or real channel delivery.

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import importlib.util
 import os
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -38,7 +39,7 @@ def test_recommend_one_liner_targets_zsh_profile_and_both_commands(
     assert "ln -sfn " in command
     assert '"$HOME/.local/bin/viventium"' in command
     assert '"$HOME/.local/bin/viv"' in command
-    assert '"$HOME/.zshrc"' in command
+    assert '"$HOME"/.zshrc' in command
     assert 'export PATH="$HOME/.local/bin:$PATH"' in command
 
 
@@ -98,23 +99,125 @@ def test_shell_init_print_command_cli_uses_requested_profile(tmp_path: Path, pro
     custom_profile = (home if profile_in_home else tmp_path) / ".custom-shell-profile"
     result = subprocess.run(
         [
-            sys.executable,
-            str(SHELL_INIT_PATH),
-            "--target",
-            str(target_path),
+            str(CLI_PATH),
+            "shell-init",
             "--profile",
             str(custom_profile),
             "--print-command",
         ],
-        env={**os.environ, "HOME": str(home)},
+        env={**os.environ, "HOME": str(home), "SHELL": "/bin/sh"},
         capture_output=True,
         text=True,
         check=False,
     )
 
     assert result.returncode == 0, result.stderr
-    expected_profile = "$HOME/.custom-shell-profile" if profile_in_home else str(custom_profile)
-    assert expected_profile in result.stdout
+    applied = subprocess.run(
+        ["/bin/sh", "-c", result.stdout],
+        env={**os.environ, "HOME": str(home), "SHELL": "/bin/sh"}, capture_output=True, text=True,
+    )
+    assert applied.returncode == 0, applied.stderr
+    assert custom_profile.read_text().splitlines() == ['export PATH="$HOME/.local/bin:$PATH"']
+    for name in ("viv", "viventium"):
+        assert (home / ".local/bin" / name).resolve() == target_path.resolve()
     assert str(home) not in result.stdout
     assert '"$HOME/.local/bin/viv"' in result.stdout
     assert '"$HOME/.local/bin/viventium"' in result.stdout
+
+
+@pytest.mark.parametrize("shell", ["bash", "zsh"])
+@pytest.mark.parametrize("profile_name", [
+    "profile$(printf _expanded_)", "profile`printf _expanded_`",
+    'profile"quote', r"profile\backslash", "profile!literal", "profile'quote",
+])
+def test_printed_shell_setup_preserves_profile_filename_as_data(
+    tmp_path: Path, shell: str, profile_name: str,
+) -> None:
+    if not shutil.which(shell):
+        pytest.skip(f"shell setup QA NOT RUN: {shell} executable is unavailable")
+    home = tmp_path / "home"
+    home.mkdir()
+    profile = home / profile_name
+    env = {**os.environ, "HOME": str(home)}
+    printed = subprocess.run(
+        [sys.executable, str(SHELL_INIT_PATH), "--target", str(CLI_PATH),
+         "--shell", shell, "--profile", str(profile),
+         "--print-command"],
+        env=env, capture_output=True, text=True, check=True,
+    )
+    for _ in range(2):
+        applied = subprocess.run(
+            [shell, "-c", printed.stdout], cwd=tmp_path, env=env,
+            capture_output=True, text=True,
+        )
+        assert applied.returncode == 0, applied.stderr
+    assert profile.read_text().splitlines() == ['export PATH="$HOME/.local/bin:$PATH"']
+    for name in ("viv", "viventium"):
+        assert (home / ".local/bin" / name).resolve() == CLI_PATH.resolve()
+
+
+def test_fish_source_command_preserves_literal_profile_name(tmp_path: Path, monkeypatch) -> None:
+    fish = shutil.which("fish")
+    if not fish:
+        pytest.skip("fish source-command QA NOT RUN: fish executable is unavailable")
+    monkeypatch.setenv("HOME", str(tmp_path))
+    profile = tmp_path / 'profile`literal`$"\\path'
+    profile.write_text("printf literal-profile-loaded\\n\n")
+    command = load_shell_init_module().source_command("fish", profile)
+    result = subprocess.run([fish, "-c", command], capture_output=True, text=True)
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == "literal-profile-loaded"
+
+
+@pytest.mark.parametrize("shell", ["bash", "zsh"])
+def test_interactive_shell_setup_keeps_history_metacharacters_literal(tmp_path, monkeypatch, shell):
+    if os.name != "posix" or not shutil.which(shell):
+        pytest.skip(f"interactive shell QA NOT RUN: {shell} is unavailable")
+    import pty
+    import select
+    import signal
+    import termios
+    import time
+
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+    profile = home / "profile!99999999'quote"
+    command = load_shell_init_module().recommend_one_liner(CLI_PATH, shell, profile)
+    env = {"PATH": os.environ["PATH"], "HOME": str(home), "ZDOTDIR": str(home),
+           "HISTFILE": "/dev/null", "TERM": "dumb", "PS1": "__READY__ ", "PS2": "__MORE__ "}
+    master, slave = pty.openpty()
+    settings = termios.tcgetattr(slave)
+    settings[3] &= ~termios.ECHO
+    termios.tcsetattr(slave, termios.TCSANOW, settings)
+    args = [shell, "--noprofile", "--norc", "-i"] if shell == "bash" else [shell, "-f", "-i"]
+    process = subprocess.Popen(args, stdin=slave, stdout=slave, stderr=slave,
+                               env=env, cwd=tmp_path, start_new_session=True)
+    os.close(slave)
+
+    def read_until(marker):
+        output = b""
+        deadline = time.monotonic() + 10
+        while marker not in output:
+            assert process.poll() is None and time.monotonic() < deadline, output.decode(errors="replace")
+            if select.select([master], [], [], 0.1)[0]:
+                output += os.read(master, 65536)
+        return output
+
+    try:
+        history = "set -H" if shell == "bash" else "setopt BANG_HIST"
+        os.write(master, f"{history}\nprintf '__HISTORY_READY__\\n'\n".encode())
+        read_until(b"__HISTORY_READY__")
+        for index in range(2):
+            marker = f"__APPLIED_{index}__"
+            os.write(master, f"{command}\nprintf '{marker}\\n'\n".encode())
+            output = read_until(marker.encode())
+            assert profile.is_file(), output.decode(errors="replace")
+        assert profile.read_text().splitlines() == ['export PATH="$HOME/.local/bin:$PATH"']
+        for name in ("viv", "viventium"):
+            assert (home / ".local/bin" / name).resolve() == CLI_PATH.resolve()
+    finally:
+        if process.poll() is None:
+            os.killpg(process.pid, signal.SIGKILL)
+        process.wait(timeout=5)
+        os.close(master)

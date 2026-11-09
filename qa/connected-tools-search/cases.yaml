@@ -17,3 +17,11 @@ journeys:
     degradedAndRecovery: Denial, expiry, revocation, quota, timeout, unsupported setup, and missing local prerequisite each have one valid next action.
     persistenceAndCleanup: Reconnect and restart preserve owner scope and a repeated real current-data request succeeds without duplicate mutation. Revocation removes access and synthetic connection state; URLs, logs, storage, and retained evidence expose no credentials or private result.
     evidence: [visible final answer, model-visible tool contract, auth state, tool result, fallback result, cleanup proof]
+  - id: local-media-worker-delivery
+    requirements: [TOOLS-MEDIA-001]
+    userAction: Enable provisioned media locally. Ask in Parallel mode for a quick draft, a reference edit, and a short clip.
+    surfaces: [Web, Telegram, native MCP]
+    expectedResult: Workers choose from installed model capabilities, and one copy of each requested file arrives through the existing delivery path.
+    degradedAndRecovery: Blank settings and isolated workers receive no local registration. Missing model files are not offered. A confirmed rejected video can fall back to a document; an unknown send is not retried as a different message.
+    persistenceAndCleanup: Reload the conversation and retrieve the same file. Keep model downloads and test output outside source control.
+    evidence: [compiled opt-in, native worker tool call, artifact hash, stored attachment, browser download, Telegram receipt]
