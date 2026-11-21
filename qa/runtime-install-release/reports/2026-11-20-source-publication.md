@@ -61,8 +61,9 @@ Only sanitized requirements, decisions, synthetic tests and evidence limits are 
 ## Findings
 
 The final CI follow-up only formats a privacy test, aligns the frontend job to its declared Node 24
-family, and updates three host test fixtures to the current readiness/receipt/prompt contracts.
-All 234 affected host cases and 13 actual receipt cases pass; these overlap earlier selections.
+family, and updates four host test fixtures to the current readiness/receipt/prompt/admission contracts.
+The 234 host cases, seven admission cases, 13 actual receipt cases and 100 MIME helper cases pass;
+these overlap earlier selections.
 Native inference is pinned to its tested 0.2.7 package. The obsolete gateway-only model-prefetch
 branch is removed; the separate V1 prefetch and Telegram shared settings remain. Bash syntax,
 existing requirement-drift/valid-pin checks and the actual installed-pin predicate pass. A
