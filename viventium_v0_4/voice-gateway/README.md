@@ -122,7 +122,8 @@ This service is the **voice bridge** between:
       own voice. The earlier gateway-side pool (`xai_pooled_tts.py`) is gone. The existing generic
       provider boundary retains a first-audio timeout after nonblank input is forwarded, including
       single-provider calls. Initial model thinking is excluded; once PCM arrives, the timeout is
-      disarmed and partial speech cannot be replayed by a fallback.
+      disarmed and partial speech cannot be replayed by a fallback. This is a provider-attempt
+      budget; the session's SDK retry policy still applies, so it is not a total utterance timeout.
     - The xAI prompt may use documented xAI speech tags from
       `viventium_v0_4/shared/voice/xai_tts_capabilities.json`. These are not SSML and must not be
       mixed with Cartesia controls.

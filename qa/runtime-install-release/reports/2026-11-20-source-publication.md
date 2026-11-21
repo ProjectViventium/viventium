@@ -35,9 +35,9 @@ Live provider, channel and installed acceptance remains partial.
 - Gateway: **1,382 passed**. Optional MLX dependencies no longer change the consuming service's SDK.
   The native xAI first-PCM timeout, empty-input behavior and partial-audio no-replay cases pass.
 - Telegram transport: **935 retained passes** plus two added mixed-media order cases. The final
-  affected file rerun passed all44 cases; overlapping cases are not added to a total.
+  affected file rerun passed all 44 cases; overlapping cases are not added to a total.
 - LibreChat: **3,151 distinct selected Jest cases** and **62 scheduler cases** passed before the
-  bounded permit repair. Its final affected checks passed193 delivery-service,9 route and54
+  bounded permit repair. Its final affected checks passed 193 delivery-service, 9 route and 54
   presentation cases; these selections overlap. Types, changed-code lint and production package/
   client builds passed. A broad orchestration selection and a broad Telegram rerun exhausted the
   isolated test process; neither is reported as a full-bank pass.
@@ -45,7 +45,7 @@ Live provider, channel and installed acceptance remains partial.
   source then passed all **1,347 confirmed consumer cases**, with zero failures/errors/skips and
   identical tracked source and clean Git state before/after. An earlier run overlapped source edits
   and is not used as final proof. Eight causal and seven provenance cases are overlapping support.
-  A fresh wheel's247 source members match the final source exactly; no installed activation follows.
+  A fresh wheel's 247 source members match the final source exactly; no installed activation follows.
 - Call frontend: **737 passed**, typecheck and clean-environment production build passed. Dormant
   unsafe markdown rendering and its unused dependency were removed; permissive upstream notices
   remain exact. Light primary and hover preserve readable contrast. Dot-segment identifiers are
@@ -60,8 +60,20 @@ Only sanitized requirements, decisions, synthetic tests and evidence limits are 
 
 ## Findings
 
+The final CI follow-up only formats a privacy test, aligns the frontend job to its declared Node 24
+family, and updates three host test fixtures to the current readiness/receipt/prompt contracts.
+All 234 affected host cases and 13 actual receipt cases pass; these overlap earlier selections.
+Native inference is pinned to its tested 0.2.7 package. The obsolete gateway-only model-prefetch
+branch is removed; the separate V1 prefetch and Telegram shared settings remain. Bash syntax,
+existing requirement-drift/valid-pin checks and the actual installed-pin predicate pass. A
+synthetic native-model prediction succeeds with network and owner-file data reads denied except
+the installed packages. This proves current package loading, not cold-install or audible accuracy.
+
+### Open acceptance gates
+
 - Exact configured Claude old/proposed prompt comparisons after quota recovery.
 - Real retained Claude repeated-turn tool advertisement and model delivery choice.
+- Turn-model accuracy, memory use and cold-start behavior on an installed candidate.
 - Signed call, audible two-way speech, local turn detection and physical phone routing.
 - Live changed Web/Telegram/Workbench/scheduled/callback journeys and persistence.
 - Final remote PR identity, independent diff review and required CI; component public-main pins,

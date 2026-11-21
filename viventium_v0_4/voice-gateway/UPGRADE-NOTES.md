@@ -70,13 +70,15 @@ Still read, meaning changed:
 
 Outside this tree, to clean up at switch-over: `scripts/viventium/config_compiler.py` still writes
 the turn-handling, AssemblyAI end-of-turn and VAD variables, and `viventium-librechat-start.sh`
-still exports the `VIVENTIUM_STT_VAD_*` values and reads `VIVENTIUM_TURN_DETECTION`. These
-settings do not control the new gateway recipe. The launcher's old turn-detector prefetch path
-must be distinguished from the 1.8 local inference dependency. The shared Silero configuration
-has no gateway reader; other component consumers retain their own contracts.
+still exports the shared `VIVENTIUM_STT_VAD_*` values. These settings do not control the new gateway
+recipe. Telegram still consumes the shared Silero and AssemblyAI settings. The active gateway no
+longer checks the old turn-detector plugin/cache; the separate V1 agent retains its own prefetch.
+The local model comes from the pinned `livekit-local-inference` dependency.
 
-One SDK variable worth knowing: on macOS each call process loads the turn model's weights on first
-use. `LIVEKIT_AGENTS_PRELOAD_LOCAL_INFERENCE=1` makes every call process load them while it warms up.
+The SDK preloads local inference by default under `forkserver`.
+`LIVEKIT_AGENTS_PRELOAD_LOCAL_INFERENCE=0` disables that preload; without preload the first
+construction initializes the local model. Cold-start cost, memory and audible accuracy need
+separate installed acceptance.
 
 ## 3. Behaviour a caller would notice
 
@@ -405,8 +407,9 @@ recorded against the exact candidate separately.
    stream only; the streams of other participants never declare an offset and are not affected.
 4. Worker inventory, VG-W-068: "`FlushSentinel` ... unchanged". The type is, but where the SDK acts
    on it moved (reply pipeline instead of `perform_tts_inference`).
-5. Worker inventory, VG-W-105: the shared VAD config "also serves Telegram". In the public checkout
-   only the gateway imports it.
+5. Worker inventory, VG-W-105: the shared VAD config also serves Telegram. The 1.8 gateway uses
+   its fixed SDK recipe and no longer reads those shared tuning fields; keep Telegram's reader
+   and compiler exports.
 6. Speech inventory, section 6: the three underscore-named base classes in `test_librechat_llm.py`
    do not make 85 tests run twice. Pytest does not collect them; each test runs once through its
    subclass, and 45 of the 80 base tests are replaced there by a copy with the same name, so the
