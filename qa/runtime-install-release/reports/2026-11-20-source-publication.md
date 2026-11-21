@@ -60,8 +60,8 @@ Only sanitized requirements, decisions, synthetic tests and evidence limits are 
 
 ## Findings
 
-The final CI follow-up only formats a privacy test, aligns the frontend job to its declared Node 24
-family, and updates four host test fixtures to the current readiness/receipt/prompt/admission contracts.
+CI fixture repairs format a privacy test, align the frontend job to its declared Node 24
+family, and update four host test fixtures to the current readiness/receipt/prompt/admission contracts.
 The 234 host cases, seven admission cases, 13 actual receipt cases and 100 MIME helper cases pass;
 these overlap earlier selections.
 Native inference is pinned to its tested 0.2.7 package. The obsolete gateway-only model-prefetch
@@ -69,6 +69,22 @@ branch is removed; the separate V1 prefetch and Telegram shared settings remain.
 existing requirement-drift/valid-pin checks and the actual installed-pin predicate pass. A
 synthetic native-model prediction succeeds with network and owner-file data reads denied except
 the installed packages. This proves current package loading, not cold-install or audible accuracy.
+
+Parent contract tests now follow the frontend's actual token, dispatch, authority and start owners,
+including the compatibility route, and load relative TypeScript dependencies from their real source
+files. Existing dispatch negatives remain; forged room state and a missing canonical voice route
+cannot be authorized by browser metadata. The prompt guard retains its other checks and now requires
+the current fresh-evidence and acceptance/completion/delivery clauses. Product code and prompts did
+not change in these test-consumer repairs.
+
+The earlier Core cloud bank recorded 5,527 passes, 20 skips and 31 test-consumer failures. Focused
+repairs pass all 29 affected frontend consumers, nine owning Native Python tests (including ten Node
+cases), and the one prompt guard. These selections overlap retained proof and do not establish a new
+full-bank pass. LibreChat CI passes all 13 checks with the reviewed Core peer; the earlier old-peer
+failure remains recorded. The existing temporary CI peer selector was restored afterward.
+
+An exact configured-Claude retry remains HTTP429-blocked. Older unrun private QA designs retain
+explicit case-remapping gaps; they are preserved, not counted as completed acceptance.
 
 ### Open acceptance gates
 

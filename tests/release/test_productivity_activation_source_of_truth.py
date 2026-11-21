@@ -386,7 +386,9 @@ def test_main_agent_does_not_defer_productivity_checks_to_background_cortices() 
     assert "never claim that workers finished" in instructions
     assert "without current-turn delivery evidence for those exact results" in instructions
     assert "keep acceptance and delivery checks internal" in instructions
-    assert "never replace truthful result checks with a claim of completion" in instructions
+    assert "history, not current execution or delivery proof" in instructions
+    assert "use fresh scoped work state and the relevant channel receipt" in instructions
+    assert "acceptance proves neither completion nor delivery" in instructions
     assert "on tool failure, state the exact user-relevant limitation and recovery path" in instructions
 
 

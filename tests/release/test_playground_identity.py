@@ -164,20 +164,12 @@ def test_launcher_exports_the_exact_playground_source_to_librechat() -> None:
 
 
 def test_direct_modern_playground_requires_an_authoritative_launch_without_setup_friction() -> None:
-    content = MODERN_APP.read_text()
+    # The refreshed page exports deriveStartScreen and owns manual/auto-start in App/useCallStart.
+    # Its real-module bank checks signed launch, unsigned denial, no setup friction, ended state,
+    # saved-choice pending state, and capability cleanup instead of old component variable names.
+    from test_voice_playground_dispatch_contract import _run_react_contract_suite
 
-    # A signed Viventium launch is immediately startable; an explicitly configured standalone
-    # development agent remains the only direct-playground exception.
-    assert "Boolean(expectedCallSessionId || appConfig.agentName)" in content
-    assert "setSessionRequested(true)" in content
-    assert "autoConnect={autoConnect || sessionRequested}" in content
-
-    # An unsigned/unconfigured direct visit fails closed without turning provider choice into a
-    # primary-path setup step.
-    assert "startDisabled={!canStartCall}" in content
-    assert "'Open from Viventium'" in content
-    assert "VoiceRouteControl" not in content
-    assert "voice-route-control" not in content
+    _run_react_contract_suite("components/app/app.test.tsx")
 
 
 def test_modern_playground_honors_the_reduced_motion_preference() -> None:
