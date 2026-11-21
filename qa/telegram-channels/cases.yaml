@@ -33,6 +33,8 @@ journeys:
     surfaces: [foreground Main, streaming preview, scheduled message, background follow-up, plain-text fallback]
     expectedResult: Shared Main instructions apply the default prose preference; Telegram preserves the punctuation of the model output, including requested literals and overrides.
     degradedAndRecovery: Provider or channel unavailability is reported separately from an empty response. Transport never repairs model style by rewriting literal content.
+    persistenceAndCleanup: Reopen the same conversation and inspect the later follow-up without changing saved preferences or accepted literal sources. Keep raw prompts and outputs private; retire only owned synthetic QA resources.
+    evidence: [exact-text adapter and follow-up regressions, current configured-model comparisons, visible Telegram preview and final reply, accepted source and delivery receipts, reopen and cleanup proof]
   - id: telegram-voice-preferences
     requirements: [TGVOICE-004, TGVOICE-006, TGVOICE-011, CORE-007]
     userAction: Open Telegram Preferences, inspect all three voice controls, change each independently, reopen and restart, then send voice notes and text with ordinary and text-only requests. Let a source-bound worker reply arrive later.
