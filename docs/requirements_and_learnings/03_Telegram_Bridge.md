@@ -42,6 +42,27 @@ not select the main Viventium Telegram bridge's model.
 - Connection loss mid-response must not leave users hanging on a partial holding message.
 - Transport recovery resumes the existing accepted work and saved reply automatically; it must not
   rerun tool actions. Starting execution again remains a distinct, authorized Retry action.
+- Keep the byte-exact native result as its delivery identity. Pass verified file metadata beside
+  that result to Main; file facts must not change the hash used by delivery authorization.
+- If authorization returns no permit, settle an unchanged unsent claim as failed through Core.
+  A refused or busy authorization must not reset an active dispatch permit or report a send.
+- Replaying a saved result revalidates its owner, source and current result, then reuses the saved
+  reply and transport receipts. It must not require fresh cognition or regenerate the reply.
+- Result preparation preserves authorized file and image parts from ordinary Main preparation.
+  Verify the exact result text separately; a valid file part is not a changed result event.
+- A resend can select retained files even when the new reply creates no file envelope. Use the
+  existing source-publication and File checks, and revalidate both before saving the new reply.
+  Verified file selections from the Native result remain owed when Main chooses silence. Keep
+  that file selection separate from the visible reply text and preserve publication checks.
+  A file-only completed result can pass the existing Telegram dispatch verifier when its exact
+  saved attachment set belongs to that owner and message, and its Native source is still current.
+  Missing, changed, foreign or unavailable files do not authorize an empty reply. Voice still
+  requires authored speech; progress and scheduled-message rules keep their existing contracts.
+  A temporary source-proof lookup failure stays a failure for normal recovery. It must not be
+  converted into an empty selection that allows a silent reply to discard the owed files.
+- Goal aliases for one source and one exact native run, revision and result digest share one
+  publication. Persist the first publication identity atomically; aliases reuse its saved reply
+  and transport receipts. A different source or result keeps a separate identity.
 - Telegram bot-token setup must stay truthful and reject malformed tokens.
 - Telegram must differentiate voice-note input vs text input and forward that mode to LibreChat.
 - An attachment-only message is a current input even when its caption is empty. Keep its source
@@ -415,6 +436,12 @@ Prompt-layer ownership and the runtime-vs-prompt boundary are also recorded in
 
 ## Markdown Formatting Integrity
 
+- **TGFORMAT-001:** Shared Main `main.voice_style` applies saved communication preferences and
+  current-request exceptions to authored prose. Telegram preserves model-produced punctuation in
+  direct replies, previews, scheduled messages and background follow-ups. Transport must not
+  rewrite exact quotations, identifiers, code or requested literal artifacts to enforce prose style.
+  The bridge regression bank checks exact text through both direct and follow-up adapters.
+
 - Main streamed answers, scheduled/proactive messages, and background follow-ups share
   `render_telegram_markdown(...)` and the same Markdown-to-Telegram-HTML renderer.
 - Literal Markdown code is content, not voice-control syntax. Inline code and fenced code,
@@ -772,6 +799,13 @@ Prompt-layer ownership and the runtime-vs-prompt boundary are also recorded in
   terminal replay, and Telegram error event. The bridge uses the same typed presentation as FINAL
   and sends one non-spoken error notice. Legacy untyped callers retain their existing transport
   signature. Unknown internal diagnostics are not sent as user-facing error text.
+  Native terminal materialization preserves known public provider failure classes without granting
+  the weaker host-failure source authorization. Native FINAL also carries the same exact committed
+  work receipt as the ordinary response route. When a new durable operation is proved accepted,
+  interruption of its conversational reply keeps the existing follow-up path and states that the
+  work was accepted. It must not invite the user to repeat the operation. Action-only, uncertain,
+  legacy, foreign-source and missing receipts do not grant that presentation; explicit stop and
+  decline remain terminal. The original provider failure stays available in Core diagnostics.
 - Answering a current native worker question or permission from its chat buttons keeps that
   question in chat history and removes its answered buttons after the durable acknowledgement.
   Its original typed prompt is retained in the existing scoped capability row, so an uncertain
@@ -874,12 +908,29 @@ Prompt-layer ownership and the runtime-vs-prompt boundary are also recorded in
 Any file generated in LibreChat must be sent to the Telegram user as a Telegram photo/document,
 not silently dropped.
 
-A single image uses Telegram's photo method; albums contain two to ten images, with a single
-remaining image sent as a photo. Other files use the existing document method. If Telegram rejects
-a photo or album with `BadRequest`, send the original bytes and filenames as documents. Do not
-resend after a timeout, network interruption, blocked bot or rate limit. A definite final rejection
-is reported as not sent; an ambiguous send is reported as unconfirmed. Enforce the existing file
-size bound on downloaded bytes as well as declared metadata.
+Every file is its own Telegram message, sent in selection order. An image uses Telegram's photo
+method, an MP4 the video method and any other file the document method. Images are never grouped
+into an album. This adapter retains a separate delivery receipt for each file. If Telegram rejects a photo with `BadRequest`,
+send that image's original bytes and filename as a document; the other files are unaffected. Do
+not resend after a timeout, network interruption, blocked bot or rate limit. A definite final
+rejection is reported as not sent; an ambiguous send is reported as unconfirmed. Enforce the
+existing file size bound on downloaded bytes as well as declared metadata.
+
+The model that selects files is told this. The registered `worker.conversation_file_delivery`
+contract states that each selected file is delivered on its own in link order, that on Telegram
+this is one photo, video or document message per file and never an album, and that selection is the
+whole mechanism. A request for separate messages is therefore met by ordinary file selection; no
+separate send tool or declared capability exists or is needed. The standalone xPerfect
+compatibility text stays channel-neutral and does not carry this sentence.
+
+Each file send that does not succeed logs its method, outcome, error class and byte size, with no
+message text, file name, address or identifier. The user-facing notice stays generic; the log line
+is what lets a later reader tell a rejection from a dropped connection.
+
+A scheduled turn has no origin surface. Its schedule's trusted channel list is the destination for
+everything the turn starts, including a later worker result, progress note or generated file. The
+saved hand-off source keeps that channel list, so a result returns to the same channels as the
+scheduled reply instead of falling back to Web only.
 
 When private host paths are redacted from a worker response, local Markdown citations keep their
 readable label as plain text. Redaction must not leave broken link syntax or expose a private path.
@@ -1050,7 +1101,7 @@ processing error; the caption must not continue alone.
   final Message identity; private native admission metadata stays outside the channel. Stream
   previews remain unverified; missing or foreign identity never covers a link
 - download bytes through the gateway
-- send images as albums when appropriate
+- send each image as its own photo message, in selection order
 - send non-image files as documents
 - preserve provider-native message attachments and only auto-promote the non-provider-native
   parseable remainder into context extraction before the agent run

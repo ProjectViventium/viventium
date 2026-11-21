@@ -549,3 +549,121 @@ class TestNativeWhisperSegmentPolicy(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestLocalWhisperDefaults(unittest.TestCase):
+    def test_intel_default_threads_are_lowered(self) -> None:
+        with (
+            patch("pywhispercpp_provider.platform.machine", return_value="x86_64"),
+            patch.dict(os.environ, {}, clear=True),
+            patch.object(pywhispercpp_provider, "ensure_model_ready", return_value="/tmp/ggml-small.bin"),
+            patch.object(pywhispercpp_provider, "Model", return_value="fake-model") as model_cls,
+        ):
+            pywhispercpp_provider._MODEL_CACHE.clear()
+            pywhispercpp_provider._get_model()
+
+        self.assertEqual(model_cls.call_args.kwargs["n_threads"], 2)
+        pywhispercpp_provider._MODEL_CACHE.clear()
+
+
+class TestLocalWhisperStreamingAdapter(unittest.TestCase):
+    """Local Whisper streams through LiveKit's own VAD adapter (SDK 1.8.11), not a copy of it."""
+
+    def setUp(self) -> None:
+        # Building the listener loads (and, when missing, downloads) the Whisper model. Never here.
+        loader = patch.object(pywhispercpp_provider, "_get_model", return_value=object())
+        self.model_loader = loader.start()
+        self.addCleanup(loader.stop)
+
+    def test_get_stt_is_the_sdk_adapter_around_whisper_on_the_calls_vad(self) -> None:
+        from livekit.agents import stt as lk_stt
+
+        call_vad = object()
+        with (
+            patch.dict(os.environ, {}, clear=True),
+            patch("livekit.plugins.silero.VAD.load") as vad_load,
+        ):
+            adapter = pywhispercpp_provider.get_stt(model_name="tiny.en", language="en", vad=call_vad)
+
+        self.assertIs(type(adapter), lk_stt.StreamAdapter)
+        self.assertIsInstance(adapter.wrapped_stt, pywhispercpp_provider.PyWhisperCppSTT)
+        self.assertIs(adapter._vad, call_vad)
+        vad_load.assert_not_called()
+        self.assertTrue(adapter.capabilities.streaming)
+        self.assertFalse(adapter.wrapped_stt.capabilities.diarization)
+
+    def test_get_stt_without_a_vad_loads_the_stock_one_and_ignores_old_tuning_variables(self) -> None:
+        with (
+            patch.dict(os.environ, {
+                "VIVENTIUM_STT_VAD_MIN_SILENCE": "0.9", "VIVENTIUM_STT_VAD_MIN_SPEECH": "0.22",
+                "VIVENTIUM_STT_VAD_ACTIVATION": "0.6", "VIVENTIUM_STT_VAD_MAX_BUFFERED_SPEECH": "1800",
+                "VIVENTIUM_STT_VAD_FORCE_CPU": "true",
+            }, clear=True),
+            patch("livekit.plugins.silero.VAD.load", return_value="stock-vad") as vad_load,
+        ):
+            adapter = pywhispercpp_provider.get_stt()
+
+        vad_load.assert_called_once_with()
+        self.assertEqual(adapter._vad, "stock-vad")
+
+    def test_sdk_adapter_stamps_speech_end_and_marks_listener_progress(self) -> None:
+        # The two things the removed copy of the adapter did not do.
+        from livekit.agents.stt import SpeechData, SpeechEvent, SpeechEventType
+        from livekit.agents.vad import VADEvent, VADEventType
+
+        frame = AudioFrame(data=b"\0\0" * 1600, sample_rate=16000, num_channels=1, samples_per_channel=1600)
+
+        class VadStream:
+            def __init__(self) -> None:
+                self.pushed = asyncio.Event()
+
+            def push_frame(self, _frame) -> None:
+                self.pushed.set()
+
+            def flush(self) -> None:
+                pass
+
+            def end_input(self) -> None:
+                pass
+
+            async def aclose(self) -> None:
+                pass
+
+            async def __aiter__(self):
+                await self.pushed.wait()
+                common = dict(samples_index=0, timestamp=0.0, speech_duration=0.1, silence_duration=0.25,
+                              frames=[frame], inference_duration=0.0)
+                yield VADEvent(type=VADEventType.START_OF_SPEECH, **common)
+                yield VADEvent(type=VADEventType.END_OF_SPEECH, **common)
+                await asyncio.Event().wait()
+
+        async def recognized(self, buffer, *, language=None, conn_options=None):
+            return SpeechEvent(type=SpeechEventType.FINAL_TRANSCRIPT,
+                               alternatives=[SpeechData(language="en", text="A local sentence.")])
+
+        async def run():
+            adapter = pywhispercpp_provider.get_stt(model_name="tiny.en", language="en",
+                                                    vad=SimpleNamespace(stream=VadStream))
+            progress = []
+            events = []
+            started_at = __import__("time").time()
+            async with adapter.stream() as stream:
+                stream._on_provider_progress = lambda: progress.append(True)
+                stream.push_frame(frame)
+                async for event in stream:
+                    events.append(event)
+                    if event.type == SpeechEventType.FINAL_TRANSCRIPT:
+                        break
+            return started_at, events, progress
+
+        with patch.object(pywhispercpp_provider.PyWhisperCppSTT, "_recognize_impl", recognized):
+            started_at, events, progress = asyncio.run(run())
+
+        self.assertEqual([event.type for event in events], [
+            SpeechEventType.START_OF_SPEECH, SpeechEventType.END_OF_SPEECH, SpeechEventType.FINAL_TRANSCRIPT])
+        end_of_speech, final = events[1], events[2]
+        # Speech ended 0.25 s of trailing silence before the VAD reported it.
+        self.assertAlmostEqual(end_of_speech.speech_end_time, started_at - 0.25, delta=0.2)
+        self.assertEqual(final.speech_end_time, end_of_speech.speech_end_time)
+        self.assertEqual(final.alternatives[0].text, "A local sentence.")
+        self.assertTrue(progress)

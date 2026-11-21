@@ -10529,10 +10529,10 @@ start_parallel_work_proxy_substrate() {
 }
 
 wait_for_glasshive_stack_ready() {
-  local timeout_seconds="${VIVENTIUM_GLASSHIVE_STARTUP_TIMEOUT_SECONDS:-30}"
+  local timeout_seconds="${VIVENTIUM_GLASSHIVE_STARTUP_TIMEOUT_SECONDS:-60}"
   local started_at="$SECONDS"
   if ! [[ "$timeout_seconds" =~ ^[0-9]+$ ]] || [[ "$timeout_seconds" -lt 1 ]]; then
-    timeout_seconds=30
+    timeout_seconds=60
   elif [[ "$timeout_seconds" -gt 120 ]]; then
     timeout_seconds=120
   fi

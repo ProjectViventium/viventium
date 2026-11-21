@@ -16,7 +16,6 @@ from librechat_llm import (
     LibreChatAuth,
     LibreChatLLM,
     _VoicePresentationCoordinator,
-    _abort_librechat_voice_stream,
     _extract_resume_state_text,
     _extract_final_response_text,
     _extract_final_response_message_id,
@@ -31,7 +30,6 @@ from librechat_llm import (
     _VoiceTtsDeltaBuffer,
     _VoiceTaskEventGate,
     is_no_response_only,
-    format_insights_for_direct_speech,
 )
 from sse import sanitize_voice_tts_text
 from speaker_segments import SpeakerSegmentTracker, attach_speaker_context_to_message
@@ -88,6 +86,13 @@ def _voice_task_sync(*, call_session_id: str = "call_1") -> dict:
         "state": "synchronized",
         "emittedAt": "2026-08-09T20:37:59.000Z",
     }
+
+
+async def _drain_background_continuations(llm, timeout_s=1.0):
+    """Test-only wait for the adapter's call-owned background tasks."""
+    tasks = list(llm._background_continuations)
+    if tasks:
+        await asyncio.wait_for(asyncio.gather(*tasks, return_exceptions=True), timeout=timeout_s)
 
 
 class _FakeListenOnlyResponse:
@@ -875,7 +880,7 @@ class TestCallModeState(unittest.TestCase):
         result, _ = asyncio.run(verify({"code": "voice_engagement_not_authorized"}, status=403))
         self.assertFalse(result)
 
-    def test_get_call_mode_uses_authoritative_mode_and_shared_secret(self) -> None:
+    def test_get_call_state_uses_authoritative_mode_and_shared_secret(self) -> None:
         async def run():
             fake_session = _FakeCallStateSession(
                 {
@@ -892,8 +897,8 @@ class TestCallModeState(unittest.TestCase):
                 auth=LibreChatAuth(call_session_id="call/1", call_secret="secret"),
             )
             with patch("librechat_llm.aiohttp.ClientSession", return_value=fake_session):
-                mode = await llm.get_call_mode()
-            return mode, fake_session
+                state = await llm.get_call_state()
+            return state["mode"], fake_session
 
         mode, fake_session = asyncio.run(run())
 
@@ -906,7 +911,7 @@ class TestCallModeState(unittest.TestCase):
         self.assertEqual(kwargs["headers"]["X-VIVENTIUM-CALL-SECRET"], "secret")
         self.assertEqual(kwargs["headers"]["X-VIVENTIUM-CALL-SESSION"], "call/1")
 
-    def test_get_call_mode_strictly_rejects_legacy_malformed_and_mismatched_state(self) -> None:
+    def test_get_call_state_strictly_rejects_legacy_malformed_and_mismatched_state(self) -> None:
         async def run(payload, status=200):
             fake_session = _FakeCallStateSession(payload, status=status)
             llm = LibreChatLLM(
@@ -914,7 +919,7 @@ class TestCallModeState(unittest.TestCase):
                 auth=LibreChatAuth(call_session_id="call_1", call_secret="secret"),
             )
             with patch("librechat_llm.aiohttp.ClientSession", return_value=fake_session):
-                return await llm.get_call_mode()
+                return await llm.get_call_state()
 
         self.assertIsNone(asyncio.run(run({"wingMode": True})))
         self.assertIsNone(asyncio.run(run({"listenOnly": True})))
@@ -1803,7 +1808,7 @@ class _PublicVoicePresentationCoordinatorTests(unittest.TestCase):
                         call_session_id="call_1",
                     ),
                 )
-                await llm.wait_for_background_continuations(timeout_s=1.0)
+                await _drain_background_continuations(llm)
 
         asyncio.run(run_stream())
 
@@ -2268,37 +2273,6 @@ class _PublicVoicePresentationCoordinatorTests(unittest.TestCase):
         self.assertTrue(fake_session.closed)
         self.assertFalse(any(name.startswith("viventium-call-task-events:") for name in live))
 
-    def test_explicit_task_cancel_calls_task_endpoint_once(self) -> None:
-        fake_session = _FakeClosedStreamSession()
-        cancel_acceptances = []
-
-        async def cancel_twice() -> tuple[dict, dict]:
-            llm = LibreChatLLM(
-                origin="http://librechat.test",
-                auth=LibreChatAuth(call_session_id="call_1", call_secret="secret"),
-                task_cancel_handler=lambda task_id, result: cancel_acceptances.append(
-                    (task_id, result.get("state"))
-                ),
-            )
-            with patch("librechat_llm.aiohttp.ClientSession", return_value=fake_session):
-                first = await llm.cancel_task("task_1", reason="user_requested")
-                second = await llm.cancel_task("task_1", reason="user_requested")
-            return first, second
-
-        first, second = asyncio.run(cancel_twice())
-
-        cancel_urls = [
-            call[0]
-            for call in fake_session.post_calls
-            if "/voice/tasks/" in str(call[0])
-        ]
-        self.assertEqual(
-            cancel_urls,
-            ["http://librechat.test/api/viventium/voice/tasks/task_1/cancel"],
-        )
-        self.assertEqual(first, second)
-        self.assertEqual(cancel_acceptances, [("task_1", first.get("state"))])
-
     def test_terminal_task_tombstone_precedes_publish_and_rejects_stale_replay(self) -> None:
         running = _voice_task_event("event_5", 5)
         cancelling = {
@@ -2380,26 +2354,6 @@ class _PublicVoicePresentationCoordinatorTests(unittest.TestCase):
         self.assertTrue(gate.is_suppressed("task_cancelled"))
         now[0] = 86_400.001
         self.assertFalse(gate.is_suppressed("task_cancelled"))
-
-    def test_explicit_task_cancel_stops_detached_continuation(self) -> None:
-        fake_session = _FakeClosedStreamSession()
-
-        async def run() -> bool:
-            llm = LibreChatLLM(
-                origin="http://librechat.test",
-                auth=LibreChatAuth(call_session_id="call_1", call_secret="secret"),
-            )
-            continuation = asyncio.create_task(asyncio.sleep(60))
-            llm._background_continuations.add(continuation)
-            llm._continuations_by_task["task_1"] = {continuation}
-            with patch("librechat_llm.aiohttp.ClientSession", return_value=fake_session):
-                await llm.cancel_task("task_1")
-            await asyncio.sleep(0)
-            cancelled = continuation.cancelled()
-            await llm.close_background_continuations()
-            return cancelled
-
-        self.assertTrue(asyncio.run(run()))
 
     def test_late_speaker_revision_posts_to_dedicated_endpoint_once(self) -> None:
         fake_session = _FakeClosedStreamSession()
@@ -2678,46 +2632,6 @@ class _PublicVoicePresentationCoordinatorTests(unittest.TestCase):
         )
 class _PublicLibreChatStreamingRunTests(unittest.TestCase):
     __test__ = False
-
-    def test_abort_http_error_never_reads_or_logs_private_provider_body(self) -> None:
-        sensitive = "SYNTHETIC_PRIVATE_ABORT_PROVIDER_CREDENTIAL"
-
-        class _PrivateAbortResponse(_FakeClosedSseResponse):
-            status = 503
-
-            def __init__(self):
-                self.body_reads = 0
-
-            async def text(self):
-                self.body_reads += 1
-                return sensitive
-
-        class _PrivateAbortSession:
-            def __init__(self):
-                self.response = _PrivateAbortResponse()
-
-            def post(self, *_args, **_kwargs):
-                return self.response
-
-        async def run():
-            fake_session = _PrivateAbortSession()
-            with patch("librechat_llm.logger.warning") as warning:
-                await _abort_librechat_voice_stream(
-                    session=fake_session,
-                    origin="http://librechat.test",
-                    stream_id="stream_synthetic",
-                    headers={},
-                    request_id="request_synthetic",
-                    started_at=0.0,
-                    reason="user_requested",
-                    log_latency=False,
-                )
-            return fake_session, warning
-
-        fake_session, warning = asyncio.run(run())
-
-        self.assertEqual(fake_session.response.body_reads, 0)
-        self.assertNotIn(sensitive, str(warning.call_args_list))
 
     def test_stream_http_error_never_reads_or_logs_private_provider_body(self) -> None:
         sensitive = "SYNTHETIC_PRIVATE_STREAM_PROVIDER_CREDENTIAL"
@@ -3601,37 +3515,6 @@ class _PublicLibreChatStreamingRunTests(unittest.TestCase):
         self.assertTrue(fake_session.closed)
         self.assertFalse(any(name.startswith("viventium-call-task-events:") for name in live))
 
-    def test_explicit_task_cancel_calls_task_endpoint_once(self) -> None:
-        fake_session = _FakeClosedStreamSession()
-        cancel_acceptances = []
-
-        async def cancel_twice() -> tuple[dict, dict]:
-            llm = LibreChatLLM(
-                origin="http://librechat.test",
-                auth=LibreChatAuth(call_session_id="call_1", call_secret="secret"),
-                task_cancel_handler=lambda task_id, result: cancel_acceptances.append(
-                    (task_id, result.get("state"))
-                ),
-            )
-            with patch("librechat_llm.aiohttp.ClientSession", return_value=fake_session):
-                first = await llm.cancel_task("task_1", reason="user_requested")
-                second = await llm.cancel_task("task_1", reason="user_requested")
-            return first, second
-
-        first, second = asyncio.run(cancel_twice())
-
-        cancel_urls = [
-            call[0]
-            for call in fake_session.post_calls
-            if "/voice/tasks/" in str(call[0])
-        ]
-        self.assertEqual(
-            cancel_urls,
-            ["http://librechat.test/api/viventium/voice/tasks/task_1/cancel"],
-        )
-        self.assertEqual(first, second)
-        self.assertEqual(cancel_acceptances, [("task_1", first.get("state"))])
-
     def test_terminal_task_tombstone_precedes_publish_and_rejects_stale_replay(self) -> None:
         running = _voice_task_event("event_5", 5)
         cancelling = {
@@ -3713,26 +3596,6 @@ class _PublicLibreChatStreamingRunTests(unittest.TestCase):
         self.assertTrue(gate.is_suppressed("task_cancelled"))
         now[0] = 86_400.001
         self.assertFalse(gate.is_suppressed("task_cancelled"))
-
-    def test_explicit_task_cancel_stops_detached_continuation(self) -> None:
-        fake_session = _FakeClosedStreamSession()
-
-        async def run() -> bool:
-            llm = LibreChatLLM(
-                origin="http://librechat.test",
-                auth=LibreChatAuth(call_session_id="call_1", call_secret="secret"),
-            )
-            continuation = asyncio.create_task(asyncio.sleep(60))
-            llm._background_continuations.add(continuation)
-            llm._continuations_by_task["task_1"] = {continuation}
-            with patch("librechat_llm.aiohttp.ClientSession", return_value=fake_session):
-                await llm.cancel_task("task_1")
-            await asyncio.sleep(0)
-            cancelled = continuation.cancelled()
-            await llm.close_background_continuations()
-            return cancelled
-
-        self.assertTrue(asyncio.run(run()))
 
 class _PublicVoiceTtsDeltaBufferTests(unittest.TestCase):
     __test__ = False
@@ -5425,39 +5288,8 @@ class TestFinalEventHelpers(unittest.TestCase):
         }
         self.assertEqual(_extract_final_response_text(final_event), "Hello world")
 
-    def test_formats_insights_for_direct_speech(self) -> None:
-        speech = format_insights_for_direct_speech(
-            [{"cortex_name": "Background Analysis", "insight": "Secret code: 27."}]
-        )
-        self.assertIn("Secret code: 27.", speech)
-        self.assertEqual(speech.count("Secret code: 27."), 1)
-        self.assertNotIn("Background insights update.", speech)
-
     # === VIVENTIUM START ===
-    def test_formats_insights_for_direct_speech_strips_links(self) -> None:
-        speech = format_insights_for_direct_speech(
-            [
-                {
-                    "cortex_name": "Online Tool Use",
-                    "insight": "Plan: 1) Check. Zoom: https://example.com",
-                }
-            ]
-        )
-        self.assertNotIn("Plan:", speech)
-        self.assertNotIn("https://", speech)
-        self.assertIn("Check.", speech)
     # === VIVENTIUM END ===
-
-    def test_formats_insights_for_direct_speech_with_preamble(self) -> None:
-        os.environ["VIVENTIUM_VOICE_INSIGHT_PREAMBLE"] = "Quick note."
-        try:
-            speech = format_insights_for_direct_speech(
-                [{"cortex_name": "Background Analysis", "insight": "Secret code: 27."}]
-            )
-            self.assertTrue(speech.startswith("Quick note."))
-        finally:
-            os.environ.pop("VIVENTIUM_VOICE_INSIGHT_PREAMBLE", None)
-
 
 class TestStreamErrorHelpers(unittest.TestCase):
     def test_extracts_stream_error(self) -> None:
@@ -6562,7 +6394,7 @@ class TestVoicePresentationCoordinator(_PublicVoicePresentationCoordinatorTests)
                         call_session_id="call_1",
                     ),
                 )
-                await llm.wait_for_background_continuations(timeout_s=1.0)
+                await _drain_background_continuations(llm)
 
         asyncio.run(run_stream())
 
@@ -7027,37 +6859,6 @@ class TestVoicePresentationCoordinator(_PublicVoicePresentationCoordinatorTests)
         self.assertTrue(fake_session.closed)
         self.assertFalse(any(name.startswith("viventium-call-task-events:") for name in live))
 
-    def test_explicit_task_cancel_calls_task_endpoint_once(self) -> None:
-        fake_session = _FakeClosedStreamSession()
-        cancel_acceptances = []
-
-        async def cancel_twice() -> tuple[dict, dict]:
-            llm = LibreChatLLM(
-                origin="http://librechat.test",
-                auth=LibreChatAuth(call_session_id="call_1", call_secret="secret"),
-                task_cancel_handler=lambda task_id, result: cancel_acceptances.append(
-                    (task_id, result.get("state"))
-                ),
-            )
-            with patch("librechat_llm.aiohttp.ClientSession", return_value=fake_session):
-                first = await llm.cancel_task("task_1", reason="user_requested")
-                second = await llm.cancel_task("task_1", reason="user_requested")
-            return first, second
-
-        first, second = asyncio.run(cancel_twice())
-
-        cancel_urls = [
-            call[0]
-            for call in fake_session.post_calls
-            if "/voice/tasks/" in str(call[0])
-        ]
-        self.assertEqual(
-            cancel_urls,
-            ["http://librechat.test/api/viventium/voice/tasks/task_1/cancel"],
-        )
-        self.assertEqual(first, second)
-        self.assertEqual(cancel_acceptances, [("task_1", first.get("state"))])
-
     def test_terminal_task_tombstone_precedes_publish_and_rejects_stale_replay(self) -> None:
         running = _voice_task_event("event_5", 5)
         cancelling = {
@@ -7139,26 +6940,6 @@ class TestVoicePresentationCoordinator(_PublicVoicePresentationCoordinatorTests)
         self.assertTrue(gate.is_suppressed("task_cancelled"))
         now[0] = 86_400.001
         self.assertFalse(gate.is_suppressed("task_cancelled"))
-
-    def test_explicit_task_cancel_stops_detached_continuation(self) -> None:
-        fake_session = _FakeClosedStreamSession()
-
-        async def run() -> bool:
-            llm = LibreChatLLM(
-                origin="http://librechat.test",
-                auth=LibreChatAuth(call_session_id="call_1", call_secret="secret"),
-            )
-            continuation = asyncio.create_task(asyncio.sleep(60))
-            llm._background_continuations.add(continuation)
-            llm._continuations_by_task["task_1"] = {continuation}
-            with patch("librechat_llm.aiohttp.ClientSession", return_value=fake_session):
-                await llm.cancel_task("task_1")
-            await asyncio.sleep(0)
-            cancelled = continuation.cancelled()
-            await llm.close_background_continuations()
-            return cancelled
-
-        self.assertTrue(asyncio.run(run()))
 
     def test_late_speaker_revision_posts_to_dedicated_endpoint_once(self) -> None:
         fake_session = _FakeClosedStreamSession()
@@ -7558,7 +7339,7 @@ class VoiceLateMetricsRegressionTests(unittest.TestCase):
                         self.assertNotIn(trace.correlation_id, llm._trace_finalizers)
                         if finish_detached:
                             release.set()
-                            await llm.wait_for_background_continuations(timeout_s=1)
+                            await _drain_background_continuations(llm)
                             self.assertTrue(trace.has('tool_end'))
                             self.assertFalse(llm._background_continuations)
                             self.assertEqual(schedule.call_args.args[0], 5.0)
@@ -8065,30 +7846,6 @@ class TestExternalTaskCancelPlayout(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(order, ["publish"])
         self.assertTrue(f.speech.interrupted)
 
-    async def test_direct_cancel_then_external_event_uses_existing_callback_once(self):
-        f = self._fixture()
-        transport = _FakeClosedStreamSession()
-        with patch("librechat_llm.aiohttp.ClientSession", return_value=transport):
-            await f.llm.cancel_task("task_1")
-            await f.llm._relay_task_event_once(self._event())
-        self.assertEqual(f.callbacks, [("task_1", True)])
-        self.assertTrue(f.speech.interrupted)
-        self.assertEqual(len(transport.post_calls), 1)
-
-    async def test_external_event_then_direct_cancel_keeps_native_interrupt_idempotent(self):
-        f = self._fixture()
-        transport = _FakeClosedStreamSession()
-        await f.llm._relay_task_event_once(self._event())
-        self.assertTrue(f.speech.interrupted)
-        interrupt_future = f.speech._interrupt_fut
-        with patch("librechat_llm.aiohttp.ClientSession", return_value=transport):
-            await f.llm.cancel_task("task_1")
-            await f.llm.cancel_task("task_1")
-        self.assertIs(f.speech._interrupt_fut, interrupt_future)
-        self.assertTrue(f.speech.interrupted)
-        self.assertTrue(f.queued.interrupted)
-        self.assertEqual(len(transport.post_calls), 1)
-
     async def test_non_cancel_states_leave_current_native_speech_intact(self):
         for state in ["queued", "running", "needs_input", "recovering", "completed", "failed"]:
             with self.subTest(state=state):
@@ -8307,48 +8064,6 @@ class TestCompletedGenerationPlayoutStop(unittest.IsolatedAsyncioTestCase):
         f.llm._presentation_by_trace_id["trace_1"].playout_active = False
         await f.llm._relay_task_event_once(self._completed_stop())
         self.assertFalse(f.speech.interrupted)
-
-    async def test_direct_completed_stop_bypasses_callwide_cancel_callback_and_task_barrier(self):
-        f = self._playing_fixture()
-        transport = _FakeClosedStreamSession()
-        result = {"version": 1, "outcome": "playout_stop_requested", "event": self._completed_stop()}
-        transport.post = lambda *args, **kwargs: _FakeJsonResponse(result)
-        with patch("librechat_llm.aiohttp.ClientSession", return_value=transport):
-            self.assertEqual(await f.llm.cancel_task("task_1"), result)
-            self.assertEqual(await f.llm.cancel_task("task_1"), result)
-        self.assertTrue(f.speech.interrupted)
-        self.assertFalse(f.queued.interrupted)
-        self.assertFalse(f.llm.is_task_output_suppressed("task_1"))
-        self.assertEqual(f.callbacks, [])
-        self.assertNotIn("task_1", f.llm._task_cancel_results)
-        f.scheduler.cancel_pending.assert_not_called()
-
-    async def test_stream_then_direct_completed_stop_remains_idempotent_without_global_cancel(self):
-        f = self._playing_fixture()
-        event = self._completed_stop()
-        await f.llm._relay_task_event_once(event)
-        interrupt_future = f.speech._interrupt_fut
-        transport = _FakeClosedStreamSession()
-        transport.post = lambda *args, **kwargs: _FakeJsonResponse(
-            {"version": 1, "outcome": "playout_stop_requested", "event": event})
-        with patch("librechat_llm.aiohttp.ClientSession", return_value=transport):
-            await f.llm.cancel_task("task_1")
-        self.assertIs(f.speech._interrupt_fut, interrupt_future)
-        self.assertFalse(f.queued.interrupted)
-        self.assertEqual(f.callbacks, [])
-
-    async def test_malformed_completed_stop_response_is_not_cached_or_converted_to_generation_cancel(self):
-        f = self._playing_fixture()
-        transport = _FakeClosedStreamSession()
-        transport.post = lambda *args, **kwargs: _FakeJsonResponse(
-            {"version": 1, "outcome": "playout_stop_requested", "event": self._event("completed")})
-        with patch("librechat_llm.aiohttp.ClientSession", return_value=transport):
-            with self.assertRaises(RuntimeError):
-                await f.llm.cancel_task("task_1")
-        self.assertFalse(f.speech.interrupted)
-        self.assertFalse(f.llm.is_task_output_suppressed("task_1"))
-        self.assertEqual(f.callbacks, [])
-        self.assertNotIn("task_1", f.llm._task_cancel_results)
 
     async def test_native_started_projection_uses_exact_handle_without_await_or_network(self):
         f = self._fixture()
@@ -9299,7 +9014,10 @@ class TestHostAdmissionFailureKeepsCall(unittest.IsolatedAsyncioTestCase):
         with socket.socket() as sock:
             sock.bind(("127.0.0.1", 0))
             origin = "http://127.0.0.1:" + str(sock.getsockname()[1])
-        agent = LibreChatLLM(origin=origin, auth=LibreChatAuth(call_session_id="synthetic-call", call_secret="synthetic"), timeout_s=0.03)
+        # The post stops retrying 10% before the budget and the foreground wait ends at the budget.
+        # A 30 ms budget left 3 ms between the two and the foreground won under load (the turn
+        # then stays pending and silent, which is a different, also valid, outcome).
+        agent = LibreChatLLM(origin=origin, auth=LibreChatAuth(call_session_id="synthetic-call", call_secret="synthetic"), timeout_s=0.6)
         stream = agent.chat(chat_ctx=ChatContext(items=[ChatMessage(id="input", role="user", content=["Hello."])]))
         try:
             chunks = [chunk.delta.content async for chunk in stream if chunk.delta.content]

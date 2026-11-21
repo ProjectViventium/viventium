@@ -17,11 +17,6 @@ BOT_DIR = ROOT / "TelegramVivBot"
 if str(BOT_DIR) not in sys.path:
     sys.path.insert(0, str(BOT_DIR))
 
-_fake_pil = types.ModuleType("PIL")
-_fake_pil_image = types.ModuleType("PIL.Image")
-_fake_pil.Image = _fake_pil_image
-sys.modules.setdefault("PIL", _fake_pil)
-sys.modules.setdefault("PIL.Image", _fake_pil_image)
 if "config" in sys.modules and not hasattr(sys.modules["config"], "__file__"):
     sys.modules.pop("config", None)
 if "md2tgmd" in sys.modules and not hasattr(sys.modules["md2tgmd"], "__path__"):

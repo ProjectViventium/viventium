@@ -114,15 +114,15 @@ This service is the **voice bridge** between:
       - `VIVENTIUM_XAI_SAMPLE_RATE` (default `24000`)
     - Live voice calls use the first-party `livekit-plugins-xai` standalone TTS path, which streams
       PCM audio from `wss://api.x.ai/v1/tts`.
-    - On the pinned `1.5.10` set, `xai_pooled_tts.py` reuses the SDK connection pool around the
-      original sender and receiver. Only a successfully completed socket is reused. Cancelled,
-      failed, closed, expired, or outdated settings are evicted. The selected primary warms at
-      call and LLM-turn start; fallback stays lazy. Each call closes its own pool. Other SDK
-      versions retain the original renderer until the adapter is verified against that version.
-      A socket that accepts text but returns no first PCM is bounded by the existing request
-      timeout. This budget starts at the native text write; model thinking and prewarm are
-      excluded. The native retry owns recovery before audio. After first PCM, native tail
-      handling remains unchanged, and failed or cancelled audio is not replayed.
+    - Socket reuse and prewarm are the plugin's own (LiveKit 1.8.11): it keeps a pool, rotates
+      sockets before xAI's connection deadline, and drops them when voice or language changes.
+      The gateway builds `xai.TTS` directly with the streaming-latency option
+      (`VIVENTIUM_XAI_TTS_OPTIMIZE_STREAMING_LATENCY`) and a word tokenizer that keeps the spaces
+      between words. The selected primary warms at call and LLM-turn start; each call closes its
+      own voice. The earlier gateway-side pool (`xai_pooled_tts.py`) is gone. The existing generic
+      provider boundary retains a first-audio timeout after nonblank input is forwarded, including
+      single-provider calls. Initial model thinking is excluded; once PCM arrives, the timeout is
+      disarmed and partial speech cannot be replayed by a fallback.
     - The xAI prompt may use documented xAI speech tags from
       `viventium_v0_4/shared/voice/xai_tts_capabilities.json`. These are not SSML and must not be
       mixed with Cartesia controls.
@@ -158,23 +158,18 @@ cross-provider contract. Missing per-turn side-channel wiring is recorded there 
 approximated with unsupported markup. The cross-provider contract is a required shipped artifact;
 the worker exits with an actionable startup error if it is missing or invalid.
 
-- **Turn detection (optional)**
-  - `VIVENTIUM_TURN_DETECTION`
-    - Allowed: `stt`, `vad`, `realtime_llm`, `manual`
-    - Shipped default depends on the active STT route:
-      - `assemblyai` defaults to `stt`
-      - local `whisper_local` / `pywhispercpp` uses `turn_detector` when the optional semantic
-        detector plugin and exact cached multilingual assets are present; otherwise it falls back
-        to the local `vad` profile
-    - If `vad` is requested while Silero is unavailable, runtime falls back to `stt`.
+- **End of speech and barge-in (not configurable)**
+  - One recipe for every call, LiveKit's own (Agents 1.8.11):
+    - end of turn: the SDK's local turn model on the audio (`inference.TurnDetector`, pinned to
+      `v1-mini`, runs on this machine); with `assemblyai` the listener's own end of turn (`stt`)
+      with no minimum wait;
+    - barge-in: voice activity (`interruption.mode = "vad"`);
+    - minimum wait for whole-utterance Whisper/OpenAI transcription: 1.0 s; longest wait when
+      the turn model is unsure: 1.5 s; preemptive generation off;
+    - Silero's stock speech sensitivity and CPU behavior, with the existing 600 s unbroken-speech
+      buffer retained; one VAD is shared by the session and local Whisper/OpenAI listeners.
+  - Removed variables are listed in `UPGRADE-NOTES.md`. They are ignored if still set.
   - Silero VAD requires Python <= 3.12 and `livekit-plugins-silero`.
-  - `VIVENTIUM_STT_VAD_MIN_SILENCE`
-    - Defaults to `0.5` for local Whisper fallback and other StreamAdapter VAD paths.
-    - Explicit env/config overrides always win.
-  - `VIVENTIUM_STT_VAD_MAX_BUFFERED_SPEECH` (defaults to `600`)
-    - Maximum duration of one uninterrupted speech segment kept in the Silero buffer.
-    - Applies to `whisper_local` and to `openai` when wrapped with StreamAdapter + VAD.
-    - If a caller speaks continuously past this limit without pausing, underlying Silero will drop the overflow audio.
 
 - **Subconscious (background cortex) insight surfacing (optional)**
   - `VIVENTIUM_VOICE_FOLLOWUP_TIMEOUT_S` (defaults to `60.0`)
@@ -207,12 +202,14 @@ the worker exits with an actionable startup error if it is missing or invalid.
 - **Latency logging (optional)**
   - `VIVENTIUM_VOICE_LOG_LATENCY=1`
     - Enables voice latency logs in both the Voice Gateway and LibreChat voice routes.
-    - P0 records SDK VAD receipt, final STT, turn commit, actual socket connect and every lease,
-      text write, provider audio and emitted PCM separately. Reused leases are rebound to the
-      current stream. VAD sample offsets are relative audio time, not physical microphone end.
-    - For local Whisper, this also emits `VoiceLatencyDetail` records for VAD start/end, frame
-      merge, pywhispercpp recognition, final transcript send, and LiveKit EOU metric event lag.
-    - Current local `large-v3-turbo` QA ballparks: VAD silence `~500-525ms`, merge/final-send/
+    - Per turn the gateway logs the SDK's own measurements (`end_of_turn_delay`,
+      `transcription_delay`, `on_user_turn_completed_delay`, `llm_node_ttft`, `tts_node_ttfb`,
+      `e2e_latency`) and each voice's first-byte time. The `[VoiceP0]` probes that hooked SDK and
+      plugin internals were removed with the move to LiveKit 1.8.11.
+    - For local Whisper, this also emits `VoiceLatencyDetail` records for pywhispercpp
+      recognition (queue, native decode, resume).
+    - Local `large-v3-turbo` QA ballparks measured on the 1.5.10 build (to be re-measured on
+      1.8.11 with the stock VAD and the local turn model): VAD silence `~500-525ms`, merge/final-send/
       metric-lag usually sub-10ms, warm short-turn recognition commonly `650-1000ms`, and warm
       short-turn LiveKit `transcription_delay` usually `1.1-1.6s`. Treat `2-3s` transcript delay
       as a breakdown trigger, not as proof of browser/UI delay.
@@ -274,11 +271,11 @@ the worker exits with an actionable startup error if it is missing or invalid.
 
 ### Dependency baseline
 
-- `requirements.txt` pins `livekit-agents` and every LiveKit plugin to `1.5.10` as one tested set.
-- `1.6.9` was evaluated separately against the same behavior, latency, diarization, reconnect, and
-  packaging gates. It produced no accepted improvement and added the turn-detector deprecation
-  warning, so it was not promoted. Future dependency changes must rerun the same comparison and the
-  real audible/installed call gates before changing the pin.
+- `requirements.txt` pins `livekit-agents` and every LiveKit plugin to `1.8.11` as one tested set
+  (moved from `1.5.10`; see `UPGRADE-NOTES.md`). The separate turn-detector plugin is no longer a
+  dependency: the turn model ships with `livekit-agents` (`livekit-local-inference`).
+- Future dependency changes must rerun the gateway suite and the real audible/installed call gates
+  before changing the pin.
 
 ### Run
 

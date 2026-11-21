@@ -841,7 +841,8 @@ class TestProviderFailureLoggingPrivacy(unittest.IsolatedAsyncioTestCase):
         from types import SimpleNamespace
         provider = FakeTTS(sample_rate=24000)
         provider._opts = SimpleNamespace(voice_id="synthetic-voice")
-        for status, retryable in ((401, False), (429, False), (503, True)):
+        # 1.8.11: the SDK treats 429 (and 408, 499) as transient; other 4xx stay non-retryable.
+        for status, retryable in ((401, False), (429, True), (503, True)):
             with self.subTest(status=status):
                 exc = APIStatusError("Synthetic private provider prose.", status_code=status,
                                      body={"key": "-".join(("sk", "test...private-fragment"))})
@@ -858,3 +859,173 @@ class TestProviderFailureLoggingPrivacy(unittest.IsolatedAsyncioTestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class _DeadlineTTS(TTS):
+    """Synthetic provider with observable closure; no network or owner data."""
+    def __init__(self, mode="success"):
+        super().__init__(capabilities=TTSCapabilities(streaming=True), sample_rate=24000, num_channels=1)
+        self.mode, self.inputs, self.closed = mode, [], 0
+        self.opened = asyncio.Event()
+
+    @property
+    def provider(self):
+        return "synthetic-deadline"
+
+    @property
+    def model(self):
+        return "synthetic-deadline"
+
+    def synthesize(self, text, *, conn_options):
+        return self._synthesize_with_stream(text, conn_options=conn_options)
+
+    def stream(self, *, conn_options):
+        return _DeadlineStream(tts=self, conn_options=conn_options)
+
+
+class _DeadlineStream(SynthesizeStream):
+    async def _run(self, emitter):
+        self._tts.opened.set()
+        emitter.initialize(request_id="synthetic-deadline", sample_rate=24000, num_channels=1,
+                           mime_type="audio/pcm", frame_size_ms=200, stream=True)
+        emitter.start_segment(segment_id="synthetic-deadline")
+        try:
+            async for item in self._input_ch:
+                if isinstance(item, str):
+                    self._tts.inputs.append(item)
+            if not ''.join(self._tts.inputs).strip():
+                return
+            if self._tts.mode == "silent":
+                await asyncio.Event().wait()
+            emitter.push(bytes(9600))
+            if self._tts.mode == "slow_tail":
+                await asyncio.sleep(0.1)
+                emitter.push(bytes(9600))
+        finally:
+            self._tts.closed += 1
+
+
+class TestFirstAudioDeadline(unittest.IsolatedAsyncioTestCase):
+    def options(self):
+        return APIConnectOptions(timeout=0.02, max_retry=0)
+
+    async def consume(self, stream):
+        async with stream:
+            return [event async for event in stream]
+
+    async def test_connected_silent_native_xai_falls_back_once_and_closes_attempt(self):
+        from contextlib import asynccontextmanager
+        from livekit.plugins import xai
+
+        class Socket:
+            text_sent = False
+            async def send_str(self, value):
+                self.text_sent |= 'text.delta' in value
+            async def receive(self):
+                await asyncio.Event().wait()
+
+        class Pool:
+            last_acquire_time, last_connection_reused = 0, False
+            def __init__(self):
+                self.socket, self.opens, self.closes = Socket(), 0, 0
+            @asynccontextmanager
+            async def connection(self, **kwargs):
+                self.opens += 1
+                try:
+                    yield self.socket
+                finally:
+                    self.closes += 1
+            async def aclose(self):
+                pass
+
+        primary = xai.TTS(api_key="synthetic")
+        await primary._pool.aclose()
+        pool = primary._pool = Pool()
+        secondary = _DeadlineTTS()
+        selected = []
+        wrapper = FallbackTTS(attempts=[ProviderAttempt("primary", primary), ProviderAttempt("fallback", secondary)],
+                              on_provider_selected=lambda label, voice: selected.append(label))
+        stream = wrapper.stream(conn_options=self.options())
+        stream.push_text("A synthetic sentence.")
+        stream.end_input()
+        try:
+            self.assertTrue(await asyncio.wait_for(self.consume(stream), 1))
+            self.assertTrue(pool.socket.text_sent)
+            self.assertEqual((pool.opens, pool.closes), (1, 1))
+            self.assertEqual(secondary.inputs, ["A synthetic sentence."])
+            self.assertEqual(selected, ["fallback"])
+        finally:
+            await primary.aclose()
+
+    async def test_one_shot_silent_provider_uses_one_fallback_and_closes_attempt(self):
+        primary = _DeadlineTTS("silent")
+        secondary = FakeTTS(sample_rate=24000)
+        selected = []
+        wrapper = FallbackTTS(attempts=[ProviderAttempt("primary", primary), ProviderAttempt("fallback", secondary)],
+                              on_provider_selected=lambda label, voice: selected.append(label))
+        frame = await asyncio.wait_for(wrapper.synthesize("A synthetic sentence.", conn_options=self.options()).collect(), 1)
+        self.assertTrue(frame.data)
+        self.assertEqual(primary.closed, 1)
+        self.assertEqual(secondary.last_synth_text, "A synthetic sentence.")
+        self.assertEqual(selected, ["fallback"])
+
+    async def test_model_thinking_before_text_does_not_start_the_deadline(self):
+        primary, secondary = _DeadlineTTS(), _DeadlineTTS()
+        wrapper = FallbackTTS(attempts=[ProviderAttempt("primary", primary), ProviderAttempt("fallback", secondary)])
+        stream = wrapper.stream(conn_options=self.options())
+        consume = asyncio.create_task(self.consume(stream))
+        await primary.opened.wait()
+        await asyncio.sleep(0.08)
+        self.assertFalse(consume.done())
+        self.assertFalse(secondary.opened.is_set())
+        stream.push_text("The model has now supplied text.")
+        stream.end_input()
+        self.assertTrue(await asyncio.wait_for(consume, 1))
+        self.assertEqual(primary.closed, 1)
+        self.assertFalse(secondary.opened.is_set())
+
+    async def test_empty_input_does_not_time_out_or_start_fallback(self):
+        primary, secondary = _DeadlineTTS(), _DeadlineTTS()
+        wrapper = FallbackTTS(attempts=[ProviderAttempt("primary", primary), ProviderAttempt("fallback", secondary)])
+        stream = wrapper.stream(conn_options=self.options())
+        stream.end_input()
+        self.assertEqual(await asyncio.wait_for(self.consume(stream), 1), [])
+        self.assertFalse(secondary.opened.is_set())
+
+    async def test_deadline_ends_after_first_audio_without_partial_replay(self):
+        primary, secondary = _DeadlineTTS("slow_tail"), _DeadlineTTS()
+        wrapper = FallbackTTS(attempts=[ProviderAttempt("primary", primary), ProviderAttempt("fallback", secondary)])
+        stream = wrapper.stream(conn_options=self.options())
+        stream.push_text("A synthetic long response.")
+        stream.end_input()
+        self.assertGreater(len(await asyncio.wait_for(self.consume(stream), 1)), 1)
+        self.assertFalse(secondary.opened.is_set())
+        self.assertEqual(primary.closed, 1)
+
+    async def test_single_silent_provider_fails_instead_of_hanging(self):
+        primary = _DeadlineTTS("silent")
+        wrapper = FallbackTTS(attempts=[ProviderAttempt("primary", primary)])
+        stream = wrapper.stream(conn_options=self.options())
+        stream.push_text("A synthetic request.")
+        stream.end_input()
+        with self.assertRaises(APIError):
+            await asyncio.wait_for(self.consume(stream), 1)
+        self.assertEqual(primary.closed, 1)
+        self.assertEqual(primary.inputs, ["A synthetic request."])
+
+    async def test_cancellation_closes_the_attempt_without_starting_fallback(self):
+        for text_available in [False, True]:
+            with self.subTest(text_available=text_available):
+                primary, secondary = _DeadlineTTS("silent"), _DeadlineTTS()
+                wrapper = FallbackTTS(attempts=[ProviderAttempt("primary", primary), ProviderAttempt("fallback", secondary)])
+                stream = wrapper.stream(conn_options=APIConnectOptions(timeout=1, max_retry=0))
+                consume = asyncio.create_task(self.consume(stream))
+                await primary.opened.wait()
+                if text_available:
+                    stream.push_text("Cancel this synthetic request.")
+                    stream.end_input()
+                    await asyncio.sleep(0)
+                await stream.aclose()
+                await asyncio.gather(consume, return_exceptions=True)
+                self.assertEqual(primary.closed, 1)
+                self.assertFalse(secondary.opened.is_set())

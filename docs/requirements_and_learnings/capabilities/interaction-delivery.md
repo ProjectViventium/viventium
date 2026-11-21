@@ -103,10 +103,45 @@ truthful Main presentation without losing or repeating durable work.
   extracted text, or unavailable metadata. A binary original filename must not hide usable declared
   extraction. Reading extraction does not prove access to original bytes.
 
+### File transport
+
+The default Agent message-file policy admits arbitrary formats. Admission does not promise that
+a provider can interpret a file. Declared native workspace capabilities retain the original
+owner-scoped bytes; other providers keep their existing upload or extraction checks. Explicit
+installation file policies remain enforced. A permanent rejection stops the original input group
+before model work and preserves its exact source receipts and failure reason.
+
+- Intake keeps the configured upload policy. Verified results use the existing generic output
+  transport without borrowing the inbound upload count. Preserve every authorized result,
+  including mixed file types, through current, callback and retained-file publication.
+- Per-file and aggregate byte limits, platform bounds and any explicit native output policy
+  still apply. Verify exact owner, source, run, attempt, file identity and bytes before publication.
+  One unavailable file retains its typed failure receipt without hiding valid siblings.
+- Retry reuses saved results and delivery receipts. It does not rerun work, expose private source
+  files or silently truncate a result set.
+
 ### Origin binding
 
 - **HARD-021:** Completion returns only to its exact owner and origin, or to one governed account-
   level continuation when that origin no longer exists.
+
+### Progress presentation
+
+Complete, explicitly public native commentary is nonterminal evidence for the same Main. It uses
+exact owner, conversation, original source, current run and attempt identity through the existing
+callback outbox and retained-publication reader. Reasoning, tools, raw logs, partial fragments and unbound
+messages are not eligible. Main inherits its current context and decides whether a useful update
+or silence is appropriate; workers never speak directly to the user.
+
+Progress uses a distinct presentation authority and the existing Cortex claim and Main channel
+receipt owners. It cannot claim completion, publish unfinished output files, block accepted work,
+or replace its final result. Retry and recovery preserve that distinction. Cancelled, replaced,
+terminal and old-attempt progress is discarded silently before authoring or channel dispatch. There is no
+fixed update timer, file-count trigger, new progress ledger, or forced user-visible update.
+
+Deferred Main authoring rejoins this delivery path only after the exact saved-message and ledger
+receipts exist. A saved reply is not channel delivery; the private retained publication identity must
+be present and verified before enqueue.
 
 ### Completion presentation
 

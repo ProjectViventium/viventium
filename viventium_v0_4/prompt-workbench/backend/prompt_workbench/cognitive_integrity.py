@@ -247,6 +247,32 @@ def _memory_hardening_status() -> dict[str, Any]:
     }
 
 
+def _codex_companion_ready(invoked: Path) -> bool:
+    companion = invoked.parent / "codex-code-mode-host"
+    if companion.is_file() and os.access(companion, os.X_OK):
+        return True
+    for root in invoked.resolve().parents:
+        manifest = root / "codex-package.json"
+        if not manifest.is_file():
+            continue
+        try:
+            package = json.loads(manifest.read_text(encoding="utf-8"))
+            entrypoint = Path(package["entrypoint"])
+            if package.get("layoutVersion") != 1 or entrypoint.is_absolute():
+                return False
+            launcher = (root / entrypoint).resolve()
+            launcher.relative_to(root)
+            companion = (launcher.parent / "codex-code-mode-host").resolve()
+            companion.relative_to(root)
+        except (OSError, ValueError, KeyError, TypeError):
+            return False
+        return (
+            launcher.is_file() and os.access(launcher, os.X_OK)
+            and companion.is_file() and os.access(companion, os.X_OK)
+        )
+    return False
+
+
 def _runtime_codex_worker_status() -> dict[str, Any]:
     values = _runtime_env_values()
     if not values:
@@ -278,8 +304,7 @@ def _runtime_codex_worker_status() -> dict[str, Any]:
     if not features or "code_mode_host" not in features:
         return {"status": "blocked", "reasons": ["codex_feature_probe_unparseable"]}
     code_mode_host_enabled = features.get("code_mode_host", False)
-    companion = invoked.parent / "codex-code-mode-host"
-    companion_ready = companion.is_file() and os.access(companion, os.X_OK)
+    companion_ready = _codex_companion_ready(invoked)
     reasons: list[str] = []
     if code_mode_host_enabled and not companion_ready:
         reasons.append("enabled_code_mode_host_companion_missing_at_invocation_path")

@@ -834,8 +834,10 @@ class _CartesiaChunkedStream(ChunkedStream):
                         if resp.status != 200:
                             body = await resp.text()
                             # 402 = credits exhausted, 401/403 = auth errors — retrying won't help.
-                            # Only transient errors (5xx, timeouts) are worth retrying.
-                            retryable = resp.status >= 500
+                            # Only transient errors (5xx, request timeout, rate limit) are worth
+                            # retrying. LiveKit 1.8 honours this flag for one-shot synthesis
+                            # (1.5 retried everything), and 429 matches the WebSocket path.
+                            retryable = resp.status >= 500 or resp.status in (408, 429)
                             raise APIError(
                                 f"Cartesia TTS failed ({resp.status})",
                                 body={"status": resp.status, "body": body},

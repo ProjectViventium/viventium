@@ -41,17 +41,44 @@ class AudioSampleTimeline:
         self._sdk_offset: float | None = None
         self._samples_s = 0.0
         self._generation_unproved = False
+        # An offset the caller declared itself and the SDK has not yet anchored on a frame.
+        self._declared_offset: float | None = None
 
     @staticmethod
     def _finite(value: Any) -> bool:
         return (isinstance(value, (int, float)) and not isinstance(value, bool)
                 and math.isfinite(float(value)))
 
+    def expect_first_frame_anchor(self, stream: Any) -> None:
+        """Call right after declaring ``stream.start_time_offset`` yourself, before any frame.
+
+        LiveKit 1.8 replaces a declared offset once, when the provider connection reads its first
+        frame (``stt.RecognizeStream.start_time_offset``). That replacement is the same connection
+        counting from the same first frame, so the frames recorded here stay valid. Only a change
+        after it means a new connection (a retry).
+        """
+        offset = getattr(stream, "start_time_offset", None)
+        if self._finite(offset) and self._sdk_offset is None:
+            self._declared_offset = float(offset)
+
+    def _observe_offset(self, offset: Any, *, provider_progress: bool = False) -> None:
+        if self._declared_offset is None or not self._finite(offset):
+            return
+        if offset != self._declared_offset:
+            # The SDK anchored the declared offset on the first frame it read.
+            if self._sdk_offset is not None:
+                self._sdk_offset = float(offset)
+            self._declared_offset = None
+        elif provider_progress:
+            # A transcript proves the connection has read audio: any later change is a retry.
+            self._declared_offset = None
+
     def push_frame(self, frame: Any, stream: Any, call_time_s: Any) -> None:
         duration = getattr(frame, "duration", None)
         offset = getattr(stream, "start_time_offset", None)
         if not all(self._finite(value) for value in (duration, offset, call_time_s)) or duration <= 0:
             return
+        self._observe_offset(offset)
         if offset != self._sdk_offset:
             # The SDK changes this public offset for a new provider connection/retry.
             if self._sdk_offset is not None:
@@ -66,6 +93,8 @@ class AudioSampleTimeline:
     def physical_utc_available(self, stream: Any, alternative: Any = None) -> bool:
         # A retry retains the SDK input channel. Frames forwarded during backoff can
         # be replayed at the new connection; their provider sample origin is unproved.
+        self._observe_offset(getattr(stream, "start_time_offset", None),
+                             provider_progress=alternative is not None)
         if self._sdk_offset is not None and getattr(stream, "start_time_offset", None) != self._sdk_offset:
             self._generation_unproved = True
         if self._generation_unproved:
@@ -78,6 +107,7 @@ class AudioSampleTimeline:
         return True
 
     def time_for(self, alternative: Any, stream: Any, *, end: bool) -> float | None:
+        self._observe_offset(getattr(stream, "start_time_offset", None), provider_progress=True)
         if not self.physical_utc_available(stream):
             return None
         value = getattr(alternative, "end_time" if end else "start_time", None)
@@ -101,7 +131,7 @@ class AudioSampleTimeline:
 def speech_stream_speaker_id(stream: Any, speaker_id: Any) -> Any:
     """An unresolved AssemblyAI label is not evidence of a distinct diarized voice."""
     # AssemblyAI's current wire contract uses PENDING for short/unassigned turns;
-    # pinned LiveKit 1.5.10 only normalizes its older UNKNOWN value.
+    # the LiveKit plugin (still so in 1.8.11) only normalizes its older UNKNOWN value.
     # https://www.assemblyai.com/docs/streaming/label-speakers-and-separate-channels
     if (AssemblyAISpeechStream is not None and isinstance(stream, AssemblyAISpeechStream)
             and speaker_id in ("PENDING", "UNKNOWN")):

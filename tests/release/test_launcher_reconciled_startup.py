@@ -99,6 +99,24 @@ if parallel_optional_starts_running; then exit 11; fi
     assert result.returncode == 0, result.stderr
 
 
+@pytest.mark.parametrize("ready_after,override,expected", [(35, "", 0), (999, "", 1), (9, "8", 1)])
+def test_runtime_readiness_allows_cold_recovery_and_keeps_a_deadline(ready_after, override, expected):
+    owner = function(LAUNCHER.read_text(), "wait_for_glasshive_stack_ready")
+    result = shell(f'''{owner}
+SECONDS=0
+GLASSHIVE_RUNTIME_PID=1
+GLASSHIVE_MCP_PID=2
+GLASSHIVE_UI_PID=3
+VIVENTIUM_GLASSHIVE_STARTUP_TIMEOUT_SECONDS='{override}'
+glasshive_stack_ready() {{ [[ "$SECONDS" -ge {ready_after} ]]; }}
+ps() {{ return 0; }}
+sleep() {{ SECONDS=$((SECONDS + 1)); }}
+log_error() {{ :; }}
+wait_for_glasshive_stack_ready
+''')
+    assert result.returncode == expected, result.stderr
+
+
 def test_canonical_uploads_and_full_glasshive_gate_precede_consumers():
     source = LAUNCHER.read_text()
     startup = source[source.index('# MCP Servers\n# ----------------------------'):]

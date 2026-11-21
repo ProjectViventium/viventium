@@ -220,24 +220,34 @@ def test_bridge_defaults_glasshive_poll_timeout_for_long_host_tasks(monkeypatch)
     assert bridge.glasshive_timeout_s == 600.0
 
 
-def test_sanitize_telegram_text_normalizes_em_dash_clause_breaks():
+def test_sanitize_telegram_text_preserves_em_dash_clause_breaks():
     text = "Hi—This is how it should read.\n\nHi — This is another example."
     cleaned = sanitize_telegram_text(text)
-    assert "Hi, This is how it should read." in cleaned
-    assert "Hi, This is another example." in cleaned
+    assert cleaned == text
 
 
-def test_sanitize_telegram_text_normalizes_inline_em_dash_to_space():
+def test_sanitize_telegram_text_preserves_inline_em_dash():
     text = "Or some other case could be—very different."
     cleaned = sanitize_telegram_text(text)
-    assert cleaned == "Or some other case could be very different."
+    assert cleaned == text
 
 
-def test_sanitize_telegram_text_preserves_markdown_code_spans_when_cleaning_em_dashes():
+def test_sanitize_telegram_text_preserves_em_dashes_and_markdown_code():
     text = "Say Hi—There but keep `foo—bar` untouched."
     cleaned = sanitize_telegram_text(text)
-    assert "Say Hi, There" in cleaned
-    assert "`foo—bar`" in cleaned
+    assert cleaned == text
+
+
+@pytest.mark.parametrize("text", [
+    "Alpha—Beta",
+    '> "The result—exactly as requested."',
+    "Rain fell—a good day to stay inside.",
+    "The identifier is `alpha—beta`; the literal value is Alpha—Beta.",
+])
+def test_sanitize_telegram_text_preserves_exact_literal_punctuation(text):
+    # Shared Main prompts own authored prose style. Transport cannot infer whether a dash
+    # belongs to a requested quote, override or literal artifact, so it preserves the text.
+    assert sanitize_telegram_text(text) == text
 
 
 def test_render_telegram_markdown_converts_basic_markdown():
@@ -740,9 +750,9 @@ def test_extract_cortex_followup_text():
     assert extract_cortex_followup(payload) == "Merged follow-up"
 
 
-def test_extract_cortex_followup_text_normalizes_em_dash_with_main_response_parity():
+def test_extract_cortex_followup_text_preserves_em_dash_with_main_response_parity():
     payload = {"event": "on_cortex_followup", "data": {"text": "Hi—This landed from Phase B."}}
-    assert extract_cortex_followup(payload) == "Hi, This landed from Phase B."
+    assert extract_cortex_followup(payload) == payload["data"]["text"]
 
 
 def test_extract_cortex_followup_delivery_requires_exact_presentation_identity():
@@ -2414,7 +2424,20 @@ async def test_stream_response_superseded_terminal_is_not_an_empty_or_connection
 
 
 @pytest.mark.asyncio
-async def test_stream_response_recoverable_final_error_starts_durable_followup(monkeypatch):
+@pytest.mark.parametrize("failure_class,receipt,has_cortex,deferred", [
+    ("completion_error", None, True, True),
+    ("provider_rate_limited", {"effect_ref": "work", "effect_kind": "durable_work_accepted"}, False, True),
+    ("provider_quota_exhausted", {"effect_ref": "work", "effect_kind": "durable_work_accepted"}, False, True),
+    ("provider_rate_limited", {"effect_ref": "work", "effect_kind": "durable_work_action_accepted"}, False, False),
+    ("provider_rate_limited", {"effect_ref": "work", "effect_kind": "durable_work_accepted", "confirmation_pending": True}, False, False),
+    ("provider_rate_limited", {"effect_ref": "work"}, False, False),
+    ("provider_rate_limited", {"effect_ref": "", "effect_kind": "durable_work_accepted"}, False, False),
+    ("provider_rate_limited", None, False, False),
+    ("native_turn_cancelled", {"effect_ref": "work", "effect_kind": "durable_work_accepted"}, False, False),
+])
+async def test_stream_response_recoverable_final_error_starts_durable_followup(
+    monkeypatch, failure_class, receipt, has_cortex, deferred,
+):
     bridge = _make_bridge()
     scheduled = []
     payload = {
@@ -2422,15 +2445,17 @@ async def test_stream_response_recoverable_final_error_starts_durable_followup(m
         "responseMessage": {
             "messageId": "msg-recoverable-final",
             "content": [
-                {"type": "cortex_brewing", "status": "brewing"},
+                *([{"type": "cortex_brewing", "status": "brewing"}] if has_cortex else []),
                 {
                     "type": "error",
                     "error": "Viventium could not complete this request. Please try again.",
-                    "error_class": "completion_error",
+                    "error_class": failure_class,
                 },
             ],
         },
     }
+    if receipt is not None:
+        payload["durableEffectReceipt"] = receipt
 
     async def fake_iter_sse_json_events(*, chunk_iter):
         _ = chunk_iter
@@ -2481,17 +2506,30 @@ async def test_stream_response_recoverable_final_error_starts_durable_followup(m
 
     chunks = [chunk async for chunk in bridge._stream_response("stream-recoverable", "111")]
 
-    assert chunks == [
+    expected_prefix = ([{"type": "durable_effect", "effect_ref": "work"}]
+                       if receipt and receipt.get("effect_ref") == "work" else [])
+    if not deferred:
+        assert chunks[:-1] == expected_prefix
+        assert chunks[-1]["type"] == "bridge_error"
+        assert chunks[-1]["error_class"] == failure_class
+        assert chunks[-1].get("recoverable") is not True
+        assert scheduled == []
+        return
+    assert chunks == expected_prefix + [
         {
             "type": "bridge_error",
             "text": "",
             "speak": False,
-            "error_class": "completion_error",
+            "error_class": "work_accepted_reply_interrupted" if receipt else failure_class,
             "recoverable": True,
         }
     ]
     assert scheduled == [("stream-recoverable", "111")]
     assert bridge._response_message_ids["stream-recoverable"] == "msg-recoverable-final"
+    if receipt is not None:
+        assert bridge._pending_stream_errors["stream-recoverable"]["message"] == (
+            "Your work was accepted, but the reply was interrupted."
+        )
 
 
 @pytest.mark.asyncio

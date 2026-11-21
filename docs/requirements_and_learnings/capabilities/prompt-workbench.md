@@ -24,6 +24,8 @@ live lineage, useful evaluation, and a recoverable rollout path.
 - **CC-027:** Workbench is the operational view for prompt composition, schedule prompt/model/effort,
   dependencies, history, channel results, latency, cost, and disposition; do not add a duplicate
   continuity dashboard.
+- Managed scheduled workers retain the configured model and supported reasoning effort on both
+  primary and fallback routes. A supported effort cannot be treated as missing configuration.
 - Starting a new schedule clears the saved selection for the editor, source details, history,
   periphery queries, and manual-run controls together. Live refresh cannot reselect the old row;
   choosing a saved schedule restores that schedule's controls.
@@ -44,6 +46,10 @@ live lineage, useful evaluation, and a recoverable rollout path.
 
 Sync proves byte movement, not model quality. Model review supports but never replaces exact-model
 evaluation or installed user QA.
+
+`main.voice_style` applies saved communication preferences across direct, scheduled, and follow-up
+answers. Authored prose follows saved communication preferences and the current request; requested exact quotes, code, identifiers, and
+literal artifacts retain their bytes. The current explicit request takes precedence.
 
 ## Owners and QA
 

@@ -478,6 +478,16 @@ or provider request.
   Thoughts, tools, skipped or incomplete parts, mutable file projections, cancelled and superseded
   output cannot seal speech. Replay cannot repeat a seal; terminal artifact failures retain their
   existing spoken failure notice. This boundary does not mark the whole task successful.
+- A retained native Claude Code speaker in a live call speaks its authored text as it streams.
+  The runtime does not force a structured final result there: the forced result made the model
+  write each reply a second time and held all speech until that second copy finished. Authored
+  text is projected onto the existing public envelope as voice-eligible, part by part. Text-only
+  or silent delivery remains a typed model choice through one declared tool,
+  `reply_without_voice`; its content is the complete unspoken reply for that turn. `{NTA}` keeps
+  its existing no-response meaning. Other harnesses, other surfaces and graph-transfer turns keep
+  the structured result.
+- In a streamed public part, only the unfinished last line can still become a link. A completed
+  line that ends with a bracketed voice tag must not hold back the lines after it.
 - Rapid same-parent voice ingress requests must coalesce onto one launched stream in ingress order
   when they land inside the configured turn-coalescing window.
 - Normal interactive voice should not pay a hidden coalescing wait by default after final STT text
@@ -794,6 +804,10 @@ or provider request.
   making silence look like a missing Phase B trigger.
 
 ### Turn-Taking Ownership Contract
+- Every TTS route uses the existing per-attempt first-audio budget after nonblank text reaches
+  the selected provider. Model thinking and empty input do not consume that budget. First PCM
+  disarms it; a connected but silent provider fails through the existing typed timeout/fallback
+  owner. Never replay a partially audible response through a fallback voice.
 - AssemblyAI-backed voice calls must default to provider endpointing (`turn_detection=stt`) instead
   of pure VAD-only turn ending.
 - Silero VAD remains attached even when STT endpointing owns turn completion so the runtime keeps
@@ -801,15 +815,15 @@ or provider request.
 - Viventium must not silently stack a second large endpointing delay on top of provider endpointing.
   When AssemblyAI STT endpointing is active, the local `AgentSession` endpointing delay should stay
   near-zero/small and act only as a guardrail.
-- Semantic turn detection is a higher-capability option, but it is an explicit config/runtime choice,
-  not the default fallback for every AssemblyAI install.
-- When the semantic turn-detector plugin is installed, launcher/runtime checks must verify both the
-  exact required cached assets and the actual local LiveKit inference-runner registration before
-  advertising `turn_detector` as available. The cache check must cover the ONNX model,
-  `languages.json`, and tokenizer/config files required by LiveKit's `AutoTokenizer` path; a
-  partial snapshot must fall back instead of registering a broken semantic detector path.
-- The turn-detector plugin must load lazily. Installing the package alone must not make an unrelated
-  local `vad` route boot with inference-runner initialization errors for an unused detector path.
+- The pinned LiveKit Agents 1.8 gateway uses the local audio turn detector `v1-mini` for local
+  Whisper and OpenAI listening, with a 1.0-second minimum and 1.5-second maximum endpointing wait.
+  AssemblyAI retains provider-owned turn completion with no added minimum wait and a fixed
+  1000-millisecond maximum provider silence. Provider model selection remains explicit.
+- The local detector and VAD do not send audio to a hosted turn detector. Missing required local
+  inference assets must remain an honest startup or call failure; do not silently select cloud.
+- LiveKit owns VAD interruption and false-interruption recovery. Preemptive generation is disabled
+  because Core must admit each turn before a reply begins. One call uses one Silero VAD and retains
+  up to 600 seconds of unbroken speech.
 - Local whisper.cpp (`whisper_local` / `pywhispercpp`) remains a StreamAdapter + Silero VAD path:
   - it inherits shared interruption handling and saved-route plumbing
   - it does not gain AssemblyAI-native endpointing knobs
@@ -861,41 +875,22 @@ or provider request.
 	    model path, must log a visible warning
 	  - if exact-model self-heal still fails, voice startup must fail honestly with the local
 	    Whisper.cpp class of failure instead of silently switching to another model or hosted STT route
-	  - when the optional multilingual semantic turn detector is installed, the exact cached assets are
-	    present, and the LiveKit inference runner is registered before worker construction, local Whisper
-	    may use `turn_detector` so end-of-turn is decided by the gateway's semantic turn-taking layer
-	    instead of by a short silence timer
-  - local Whisper defaults `VIVENTIUM_VOICE_MIN_INTERRUPTION_WORDS` to `0`, including the
-    semantic `turn_detector` path, because the StreamAdapter path can make transcript words
-    available only after local VAD/final recognition. Provider STT routes such as AssemblyAI keep
-    their default word guard unless explicitly configured otherwise.
-  - when the semantic detector is unavailable, uncached, or lacks a registered local inference
-    runner, local Whisper must fall back to the shared local VAD profile: `0.1s` minimum speech, `0.5s`
-    VAD silence, and `0.5s` local endpointing by default, with explicit env/config overrides still
-    taking precedence
-  - first-run detector downloads are best-effort; if the exact detector assets cannot be cached,
-    local Whisper remains functional on the local VAD fallback and the launcher retries on a later
-    start
+  - The SDK StreamAdapter shares the call's VAD. It does not introduce a second VAD configuration
+    or change the selected local model. The 1.0-second gateway floor allows whole-utterance
+    transcription to arrive before the turn is committed.
 - Optional voice-gateway plugins must never crash worker boot at module import time:
   - plugin availability checks must treat a missing parent package the same as a missing leaf module
-  - semantic turn detection may downgrade at runtime, and worker logs must expose the concrete
-    downgrade status (`plugin_missing`, `model_weights_missing`,
-    `local_inference_runner_unregistered`, or equivalent) instead of labeling an unhealthy path as
-    `semantic_turn_detector`
+  - required local inference availability and provider initialization failures stay distinct;
+    logs must describe the actual failure without advertising an available detector.
 - Voice-gateway dependency installation must compare installed package versions against
   `voice-gateway/requirements.txt`, not just test package presence. An already-created venv with
   older LiveKit packages must be refreshed during startup/upgrade instead of silently reusing stale
   packages.
-- Turn-ending behavior must be config-owned and observable:
-  - LiveKit interruption knobs compile from canonical config
-    - `VIVENTIUM_VOICE_AEC_WARMUP_DURATION_S` compiles from
-      `voice.turn_handling.aec_warmup_duration_s` and is logged with the effective session policy.
-      The default stays at LiveKit's `3.0s` for provider/STT-owned routes, while local Whisper uses
-      a shorter `1.0s` default so first-reply barge-in is not blocked for most of a short answer;
-      `off`/`none` disables LiveKit's AEC warmup gate for local experiments.
-  - AssemblyAI endpointing knobs compile from canonical config
-    - when unset, the shipped compiler now emits the documented Universal Streaming baseline rather
-      than relying on implicit plugin/API defaults
+- The installed SDK recipe and its effective behavior must be observable:
+  - legacy `voice.turn_handling` values and the old gateway turn-detection environment variables
+    remain accepted for configuration compatibility but do not tune the 1.8 gateway recipe.
+  - shared AssemblyAI and Silero configuration exports remain because Telegram transcription
+    still consumes them. Do not remove those exports when retiring gateway-only tuning.
   - the background follow-up window compiles from canonical config
   - worker/runtime capacity knobs compile from canonical config:
     - `VIVENTIUM_VOICE_INITIALIZE_PROCESS_TIMEOUT_S`
@@ -973,8 +968,8 @@ or provider request.
   provider when a call overrides onto a different STT route.
 - For AssemblyAI `stt`, the shipped default should follow current LiveKit guidance:
   - keep local `min_endpointing_delay` near zero
-  - let AssemblyAI own endpointing timing with explicit provider knobs
-  - prefer explicit compiler-emitted defaults over leaving the plugin/API path ambiguous
+  - let AssemblyAI own endpointing timing using the pinned recipe above
+  - keep selected engine and effective turn policy visible in the existing runtime context
 
 #### AssemblyAI Streaming Engine Selection
 - AssemblyAI exposes a selectable streaming engine in the modern playground "Listening" picker. The

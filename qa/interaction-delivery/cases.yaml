@@ -103,3 +103,20 @@ journeys:
     degradedAndRecovery: Reject foreign owners and mismatched origin, work, run, attempt, callback, revision, digest, or accepted operation/generation. Missing or malformed historical proof never grants access. Unexpected store failures remain failures.
     persistenceAndCleanup: Reload preserves exact file identity. Selecting or publishing a file still revalidates its current accepted-result fence; inventory alone cannot publish it. Remove only synthetic rows and artifacts.
     evidence: [file-bearing query and batch count, exact authority mutation negatives, valid sibling inventory, selected-file fence, opened bytes, reload]
+
+  - id: verified-output-file-policy
+    requirements: [CC-043, HARD-021, PW-071, PW-076, PW-110]
+    userAction: Set the inbound upload count to one, then request multiple harmless mixed-type outputs through current, callback and retained-result paths.
+    surfaces: [Web, Telegram, callback]
+    expectedResult: Every authorized valid output reaches the existing file carrier once; the inbound count does not truncate result publication.
+    degradedAndRecovery: Oversized, corrupt or unauthorized files retain typed failure receipts without hiding valid siblings. Existing byte and platform bounds and an explicit native output count policy still apply.
+    persistenceAndCleanup: Reload or retry reuses exact saved files and receipts without rerunning work or exposing private references.
+    evidence: [configured intake policy, verified output manifest, exact file bytes, per-file receipts, saved presentation and replay count]
+  - id: optional-native-progress
+    requirements: [CC-043, HARD-005, HARD-021, PW-076, PW-110]
+    userAction: Start harmless durable work, receive complete explicitly public native commentary, and continue an independent conversation while work finishes.
+    surfaces: [Web, Telegram, Voice, callback]
+    expectedResult: The same Main inherits the evidence and may give a useful update or remain silent. Progress has distinct nonterminal authority; final results still arrive through their existing owner once.
+    degradedAndRecovery: Raw logs, reasoning, tool output, partial fragments, missing identity and old attempts cannot become progress. Terminal, cancelled or replaced work discards late progress silently before authoring and dispatch. Voice also requires the original active call.
+    persistenceAndCleanup: Duplicate wake and restart reuse the native publication, existing Main claim and channel receipts. Progress cannot expose unfinished files or replace the terminal result.
+    evidence: [native publication and current run-attempt binding, original source, saved Main authority, delivery receipts, visible transcript and final result]

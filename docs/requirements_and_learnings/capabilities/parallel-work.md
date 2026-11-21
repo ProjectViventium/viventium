@@ -132,6 +132,11 @@ from a new objective without a generated task brief or another routing layer.
 - **PW-048 / PW-049:** Existing work stays reachable when admission is off. Web, Telegram, and Voice
   share one account-wide work record and behavior.
 
+Default work views and Main work context omit a Native goal or turn only when its complete owned
+original input set has approved cleanup tombstones. Current parents alone never prove cleanup.
+Mixed, live or missing origins keep normal checks; unavailable proof uses the existing unavailable
+path. History and immutable audit remain retained.
+
 ### Controls
 
 - **PW-027:** Only an explicit Stop aimed at exact work cancels durable work.
@@ -144,6 +149,9 @@ from a new objective without a generated task brief or another routing layer.
 - **PW-040 / PW-041:** Retry or Continue starts a new run in the same mission; Dismiss hides an
   acknowledged terminal item without deleting history. Archive or terminate is a separate operator
   action.
+- The logical work-detail adapter retains the fresh Native snapshot's current control run ID as
+  `nativeRunId`. Replacing a raw work reference with a coordinator alias must preserve that proof,
+  so a valid failed job remains retryable. Ownership, current actions and exact-run checks remain enforced.
 - **PW-042 / PW-043 / PW-044:** Actions cannot affect another item. Ambiguous references require one
   question; late cancelled output cannot become current; read-only links cannot control work; and
   control uses scoped, signed, one-use authority.
@@ -152,6 +160,10 @@ from a new objective without a generated task brief or another routing layer.
 
 Temporary synthesis transport or gateway unavailability uses the existing recovery backoff without
 consuming the deterministic failure budget. Failure state retains its stage, code and HTTP status.
+Completed follow-up callbacks retain the Native producer's optional
+`run_input.continuation_context.inherited_conversation` record. The receiver validates version,
+run identity and the declared continuation shape without discarding authorized original context.
+A schema repair reuses the durable callback/evidence retry owner; it does not rerun completed work.
 Historical deadletters are not automatically republished. Main can retrieve a selected retained
 result and its original accepted files without rerunning the Worker or requiring public access.
 The native signed request may carry exact prior run/attempt/file-hash grants from current accepted
@@ -204,6 +216,11 @@ confirm the current result; retained chat files and delivery receipts are not re
   and retained result run/revision as typed delivery facts. A result delivered in another conversation
   is not proof of delivery in the current conversation. Missing scope remains unknown; other-channel
   work remains visible and reusable through the existing owner-scoped tools.
+- Compact model observations keep execution state, result-message presentation receipts and
+  artifact delivery distinct. A completed run and a delivered result message do not prove that
+  requested files or other effects succeeded. The observation retains the existing owner-scoped
+  result-reader selector and observed revision; the original terminal body remains at that reader,
+  including any blocker. No rewritten result summary or automatic result-read loop is added.
 - Retained result reads preserve verified output-file descriptors with the original callback and
   result identity, as well as text and native media. A read neither reruns work nor changes delivery
   state. Presenting a retained file in another conversation must use the existing authorized file
@@ -226,6 +243,11 @@ confirm the current result; retained chat files and delivery receipts are not re
   Queued work consumes no execution lease until capacity is available; CLI probes remain fenced.
   Waiting state shows available and required capacity, shortage or reservation, age, blocker,
   next retry, and timeout; it never promises unverified future delivery.
+- Native work uses the existing measured byte reserve and selected-runtime capacity preflight.
+  Deployment disk percentages remain telemetry and retain their Docker admission policy; they
+  are not a second Native admission veto. The database and worker filesystems both retain the
+  configured byte reserve, including when they are on different volumes. Unknown probes fail
+  closed. Compiled readiness facts and client readers use the same selected-mode distinction.
 - Native conversation capacity retry logs retain the typed Main or Cortex role, hashed stream
   scope, retry delay, and elapsed wait in the rendered message. They contain no prompt, credential,
   or raw owner, conversation, or stream identity.

@@ -1,20 +1,21 @@
 # === VIVENTIUM START ===
 # Feature: LibreChat Voice Calls - Voice Gateway dependencies (pinned)
 # Added: 2026-01-08
+# Updated: 2026-11-10 - LiveKit Agents 1.8.11. End of turn is the SDK's own local turn model
+# (livekit-local-inference, installed by livekit-agents); the separate turn-detector plugin is gone.
 # === VIVENTIUM END ===
 
-aiohttp==3.13.5
-openai==2.32.0
-livekit-agents==1.5.10
-livekit-plugins-openai==1.5.10
-livekit-plugins-xai==1.5.10
-livekit-plugins-silero==1.5.10; python_version < "3.13"
-livekit-plugins-elevenlabs==1.5.10
-livekit-plugins-turn-detector==1.5.10
+aiohttp==3.14.5
+openai==3.48.0
+livekit-agents==1.8.11
+livekit-plugins-openai==1.8.11
+livekit-plugins-xai==1.8.11
+livekit-plugins-silero==1.8.11; python_version < "3.13"
+livekit-plugins-elevenlabs==1.8.11
 ## === VIVENTIUM START ===
 ## Feature: STT providers (AssemblyAI + local whisper.cpp)
 ## Added: 2026-01-11
 ## === VIVENTIUM END ===
-livekit-plugins-assemblyai==1.5.10
-numpy==2.4.4
+livekit-plugins-assemblyai==1.8.11
+numpy==2.5.4
 pywhispercpp==1.4.1

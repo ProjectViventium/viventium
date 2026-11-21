@@ -8938,8 +8938,14 @@ def build_parallel_work_readiness_facts(
     *,
     threshold_percent: float,
     warning_margin_percent: float,
+    execution_mode: str = "docker",
+    min_available_disk_mb: int = 4096,
+    native_storage_path: Path | None = None,
 ) -> dict[str, Any]:
-    """Compile public-safe registry and disk facts using the runtime's exact policy."""
+    """Keep deployment percentage telemetry distinct from Native's declared byte reserve."""
+    if execution_mode not in {"host", "docker"}:
+        raise ValueError("Invalid worker execution mode")
+    required_bytes = min_available_disk_mb * 1024**2
 
     prompt_fact = build_prompt_registry_facts(prompt_bundle)
 
@@ -8977,10 +8983,23 @@ def build_parallel_work_readiness_facts(
         "warningMarginPercent": float(warning_margin_percent),
         **storage_reason,
     }
+    native_probe_path = Path(native_storage_path or storage_path)
+    try:
+        native_usage = shutil.disk_usage(native_probe_path)
+        native_available = int(native_usage.free)
+        if int(native_usage.total) <= 0 or native_available < 0:
+            raise ValueError("invalid storage probe")
+        native_storage = {"version": 1, "healthy": native_available >= required_bytes,
+            "availableBytes": native_available, "requiredBytes": required_bytes}
+    except (OSError, ValueError, ZeroDivisionError):
+        native_storage = {"version": 1, "healthy": False, "availableBytes": None,
+            "requiredBytes": required_bytes, "errorCode": "storage_probe_unavailable"}
     return {
         "contractVersion": 1,
+        "executionMode": execution_mode,
         "promptLayers": prompt_fact,
         "storagePressure": storage_fact,
+        "nativeStorage": native_storage,
     }
 
 
@@ -9204,6 +9223,9 @@ def main() -> None:
         warning_margin_percent=orchestration_settings[
             "storage_pressure_warning_margin_percent"
         ],
+        execution_mode=orchestration_settings["automatic_execution_mode"],
+        min_available_disk_mb=orchestration_settings["min_available_disk_mb"],
+        native_storage_path=Path(env["WPR_DB_PATH"]).parent if env.get("WPR_DB_PATH") else None,
     )
     readiness_facts_path.write_text(
         json.dumps(readiness_facts, indent=2, sort_keys=True) + "\n",

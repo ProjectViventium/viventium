@@ -273,8 +273,6 @@ _MARKDOWN_CODE_SPAN_RE = re.compile(
     r"```[\s\S]*?(?:```|\Z)|~~~[\s\S]*?(?:~~~|\Z)|`[^`\n]*`",
     re.MULTILINE,
 )
-_EM_DASH_RE = re.compile("—")
-_EM_DASH_OPENERS = "\"'“‘([{"
 # Voice-control markup is model-authored text for expressive TTS. It must not be
 # shown to Telegram users when a voice-routed response is displayed as text.
 _VOICE_SPEAK_RE = re.compile(r"</?speak[^>]*>", re.IGNORECASE)
@@ -576,7 +574,7 @@ def _sanitize_telegram_prose(text: str) -> str:
     cleaned = _CITATION_STANDALONE_RE.sub(" ", cleaned)
     cleaned = _CITATION_CLEANUP_RE.sub(" ", cleaned)
     cleaned = _BRACKET_CITATION_RE.sub(" ", cleaned)
-    cleaned = _normalize_em_dashes_for_telegram(cleaned)
+    # Shared Main prompts own prose style. Preserve literal punctuation and explicit overrides.
     return re.sub(r"[ \t]{2,}", " ", cleaned)
 
 
@@ -669,36 +667,6 @@ def _apply_outside_markdown_code(
     parts.append(transform(text[last_index:]))
     return "".join(parts)
 
-
-def _normalize_em_dashes_for_telegram(text: str) -> str:
-    if "—" not in text:
-        return text
-
-    parts: list[str] = []
-    last_index = 0
-    for match in _EM_DASH_RE.finditer(text):
-        dash_index = match.start()
-        segment = text[last_index:dash_index].rstrip(" \t")
-        if segment:
-            parts.append(segment)
-
-        next_index = match.end()
-        while next_index < len(text) and text[next_index] in " \t":
-            next_index += 1
-
-        lookahead_index = next_index
-        while lookahead_index < len(text) and text[lookahead_index] in _EM_DASH_OPENERS:
-            lookahead_index += 1
-
-        prev_has_space = dash_index > 0 and text[dash_index - 1] in " \t"
-        next_has_space = dash_index + 1 < len(text) and text[dash_index + 1] in " \t"
-        next_char = text[lookahead_index] if lookahead_index < len(text) else ""
-        replacement = ", " if prev_has_space or next_has_space or next_char.isupper() else " "
-        parts.append(replacement)
-        last_index = next_index
-
-    parts.append(text[last_index:])
-    return "".join(parts)
 
 
 # === VIVENTIUM START ===
@@ -1487,6 +1455,7 @@ _STRUCTURED_STREAM_ERROR_MESSAGES = {
     ),
     # This is a generic completion failure; it does not prove a provider failure.
     "completion_error": "Viventium could not complete this request. Please try again.",
+    "work_accepted_reply_interrupted": "Your work was accepted, but the reply was interrupted.",
 }
 
 _FOLLOWUP_RECOVERABLE_ERROR_CLASSES = {
@@ -1496,6 +1465,14 @@ _FOLLOWUP_RECOVERABLE_ERROR_CLASSES = {
     "post_stream_finalization",
     "recoverable_provider_error",
     "tool_cortex_deferred_main_response",
+}
+
+# A verified new-work receipt survives failure of its conversational acknowledgment.
+# Stop/decline and uncertain action receipts retain their existing terminal behavior.
+_ACCEPTED_WORK_REPLY_ERROR_CLASSES = _FOLLOWUP_RECOVERABLE_ERROR_CLASSES | {
+    "provider_rate_limited", "provider_quota_exhausted", "provider_auth_missing",
+    "provider_unauthorized", "provider_temporarily_unavailable",
+    "provider_response_deadline_exceeded", "native_response_failed",
 }
 
 
@@ -3212,6 +3189,11 @@ class LibreChatBridge:
             )
             return False
         if not permit:
+            await self._mark_glasshive_delivery_status(
+                delivery,
+                "failed",
+                error="Telegram dispatch was not authorized; no send attempted",
+            )
             return False
         delivery["dispatchPermit"] = permit
         try:
@@ -5434,26 +5416,39 @@ class LibreChatBridge:
                                 # replaced by the existing Main/cortex follow-up. Keep the failure pending
                                 # instead of committing a false Telegram connection bubble.
                                 if final_error:
+                                    accepted_work = bool(
+                                        effect_ref
+                                        and isinstance(durable_receipt, dict)
+                                        and durable_receipt.get("effect_kind") == "durable_work_accepted"
+                                        and durable_receipt.get("confirmation_pending") is not True
+                                        and final_error_class in _ACCEPTED_WORK_REPLY_ERROR_CLASSES
+                                    )
                                     public_error = _stream_error_message(
                                         final_error,
                                         error_class=final_error_class or None,
                                     )
+                                    presentation_error_class = final_error_class
+                                    if accepted_work:
+                                        presentation_error_class = "work_accepted_reply_interrupted"
+                                        public_error = _STRUCTURED_STREAM_ERROR_MESSAGES[presentation_error_class]
                                     can_recover_in_followup = bool(
                                         response_message_id
-                                        and final_error_class in _FOLLOWUP_RECOVERABLE_ERROR_CLASSES
-                                        and (final_cortex_parts or deferred_internal_final)
+                                        and (accepted_work or (
+                                            final_error_class in _FOLLOWUP_RECOVERABLE_ERROR_CLASSES
+                                            and (final_cortex_parts or deferred_internal_final)
+                                        ))
                                     )
                                     if can_recover_in_followup:
                                         self._mark_cortex_seen(stream_id)
                                         self._pending_stream_errors[stream_id] = {
-                                            "error_class": final_error_class,
+                                            "error_class": presentation_error_class,
                                             "message": public_error,
                                         }
                                         if self._schedule_followup_poll(stream_id, chat_id):
                                             yield _bridge_error_event(
                                                 "",
                                                 speak=False,
-                                                error_class=final_error_class,
+                                                error_class=presentation_error_class,
                                                 recoverable=True,
                                             )
                                             return
@@ -5467,7 +5462,7 @@ class LibreChatBridge:
                                     )
                                     yield await self._foreground_failure_event(
                                         public_error,
-                                        error_class=final_error_class, payload=payload,
+                                        error_class=presentation_error_class, payload=payload,
                                         stream_id=stream_id, chat_id=chat_id,
                                     )
                                     return

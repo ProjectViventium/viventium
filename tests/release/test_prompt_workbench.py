@@ -444,6 +444,41 @@ def test_cognitive_integrity_blocks_codex_symlink_that_hides_enabled_companion(
     assert cognitive_integrity._runtime_codex_worker_status()["status"] == "ok"
 
 
+@pytest.mark.parametrize("entrypoint,has_companion,expected", [
+    ("bin/codex", True, True),
+    ("bin/codex", False, False),
+    ("../outside/codex", True, False),
+])
+def test_cognitive_integrity_resolves_packaged_codex_companion(
+    tmp_path: Path, entrypoint: str, has_companion: bool, expected: bool,
+) -> None:
+    package = tmp_path / "package"
+    executable = package / "CodexCLI.app" / "Contents" / "MacOS" / "codex"
+    executable.parent.mkdir(parents=True)
+    executable.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+    executable.chmod(0o755)
+    launcher = package / "bin" / "codex"
+    launcher.parent.mkdir()
+    launcher.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+    launcher.chmod(0o755)
+    (package / "codex-package.json").write_text(json.dumps({
+        "layoutVersion": 1, "entrypoint": entrypoint,
+    }), encoding="utf-8")
+    if has_companion:
+        companion = launcher.parent / "codex-code-mode-host"
+        companion.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+        companion.chmod(0o755)
+    if entrypoint.startswith("../"):
+        outside_launcher = tmp_path / "outside" / "codex"
+        outside_launcher.parent.mkdir()
+        for outside in (outside_launcher, outside_launcher.parent / "codex-code-mode-host"):
+            outside.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+            outside.chmod(0o755)
+    invocation = tmp_path / "codex"
+    invocation.symlink_to(executable)
+    assert cognitive_integrity._codex_companion_ready(invocation) is expected
+
+
 def test_cognitive_integrity_rejects_successful_but_unparseable_codex_feature_probe(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -2240,13 +2275,18 @@ def test_nightly_seed_preserves_user_prompt_and_repairs_only_scheduler_task_plum
         {
             "executor": "viventium_agent",
             "prompt": "stale task mirror",
-            "schedule": {"type": "daily", "time": "01:00", "timezone": "UTC"},
             "active": 1,
             "last_run_at": "2026-07-10T08:00:00Z",
             "last_status": "completed",
             "last_generated_text": "preserved run summary",
         },
     )
+    # Inject legacy drift below the edit API, which now updates linked timing atomically.
+    with store._connect() as conn:
+        conn.execute(
+            "UPDATE scheduled_tasks SET schedule_json = ? WHERE id = ?",
+            (json.dumps({"type": "daily", "time": "01:00", "timezone": "UTC"}), stored_before["task_id"]),
+        )
 
     reseeded = scheduled_prompts.seed_nightly_prompt(
         user_id="startup-admin",
@@ -2433,6 +2473,25 @@ def test_scheduled_automation_tuple_is_config_driven_and_profile_aware(
         "fallback_reasoning_effort": "max",
     }
     assert scheduled_prompts._default_glasshive_fallback_worker_profile("claude-code") == ""
+
+
+@pytest.mark.parametrize("effort", ["default", "low", "medium", "high", "xhigh", "max"])
+def test_scheduled_claude_fallback_preserves_configured_effort(
+    monkeypatch: pytest.MonkeyPatch, effort: str,
+) -> None:
+    monkeypatch.setenv("WPR_MODEL_CLAUDE_CODE", "claude-configured-test")
+    monkeypatch.setenv("WPR_CLAUDE_CODE_EFFORT", effort)
+    monkeypatch.setenv("GLASSHIVE_DEFAULT_FALLBACK_WORKER_PROFILE", "claude-code")
+    assert scheduled_prompts._default_glasshive_fallback_worker_route("codex-cli") == {
+        "fallback_worker_profile": "claude-code",
+        "fallback_worker_model": "claude-configured-test",
+        "fallback_reasoning_effort": effort,
+    }
+
+
+def test_scheduled_claude_fallback_rejects_unknown_effort(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("WPR_CLAUDE_CODE_EFFORT", "unsupported-effort")
+    assert scheduled_prompts._default_automation_reasoning_effort("claude-code") == ""
 
 
 def test_scheduled_prompt_crud_manual_run_and_private_tables(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

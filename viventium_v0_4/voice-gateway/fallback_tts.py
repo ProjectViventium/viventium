@@ -31,7 +31,7 @@ from dataclasses import dataclass
 from typing import Callable, Optional, Sequence, Union
 
 from livekit import rtc
-from livekit.agents import APIError
+from livekit.agents import APIError, APITimeoutError
 from livekit.agents._exceptions import APIStatusError
 from livekit.agents.tts import (
     AudioEmitter,
@@ -567,11 +567,19 @@ class _FallbackChunkedStream(ChunkedStream):
         )
         stream = tts_impl.synthesize(synth_text, conn_options=conn_options)
         frames: list[rtc.AudioFrame] = []
-        async with stream:
-            async for ev in stream:
-                if not hasattr(ev, "frame"):
-                    continue
-                frames.append(ev.frame)
+        # A connected provider can accept text and never send PCM. The native connection timeout
+        # alone does not bound that wait. Stop timing after the first frame: a partial utterance
+        # must never be replayed by another provider.
+        first_audio = asyncio.timeout(conn_options.timeout if synth_text.strip() else None)
+        try:
+            async with stream, first_audio:
+                async for ev in stream:
+                    if not hasattr(ev, "frame"):
+                        continue
+                    first_audio.reschedule(None)
+                    frames.append(ev.frame)
+        except TimeoutError:
+            raise APITimeoutError("TTS provider did not produce first audio in time") from None
 
         if not frames:
             return []
@@ -631,6 +639,15 @@ class _FallbackSynthesizeStream(SynthesizeStream):
         text_boundary = _ProviderTextBoundaryNormalizer()
         control_observer = _StreamingVoiceControlObserver()
         input_complete = False
+        first_audio_received = False
+        first_audio = asyncio.timeout(None)
+
+        def forward_text(text: str) -> None:
+            stream.push_text(text)
+            # The stream can be opened while the model is still thinking. Arm only when text
+            # reaches this provider, once; whitespace and empty input do not start a timer.
+            if text.strip() and not first_audio_received and first_audio.when() is None:
+                first_audio.reschedule(asyncio.get_running_loop().time() + conn_options.timeout)
 
         async def _forward_input_task() -> None:
             nonlocal input_complete
@@ -665,7 +682,7 @@ class _FallbackSynthesizeStream(SynthesizeStream):
                                 reason=boundary_reason,
                                 tts_impl=stream_tts,
                             )
-                            stream.push_text(text)
+                            forward_text(text)
                         elif boundary_input:
                             _log_tts_input(
                                 attempt,
@@ -693,7 +710,7 @@ class _FallbackSynthesizeStream(SynthesizeStream):
                                     reason=boundary_reason,
                                     tts_impl=stream_tts,
                                 )
-                                stream.push_text(flushed)
+                                forward_text(flushed)
                             elif boundary_input:
                                 _log_tts_input(
                                     attempt,
@@ -723,7 +740,7 @@ class _FallbackSynthesizeStream(SynthesizeStream):
                             reason=boundary_reason,
                             tts_impl=stream_tts,
                         )
-                        stream.push_text(tail)
+                        forward_text(tail)
                     elif boundary_input:
                         _log_tts_input(
                             attempt,
@@ -737,13 +754,19 @@ class _FallbackSynthesizeStream(SynthesizeStream):
                         )
                 stream.end_input()
 
-        input_task = asyncio.create_task(_forward_input_task(), name="fallback_tts_forward_input")
+        input_task = None
         try:
-            async with stream:
+            async with stream, first_audio:
+                input_task = asyncio.create_task(_forward_input_task(), name="fallback_tts_forward_input")
                 async for audio in stream:
+                    first_audio_received = True
+                    first_audio.reschedule(None)
                     yield audio
+        except TimeoutError:
+            raise APITimeoutError("TTS provider did not produce first audio in time") from None
         finally:
-            await aio.cancel_and_wait(input_task)
+            if input_task is not None:
+                await aio.cancel_and_wait(input_task)
             observed_controls = control_observer.finish()
             _log_voice_rendering_observation(
                 attempt,

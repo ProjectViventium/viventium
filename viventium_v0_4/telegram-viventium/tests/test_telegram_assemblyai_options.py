@@ -10,29 +10,48 @@ import pytest
 from TelegramVivBot.utils.stt_env import build_assemblyai_stt_options, normalize_voice_context_keyterms
 
 
-@pytest.mark.parametrize('format_turns', ['true', 'false'])
-def test_note_options_equal_existing_call_builder(format_turns):
+def _call_builder():
+    """The call's own builder with the one module value it reads, without loading a worker."""
     source = Path(__file__).resolve().parents[2] / 'voice-gateway' / 'worker.py'
-    function = next(node for node in ast.parse(source.read_text()).body
-                    if isinstance(node, ast.FunctionDef) and node.name == '_build_assemblyai_stt_kwargs')
+    wanted = [
+        node for node in ast.parse(source.read_text()).body
+        if (isinstance(node, ast.FunctionDef) and node.name == '_build_assemblyai_stt_kwargs')
+        or (isinstance(node, ast.Assign) and any(
+            isinstance(target, ast.Name) and target.id == '_ASSEMBLYAI_MAX_TURN_SILENCE_MS'
+            for target in node.targets))
+    ]
     namespace = {'Env': object, 'Any': Any, 'Optional': Optional,
                  '_normalize_assemblyai_stt_model': lambda value: value}
-    exec(compile(ast.Module(body=[function], type_ignores=[]), str(source), 'exec'), namespace)
+    exec(compile(ast.Module(body=wanted, type_ignores=[]), str(source), 'exec'), namespace)
+    return namespace['_build_assemblyai_stt_kwargs'], namespace['_ASSEMBLYAI_MAX_TURN_SILENCE_MS']
+
+
+@pytest.mark.parametrize('format_turns', ['true', 'false'])
+def test_note_options_equal_call_builder_for_the_values_a_call_still_sends(format_turns):
+    # A call no longer reads the compiled end-of-turn values: it sends one fixed unfinished-sentence
+    # wait. When the compiled config carries that same wait, a note and a call send the same options.
+    build_call, call_silence_ms = _call_builder()
     keyterms = ['Example Meeting']
-    call = namespace['_build_assemblyai_stt_kwargs'](types.SimpleNamespace(
+    call = build_call(types.SimpleNamespace(
         assemblyai_stt_model='universal-streaming-multilingual',
-        assemblyai_end_of_turn_confidence_threshold=0.31,
-        assemblyai_min_end_of_turn_silence_when_confident_ms=240,
-        assemblyai_max_turn_silence_ms=1500,
         assemblyai_format_turns=format_turns == 'true',
     ), keyterms)
     assert call.pop('model') == 'universal-streaming-multilingual'
     assert build_assemblyai_stt_options({
+        'VIVENTIUM_ASSEMBLYAI_MAX_TURN_SILENCE_MS': str(call_silence_ms),
+        'VIVENTIUM_ASSEMBLYAI_FORMAT_TURNS': format_turns,
+    }, keyterms) == call
+
+
+def test_note_still_forwards_every_compiled_end_of_turn_value():
+    assert build_assemblyai_stt_options({
         'VIVENTIUM_ASSEMBLYAI_END_OF_TURN_CONFIDENCE_THRESHOLD': '0.31',
         'VIVENTIUM_ASSEMBLYAI_MIN_END_OF_TURN_SILENCE_WHEN_CONFIDENT_MS': '240',
         'VIVENTIUM_ASSEMBLYAI_MAX_TURN_SILENCE_MS': '1500',
-        'VIVENTIUM_ASSEMBLYAI_FORMAT_TURNS': format_turns,
-    }, keyterms) == call
+    }) == {
+        'speaker_labels': True, 'end_of_turn_confidence_threshold': 0.31,
+        'min_turn_silence': 240, 'max_turn_silence': 1500,
+    }
 
 
 @pytest.mark.parametrize('value', [None, []])

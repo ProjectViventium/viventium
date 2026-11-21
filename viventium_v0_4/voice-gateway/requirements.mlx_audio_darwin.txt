@@ -5,12 +5,10 @@
 # Purpose:
 # - Install MLX-Audio + Chatterbox Turbo dependencies into the voice-gateway venv when using
 #   `VIVENTIUM_TTS_PROVIDER=local_chatterbox_turbo_mlx_8bit`.
-# - Also install `livekit-agents` when this optional bundle is reused by non-voice-gateway
-#   surfaces such as Telegram, because the shared `mlx_chatterbox_tts.py` adapter imports the
-#   LiveKit agent abstractions.
+# - The owning voice-gateway or Telegram environment installs its own pinned LiveKit set first.
+#   This optional bundle must not change that runtime's Agents or plugin versions.
 # - Keep production/Linux voice-gateway images clean and compatible by avoiding MLX deps in the
 #   main requirements.txt (MLX is macOS-only).
 # === VIVENTIUM END ===
 
-livekit-agents==1.5.10
 mlx-audio[tts]==0.4.2

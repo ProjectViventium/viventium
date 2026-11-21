@@ -58,6 +58,48 @@ class _FakeContext:
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("reject_photo", [False, True])
+async def test_mixed_files_keep_selection_order_including_confirmed_media_fallback(reject_photo):
+    calls = []
+    permit = AsyncMock(return_value=True)
+
+    async def send(kind, **kwargs):
+        value = kwargs.get(kind)
+        payload = value if isinstance(value, bytes) else value.read()
+        calls.append((kind, payload))
+        if kind == "photo" and reject_photo:
+            raise BadRequest("synthetic unsupported photo")
+        return SimpleNamespace(message_id=len(calls))
+
+    async def photo(**kw):
+        return await send("photo", **kw)
+
+    async def video(**kw):
+        return await send("video", **kw)
+
+    async def document(**kw):
+        return await send("document", **kw)
+
+    bot = SimpleNamespace(send_photo=photo, send_video=video, send_document=document)
+    content = [(b"first", "application/pdf"), (b"second", "image/png"),
+               (b"third", "video/mp4"), (b"fourth", "application/octet-stream")]
+    receipt = await send_librechat_attachments(
+        bot=bot, base_url="http://core.test", secret="synthetic",
+        telegram_user_id="10", telegram_username="", telegram_chat_id="10",
+        attachments=[{"file_id": f"file-{i}", "filename": f"item-{i}.bin"} for i in range(4)],
+        message_thread_id=None, reply_to_message_id=None,
+        fetch_bytes=AsyncMock(side_effect=content), before_side_effect=permit,
+    )
+    expected = [("document", b"first"), ("photo", b"second")]
+    if reject_photo: expected.append(("document", b"second"))
+    expected += [("video", b"third"), ("document", b"fourth")]
+    assert calls == expected
+    assert permit.await_count == len(expected)
+    assert receipt["outcomes"]["sent"] == 4
+    assert receipt["delivery_unknown"] is False
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("video_error", [None, BadRequest("unsupported video"), TimedOut()])
 async def test_mp4_delivery_preserves_exact_bytes_and_does_not_retry_unknown_send(video_error):
     bot = _FakeTelegramBot()
@@ -157,8 +199,8 @@ async def test_attachment_download_applies_loopback_http_client_policy(
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("image_count", [1, 2])
-async def test_send_attachments_sends_photo_or_image_album(image_count):
+@pytest.mark.parametrize("image_count", [1, 2, 3])
+async def test_send_attachments_sends_each_image_as_its_own_photo_message(image_count):
     context = _FakeContext()
     base_url = "http://example.com"
     secret = "s"
@@ -167,7 +209,7 @@ async def test_send_attachments_sends_photo_or_image_album(image_count):
 
     async def _fake_fetch_bytes(**kwargs):
         captured["url"] = kwargs["url"]
-        return b"img-bytes", "image/png"
+        return kwargs["url"].rsplit("/", 1)[-1].encode(), "image/png"
 
     await send_librechat_attachments(
         bot=context.bot,
@@ -184,16 +226,12 @@ async def test_send_attachments_sends_photo_or_image_album(image_count):
     )
 
     assert captured["url"] == f"http://example.com/api/viventium/telegram/files/download/file-{image_count}"
-    if image_count == 1:
-        assert not context.bot.media_groups
-        assert context.bot.photos[0]["photo"] == b"img-bytes"
-        sent = context.bot.photos[0]
-    else:
-        assert not context.bot.photos
-        assert len(context.bot.media_groups) == 1
-        assert len(context.bot.media_groups[0]["media"]) == 2
-        sent = context.bot.media_groups[0]
-    assert sent["reply_to_message_id"] == 42
+    # One Telegram message per image, in selection order; never an album.
+    assert not context.bot.media_groups
+    assert [item["photo"] for item in context.bot.photos] == [
+        f"file-{index}".encode() for index in range(1, image_count + 1)
+    ]
+    assert all(item["reply_to_message_id"] == 42 for item in context.bot.photos)
     assert len(context.bot.documents) == 0
 
 
@@ -241,7 +279,7 @@ async def test_send_attachments_dedupes_and_batches(monkeypatch):
         return b"img", "image/png"
 
     attachments = []
-    # 11 unique images -> an album of 10 and a single photo.
+    # 11 unique images -> 11 photo messages.
     for i in range(11):
         attachments.append({"file_id": f"img-{i}", "filename": f"{i}.png", "type": "image/png"})
     # duplicate should be skipped (no extra download)
@@ -261,9 +299,8 @@ async def test_send_attachments_dedupes_and_batches(monkeypatch):
     )
 
     assert calls["n"] == 11
-    assert len(context.bot.media_groups) == 1
-    assert len(context.bot.media_groups[0]["media"]) == 10
-    assert len(context.bot.photos) == 1
+    assert not context.bot.media_groups
+    assert len(context.bot.photos) == 11
     assert context.bot.photos[0]["photo"] == b"img"
 
 
@@ -380,14 +417,13 @@ async def test_unavailable_attachment_reports_one_notice_without_losing_successe
 
 
 @pytest.mark.asyncio
-async def test_document_and_album_rejections_produce_one_delivery_notice():
+async def test_document_and_photo_rejections_produce_one_delivery_notice():
     context = _FakeContext()
 
     async def reject(**_kwargs):
         raise RuntimeError("synthetic-private-error-detail")
 
     context.bot.send_document = reject
-    context.bot.send_media_group = reject
     context.bot.send_photo = reject
 
     async def fetch(**kwargs):
@@ -447,18 +483,15 @@ async def test_document_timeout_does_not_claim_the_file_was_not_delivered():
 # === VIVENTIUM START === Telegram rejects unsupported photos, not arbitrary file bytes.
 @pytest.mark.asyncio
 @pytest.mark.parametrize("image_count", [1, 2])
-async def test_rejected_photo_or_album_sends_original_named_files(image_count):
+async def test_rejected_photos_send_original_named_files(image_count):
     bot = _FakeTelegramBot()
     attempts = []
 
     async def reject(**kwargs):
-        if "media" in kwargs:
-            assert 2 <= len(kwargs["media"]) <= 10
         attempts.append(kwargs)
         raise BadRequest("Photo_invalid_dimensions")
 
     bot.send_photo = reject
-    bot.send_media_group = reject
 
     async def fetch(**kwargs):
         return kwargs["url"].rsplit("/", 1)[-1].encode(), "image/svg+xml"
@@ -471,7 +504,8 @@ async def test_rejected_photo_or_album_sends_original_named_files(image_count):
         message_thread_id=7, reply_to_message_id=42, fetch_bytes=fetch,
     )
 
-    assert len(attempts) == 1
+    assert len(attempts) == image_count
+    assert not bot.media_groups
     assert [item["filename"] for item in bot.documents] == [f"image-{i}.svg" for i in range(image_count)]
     assert [item["document"].getvalue() for item in bot.documents] == [f"image-{i}".encode() for i in range(image_count)]
     assert all(item["message_thread_id"] == 7 and item["reply_to_message_id"] == 42
@@ -614,8 +648,58 @@ async def test_native_output_siblings_use_existing_download_document_bytes():
 # === VIVENTIUM END ===
 
 
+# === VIVENTIUM START === Separate photo messages fail and settle one file at a time.
 @pytest.mark.asyncio
-async def test_attachment_receipt_gates_album_document_and_unavailable_notice():
+@pytest.mark.parametrize(("error", "outcomes", "documents", "notice"), [
+    (BadRequest("Photo_invalid_dimensions"),
+     {"sent": 3, "rejected": 0, "unconfirmed": 0}, [b"image-2"], None),
+    (TimedOut(), {"sent": 2, "rejected": 0, "unconfirmed": 1}, [],
+     "Delivery of 1 file could not be confirmed."),
+    (RetryAfter(3), {"sent": 2, "rejected": 1, "unconfirmed": 0}, [],
+     "1 file could not be sent."),
+])
+async def test_one_failed_photo_does_not_take_the_other_images_with_it(
+    error, outcomes, documents, notice, caplog,
+):
+    bot = _FakeTelegramBot()
+    sent_photos = []
+
+    async def send_photo(**kwargs):
+        if kwargs["photo"] == b"image-2":
+            raise error
+        sent_photos.append(kwargs["photo"])
+        return bot.receipt()
+
+    bot.send_photo = send_photo
+
+    async def fetch(**kwargs):
+        return kwargs["url"].rsplit("/", 1)[-1].encode(), "image/png"
+
+    receipt = await send_librechat_attachments(
+        bot=bot, base_url="https://example.invalid", secret="synthetic",
+        telegram_user_id="owner", telegram_username="", telegram_chat_id="chat",
+        attachments=[{"file_id": f"image-{i}", "filename": f"image-{i}.png"} for i in (1, 2, 3)],
+        message_thread_id=None, reply_to_message_id=None, fetch_bytes=fetch,
+    )
+
+    # The failed image is never retried as a photo and never blocks or repeats its neighbours.
+    assert sent_photos == [b"image-1", b"image-3"]
+    assert not bot.media_groups
+    assert [item["document"].getvalue() for item in bot.documents] == documents
+    assert {key: receipt["outcomes"][key] for key in outcomes} == outcomes
+    assert receipt["delivery_unknown"] is bool(outcomes["unconfirmed"])
+    assert [item["text"] for item in bot.messages] == ([notice] if notice else [])
+    # The cause is recorded for diagnosis: method, outcome, error class and size only.
+    recorded = [record.getMessage() for record in caplog.records
+                if record.name == "utils.librechat_attachments"]
+    assert len(recorded) == 1
+    assert f"method=send_photo error={type(error).__name__} size_bytes=7" in recorded[0]
+    assert "image-2" not in recorded[0] and "example.invalid" not in recorded[0]
+# === VIVENTIUM END ===
+
+
+@pytest.mark.asyncio
+async def test_attachment_receipt_gates_each_photo_document_and_unavailable_notice():
     bot = _FakeTelegramBot()
     events, progress = [], []
 
@@ -623,7 +707,7 @@ async def test_attachment_receipt_gates_album_document_and_unavailable_notice():
         events.append("permit")
         return True
 
-    for name in ("send_media_group", "send_document", "send_message"):
+    for name in ("send_photo", "send_media_group", "send_document", "send_message"):
         method = getattr(bot, name)
         async def observed(_name=name, _method=method, **kwargs):
             events.append(_name)
@@ -643,13 +727,15 @@ async def test_attachment_receipt_gates_album_document_and_unavailable_notice():
         message_thread_id=7, reply_to_message_id=None, fetch_bytes=fetch,
         before_side_effect=authorize, on_message_ids=progress.append,
     )
-    assert events == ["permit", "send_media_group", "permit", "send_document", "permit", "send_message"]
+    assert events == ["permit", "send_photo", "permit", "send_photo",
+                      "permit", "send_document", "permit", "send_message"]
     assert receipt["message_ids"] == ["1001", "1002", "1003", "1004"]
     assert receipt["delivery_unknown"] is False
     assert receipt["outcomes"] == {"sent": 3, "unavailable": 1, "retrieval_failed": 0,
         "oversized": 0, "rejected": 0, "unconfirmed": 0}
 
-    assert progress == [["1001", "1002"], ["1001", "1002", "1003"],
+    # Each photo's message id is reported as soon as that photo is confirmed.
+    assert progress == [["1001"], ["1001", "1002"], ["1001", "1002", "1003"],
         ["1001", "1002", "1003", "1004"]]
 
 

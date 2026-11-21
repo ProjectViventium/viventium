@@ -1935,6 +1935,17 @@ and selection. Managed composition uses the registered source; standalone compon
 remain independent. Exact-model old/proposed and real delivery gates remain separate from source
 lineage tests. No runtime route, origin rewrite or content inspection bypass is added.
 
+Version 7 adds one delivery fact to the same registered contract: each selected file is delivered
+on its own in link order; on Telegram that is one photo, video or document message per file, never
+an album; selection is the whole mechanism and needs no other tool or capability. The contract owns
+this statement because it is the only text every file-selecting host-native conversation and
+artifact mission already receives. A Telegram surface prompt reaches Main's Telegram turns only,
+not a worker and not a scheduled turn. A typed per-turn fact would misstate a constant adapter
+property as turn state, and a result can fan out to several channels after the turn ends. The
+standalone xPerfect text is unchanged and stays channel-neutral; the registry tests bind each
+side to its own source, not to each other. `worker_file_delivery` carries the positive, negative
+and adjacent cases for it on both configured Worker routes.
+
 ### Native history carrier and foreground maintenance
 
 A valid reviewed conversation prefix plus every newer source row may use the existing native

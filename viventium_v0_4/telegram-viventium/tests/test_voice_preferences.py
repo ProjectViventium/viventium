@@ -13,11 +13,6 @@ TELEGRAM_ROOT = ROOT / "TelegramVivBot"
 if str(TELEGRAM_ROOT) not in sys.path:
     sys.path.insert(0, str(TELEGRAM_ROOT))
 
-_fake_pil = types.ModuleType("PIL")
-_fake_pil_image = types.ModuleType("PIL.Image")
-_fake_pil.Image = _fake_pil_image
-sys.modules.setdefault("PIL", _fake_pil)
-sys.modules.setdefault("PIL.Image", _fake_pil_image)
 
 _fake_aient_pkg = sys.modules.setdefault("aient", types.ModuleType("aient"))
 _fake_aient_inner_pkg = sys.modules.setdefault("aient.aient", types.ModuleType("aient.aient"))

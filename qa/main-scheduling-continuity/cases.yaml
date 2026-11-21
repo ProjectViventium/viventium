@@ -7,6 +7,14 @@ sourceInventories:
   - qa/main-continuity/cases.md
   - qa/scheduling-cortex/cases.md
 journeys:
+  - id: timing-edit-parity
+    requirements: [CC-026, CC-030]
+    userAction: Change a linked schedule's time or timezone through either supported editing surface, then reload Workbench and inspect the next occurrence.
+    surfaces: [Scheduling Cortex, Prompt Workbench, durable clock]
+    expectedResult: The clock task and its same-owner definition show the same timing and timezone after one committed edit.
+    degradedAndRecovery: A stale edit or failed definition write changes neither record. A foreign owner's definition stays unchanged.
+    persistenceAndCleanup: Timing survives reload and restart. Delivery receipt updates preserve timing; retain prior run evidence.
+    evidence: [atomic rollback and ownership checks, declared and effective schedule, next occurrence, visible Workbench state]
   - id: bounded-compaction-field-repair
     requirements: [CC-003, CC-007]
     userAction: Continue a long conversation whose indivisible history produces an oversized draft or omits required verbatim unfinished input; repeat with a stale repair digest, source correction and quoted instruction.

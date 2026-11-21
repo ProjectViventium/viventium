@@ -5009,27 +5009,18 @@ async def _getViventiumResponse(
         image_extensions = r'(https?://[^\s<>\"()]+(?:\.(?:webp|jpg|jpeg|png|gif)|/image)[^\s<>\"()]*)'
         image_urls = re.findall(image_extensions, tmpresult, re.IGNORECASE)
         image_urls_result = [url[0] if isinstance(url, tuple) else url for url in image_urls]
-        if image_urls_result:
+        # === VIVENTIUM START === One message per image, as in `send_librechat_attachments`.
+        for image_url in image_urls_result[:10]:
             try:
-                # Limit the number of images to 10 (Telegram limit for albums)
-                image_urls_result = image_urls_result[:10]
-
-                if len(image_urls_result) == 1:
-                    await context.bot.send_photo(
-                        chat_id=chatid,
-                        photo=image_urls_result[0],
-                        message_thread_id=message_thread_id,
-                        reply_to_message_id=messageid,
-                    )
-                else:
-                    await context.bot.send_media_group(
-                        chat_id=chatid,
-                        media=[InputMediaPhoto(media=img_url) for img_url in image_urls_result],
-                        message_thread_id=message_thread_id,
-                        reply_to_message_id=messageid,
-                    )
+                await context.bot.send_photo(
+                    chat_id=chatid,
+                    photo=image_url,
+                    message_thread_id=message_thread_id,
+                    reply_to_message_id=messageid,
+                )
             except Exception as e:
                 logger.warning(f"Failed to send image(s): {str(e)}")
+        # === VIVENTIUM END ===
 
     text_delivery_succeeded = False
     if final_segments:

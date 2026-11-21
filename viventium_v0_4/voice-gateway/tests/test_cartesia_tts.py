@@ -415,3 +415,74 @@ class TestCartesiaEmotionSegments(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestCartesiaOneShotRetryPolicy(unittest.TestCase):
+    """LiveKit 1.8.11 honours ``APIError.retryable`` for one-shot synthesis (1.5.10 retried all)."""
+
+    def _synthesize(self, status: int) -> tuple[int, BaseException]:
+        import asyncio
+        from unittest.mock import patch
+
+        from livekit.agents import APIError
+        from livekit.agents.types import APIConnectOptions
+
+        posts = []
+
+        class Response:
+            def __init__(self) -> None:
+                self.status = status
+
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *args) -> None:
+                return None
+
+            async def text(self) -> str:
+                return "synthetic provider body"
+
+        class Http:
+            def __init__(self, *args, **kwargs) -> None:
+                pass
+
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *args) -> None:
+                return None
+
+            def post(self, url, headers=None, data=None):
+                posts.append(url)
+                return Response()
+
+        async def run() -> BaseException:
+            voice = CartesiaTTS(config=CartesiaConfig(api_key="synthetic"))
+            stream = voice.synthesize(
+                "A short sentence.", conn_options=APIConnectOptions(max_retry=1, retry_interval=0.0, timeout=5.0)
+            )
+            try:
+                async for _ in stream:
+                    pass
+            except APIError as error:
+                return error
+            finally:
+                await stream.aclose()
+            raise AssertionError("synthesis unexpectedly succeeded")
+
+        with patch("cartesia_tts.aiohttp.ClientSession", Http):
+            error = asyncio.run(run())
+        return len(posts), error
+
+    def test_auth_and_credit_failures_are_not_retried(self) -> None:
+        for status in (401, 402, 403):
+            with self.subTest(status=status):
+                posts, error = self._synthesize(status)
+                self.assertEqual(posts, 1)
+                self.assertFalse(error.retryable)
+
+    def test_transient_failures_are_retried_once_per_allowed_retry(self) -> None:
+        for status in (408, 429, 500, 503):
+            with self.subTest(status=status):
+                posts, _error = self._synthesize(status)
+                self.assertEqual(posts, 2)
