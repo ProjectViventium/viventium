@@ -104,6 +104,8 @@ work and silence remain valid choices; no timer or fixed topic replaces that jud
 - **CC-029:** Private continuity uses one durable schedule object and conversation; the public
   product ships no active owner schedule.
 - **CC-030:** Timezone, active window, and cadence are owner-selected private configuration values.
+- Timing edits commit the clock task and its same-owner Workbench definition together. A failed or
+  stale edit changes neither record. Delivery receipts do not change declared timing.
 - **CC-031:** Private recovery policy may choose latest-only catch-up inside an active window and
   defer recovery outside it.
 

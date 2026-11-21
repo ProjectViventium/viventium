@@ -4,11 +4,13 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const vm = require('node:vm');
+const { createRequire } = require('node:module');
 const repoRoot = path.resolve(__dirname, '../..');
 const librechatRoot = path.join(repoRoot, 'viventium_v0_4/LibreChat');
 const ts = require(path.join(librechatRoot, 'node_modules/typescript'));
-const source = fs.readFileSync(path.join(librechatRoot, 'packages/api/src/glasshive/orchestrationMode.ts'), 'utf8');
-const code = ts.transpileModule(source, { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }).outputText;
+const sourcePath = path.join(librechatRoot, 'packages/api/src/glasshive/orchestrationMode.ts');
+const compilerOptions = { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 };
+const code = ts.transpileModule(fs.readFileSync(sourcePath, 'utf8'), { compilerOptions }).outputText;
 const proof = { contractVersion: 1, localQa: true, candidateDigest: `sha256:${'a'.repeat(64)}`,
   installedArtifactDigest: `sha256:${'b'.repeat(64)}`, runtimeOwnerBindingHash: `sha256:${'c'.repeat(64)}` };
 
@@ -28,7 +30,6 @@ function fixture({ native = true, operational = true, response = proof, duringQu
       JSON.stringify({ release_root: root, pid: process.pid }), { mode: 0o600 });
   }
   let calls = 0;
-  const exports = {};
   const childProcess = { execFileSync() { throw Error('unexpected source process'); },
     execFile(binary, argv, options, callback) {
       calls++;
@@ -41,8 +42,30 @@ function fixture({ native = true, operational = true, response = proof, duringQu
   const env = { NODE_ENV: 'test', HOME: base };
   if (native) Object.assign(env, { VIVENTIUM_INSTALL_MODE: 'native', VIVENTIUM_NATIVE_RELEASE_ROOT: root, VIVENTIUM_APP_SUPPORT_DIR: support });
   const testProcess = { env, execPath: executable, getuid: () => process.getuid(), kill: process.kill.bind(process) };
-  vm.runInNewContext(text, { exports, require: (name) => name === 'child_process' ? childProcess : require(name),
-    process: testProcess, Buffer, setTimeout, clearTimeout, setInterval, Date, __filename: __filename });
+  const modules = new Map();
+  function loadSourceModule(filename, compiledText) {
+    if (modules.has(filename)) return modules.get(filename).exports;
+    const module = { exports: {} };
+    modules.set(filename, module);
+    const scopedRequire = createRequire(filename);
+    const sourceRequire = (name) => {
+      if (name === 'child_process' || name === 'node:child_process') return childProcess;
+      let resolved;
+      try { resolved = scopedRequire.resolve(name); }
+      catch (error) {
+        if (!name.startsWith('.') || error.code !== 'MODULE_NOT_FOUND') throw error;
+        resolved = scopedRequire.resolve(`${name}.ts`);
+      }
+      return resolved.endsWith('.ts') ? loadSourceModule(resolved) : scopedRequire(name);
+    };
+    const moduleCode = compiledText ?? ts.transpileModule(fs.readFileSync(filename, 'utf8'),
+      { compilerOptions }).outputText;
+    vm.runInNewContext(moduleCode, { module, exports: module.exports, require: sourceRequire,
+      process: testProcess, Buffer, setTimeout, clearTimeout, setInterval, Date,
+      __filename: filename, __dirname: path.dirname(filename) });
+    return module.exports;
+  }
+  const exports = loadSourceModule(sourcePath, text);
   exports.configureOrchestrationMode({ orchestrationReadinessSnapshot: () => ({ available: operational }),
     orchestrationDeploymentReadinessSnapshot: () => ({ available: operational }) });
   return { api: exports, calls: () => calls, support, root, cleanup: () => fs.rmSync(base, { recursive: true }) };

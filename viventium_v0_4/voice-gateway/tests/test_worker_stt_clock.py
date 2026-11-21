@@ -11,6 +11,7 @@ from unittest.mock import patch
 
 import pytest
 
+from livekit import rtc
 from livekit.agents import Agent
 from livekit.agents import APIConnectionError
 from livekit.agents.stt import SpeechData, SpeechEvent, SpeechEventType
@@ -36,13 +37,27 @@ def test_owned_stream_clock_handles_warm_idle_rejoin_retry_and_vad_adapter(
     clock = [origin + 1.0]
     forwarded = []
     lifecycle = []
+    anchors = []
     context = {}
     frame = SimpleNamespace(duration=0.02)
     tracker = SpeakerSegmentTracker(call_session_id='synthetic-clock')
 
     class SpeechStream:
         start_time = origin + 1.0
-        start_time_offset = 0.0
+        _offset = 0.0
+        _input_started_at = None
+
+        # LiveKit 1.8.11 (stt.RecognizeStream): declaring an offset fixes where the session
+        # timeline began; the first frame the connection reads then re-anchors the offset on that
+        # frame's capture time. A new connection (retry) re-anchors it again.
+        @property
+        def start_time_offset(self):
+            return self._offset
+
+        @start_time_offset.setter
+        def start_time_offset(self, value):
+            self._input_started_at = clock[0] - value
+            self._offset = value
 
         async def __aenter__(self):
             self.ready = asyncio.Event()
@@ -54,6 +69,8 @@ def test_owned_stream_clock_handles_warm_idle_rejoin_retry_and_vad_adapter(
 
         def push_frame(self, received):
             forwarded.append(received)
+            self._offset = clock[0] - received.duration - self._input_started_at
+            anchors.append(self._offset)
             # A provider may publish its more exact first-send anchor through the SDK field.
             self.start_time = clock[0]
             self.ready.set()
@@ -77,11 +94,15 @@ def test_owned_stream_clock_handles_warm_idle_rejoin_retry_and_vad_adapter(
     speech_stream = SpeechStream()
     provider = SimpleNamespace(capabilities=SimpleNamespace(streaming=streaming),
                                stream=lambda **kwargs: speech_stream)
-    adapted = SimpleNamespace(stream=lambda **kwargs: speech_stream)
+    async def close_adapter():
+        lifecycle.append('adapter-closed')
+    adapted = SimpleNamespace(stream=lambda **kwargs: speech_stream, aclose=close_adapter)
     session = SimpleNamespace(conn_options=SimpleNamespace(stt_conn_options='synthetic-options'),
                               _recorder_io=None, _started_at=origin)
+    # 1.8.11: the session timeline anchor lives on AudioRecognition's STT pipeline.
+    pipeline = SimpleNamespace(input_started_at=None, _recognize_stream=None)
     activity = SimpleNamespace(stt=provider, vad=object(), session=session,
-                               _audio_recognition=SimpleNamespace(_input_started_at=None))
+                               _audio_recognition=SimpleNamespace(_stt_pipeline=pipeline))
     agent = ViventiumVoiceAgent(instructions='Synthetic timing test.', speaker_tracker=tracker,
         speaker_timeline_offset=lambda: clock[0] - origin,
         speaker_timeline_origin=(lambda: origin * 1000.0) if has_origin else None)
@@ -106,8 +127,13 @@ def test_owned_stream_clock_handles_warm_idle_rejoin_retry_and_vad_adapter(
          patch('livekit.agents.stt.StreamAdapter', return_value=adapted) as adapter:
         asyncio.run(run())
     assert forwarded == [frame]
-    assert lifecycle == ['open', 'input-cancelled', 'close']
+    # The temporary adapter the node makes for a non-streaming listener is closed with the node.
+    assert lifecycle == ['open', 'input-cancelled', 'close'] + ([] if streaming else ['adapter-closed'])
     assert adapter.call_count == (0 if streaming else 1)
+    # The node hands the session anchor to the SDK pipeline, as the SDK's default node does.
+    assert pipeline.input_started_at == origin
+    # The SDK moved the declared offset (1.0 s) onto the first frame; that alone is not a retry.
+    assert anchors == [pytest.approx(first_frame_s - 0.02)] and anchors[0] != 1.0
     if has_origin and not retry:
         expected_end_s = first_frame_s + 7.7
         assert context['utteranceEndClock'] == 'utc'
@@ -274,10 +300,10 @@ def test_pinned_sdk_default_stt_node_contract_requires_explicit_compatibility_re
     installed = version('livekit-agents')
     requirements = (Path(__file__).resolve().parents[1] / 'requirements.txt').read_text()
     assert f'livekit-agents=={installed}' in requirements
-    assert installed == '1.5.10'
+    assert installed == '1.8.11'
     source = textwrap.dedent(inspect.getsource(Agent.default.stt_node))
     digest = hashlib.sha256(ast.dump(ast.parse(source), include_attributes=False).encode()).hexdigest()
-    assert digest == '87fab5c4f4d11806f8656b178a7f6c778b8bdaa63d104cb25a44857d61f25f1e'
+    assert digest == '009ea61b87e76dca8f100fb3ba91e0a04b936eaf4a1a67bcd26710b90d6ccd65'
 
 
 def test_ambient_stream_keeps_the_same_measured_sample_clock_after_an_audio_gap():
@@ -399,17 +425,24 @@ def test_real_sdk_backoff_replays_queued_audio_without_claiming_unproved_physica
             speaker_timeline_offset=lambda: clock[0] - origin,
             speaker_timeline_origin=lambda: origin * 1000.0)
         agent._get_activity_or_raise = lambda: activity
+        def real_frame(duration_s):
+            # 1.8.11 anchors the stream clock only on real audio frames.
+            samples = int(16000 * duration_s)
+            return rtc.AudioFrame(data=b'\0\0' * samples, sample_rate=16000, num_channels=1,
+                                  samples_per_channel=samples)
         async def audio():
             clock[0] = origin + 1.2
-            yield SimpleNamespace(duration=0.02, sample_rate=16000)
+            yield real_frame(0.02)
             await backoff.wait()
+            diagnostic['firstAnchor'] = stream.start_time_offset
             for index in range(50):
                 clock[0] = origin + 1.2 + (index + 1) * 0.02
-                yield SimpleNamespace(duration=0.02, sample_rate=16000)
+                yield real_frame(0.02)
             queued.set()
             await new_generation.wait()
+            diagnostic['retryAnchor'] = stream.start_time_offset
             clock[0] = origin + 3.3
-            yield SimpleNamespace(duration=0.8, sample_rate=16000)
+            yield real_frame(0.8)
             await asyncio.Event().wait()
         async def sdk_sleep(delay):
             if delay >= 1.0:
@@ -427,6 +460,93 @@ def test_real_sdk_backoff_replays_queued_audio_without_claiming_unproved_physica
     with patch('worker.time.time', side_effect=lambda: clock[0]):
         asyncio.run(run())
     assert diagnostic['sdkEndAtMs'] - diagnostic['physicalEndAtMs'] == pytest.approx(1000, rel=0, abs=0.001)
+    # 1.8.11: the first connection that read audio anchored on its first frame (captured at
+    # 1.18 s), the reconnect anchored again on the first queued frame it replayed (1.20 s).
+    assert diagnostic['firstAnchor'] == pytest.approx(1.18, rel=0, abs=1e-6)
+    assert diagnostic['retryAnchor'] == pytest.approx(1.20, rel=0, abs=1e-6)
     assert receipt['speakerSegments'][0]['speaker']['actorTrust'] == 'owner_participant'
     assert receipt['utteranceEndClock'] == 'call_audio_relative'
     assert 'utteranceEndAtMs' not in receipt
+
+
+def _real_frame(duration_s=0.02):
+    samples = int(16000 * duration_s)
+    return rtc.AudioFrame(data=b'\0\0' * samples, sample_rate=16000, num_channels=1,
+                          samples_per_channel=samples)
+
+
+def _run_real_recognize_stream(*, reconnect_after, frames=6):
+    """Drive a real LiveKit 1.8.11 RecognizeStream the way the owner node does."""
+    observed = {}
+
+    async def run():
+        read = asyncio.Queue()
+        failed = []
+        stt = SimpleNamespace(_label='synthetic', capabilities=SimpleNamespace(streaming=True),
+                              emit=lambda *args: None)
+
+        class Stream(RecognizeStream):
+            async def _metrics_monitor_task(self, event_aiter):
+                async for _ in event_aiter:
+                    pass
+
+            async def _run(self):
+                count = 0
+                async for _frame in self._input_ch:
+                    count += 1
+                    read.put_nowait(self.start_time_offset)
+                    if reconnect_after and count == reconnect_after and not failed:
+                        failed.append(True)
+                        raise APIConnectionError('Synthetic reconnect')
+
+        stream = Stream(stt=stt, conn_options=APIConnectOptions(max_retry=2, retry_interval=0.0))
+        timeline = AudioSampleTimeline()
+        stream.start_time_offset = 5.0  # the node: "the session timeline began 5 s ago"
+        timeline.expect_first_frame_anchor(stream)
+        observed['declared'] = stream.start_time_offset
+        offsets = []
+        for index in range(frames):
+            timeline.push_frame(_real_frame(), stream, 10.0 + (index + 1) * 0.02)
+            stream.push_frame(_real_frame())
+            offsets.append(await asyncio.wait_for(read.get(), timeout=2.0))
+        observed['offsets'] = offsets
+        observed['available'] = timeline.physical_utc_available(stream)
+        anchored = stream.start_time_offset
+        second_frame = SpeechData(language='en', text='Second frame', start_time=anchored + 0.02,
+                                  end_time=anchored + 0.04)
+        observed['end'] = timeline.time_for(second_frame, stream, end=True)
+        observed['start'] = timeline.time_for(second_frame, stream, end=False)
+        await stream.aclose()
+
+    asyncio.run(run())
+    return observed
+
+
+def test_sdk_first_frame_anchor_of_a_declared_offset_is_not_read_as_a_retry():
+    observed = _run_real_recognize_stream(reconnect_after=0)
+    # LiveKit 1.8.11 replaces the declared offset once, when the connection reads its first frame.
+    assert observed['declared'] == 5.0
+    assert len(set(observed['offsets'])) == 1 and observed['offsets'][0] != 5.0
+    assert observed['offsets'][0] == pytest.approx(5.0 - 0.02, rel=0, abs=0.05)
+    # Same connection, same first frame: measured audio time stays proven and exact.
+    assert observed['available'] is True
+    assert observed['start'] == pytest.approx(10.02)
+    assert observed['end'] == pytest.approx(10.04)
+
+
+def test_sdk_reconnect_after_the_first_frame_anchor_is_still_an_unproved_generation():
+    observed = _run_real_recognize_stream(reconnect_after=3)
+    first, later = observed['offsets'][0], observed['offsets'][-1]
+    assert first != 5.0 and later != first  # anchored once, then anchored again by the reconnect
+    assert observed['available'] is False
+    assert observed['start'] is None and observed['end'] is None
+
+
+def test_undeclared_stream_offset_change_is_a_retry_from_the_first_observation():
+    # The ambient path never declares an offset: 1.8.11 keeps it at 0.0 until a reconnect.
+    clock = AudioSampleTimeline()
+    stream = SimpleNamespace(start_time_offset=0.0)
+    clock.push_frame(SimpleNamespace(duration=1.0), stream, 2.0)
+    stream.start_time_offset = 3.0
+    clock.push_frame(SimpleNamespace(duration=1.0), stream, 5.0)
+    assert not clock.physical_utc_available(stream)

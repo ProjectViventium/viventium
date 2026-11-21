@@ -2050,7 +2050,7 @@ def test_launcher_waits_boundedly_for_glasshive_cold_start_and_fails_early_on_pr
     start_index = script.index("start_glasshive() {")
     start_body = script[start_index : script.index("start_ms365_mcp() {", start_index)]
 
-    assert 'local timeout_seconds="${VIVENTIUM_GLASSHIVE_STARTUP_TIMEOUT_SECONDS:-30}"' in wait_body
+    assert 'local timeout_seconds="${VIVENTIUM_GLASSHIVE_STARTUP_TIMEOUT_SECONDS:-60}"' in wait_body
     assert '[[ "$timeout_seconds" -gt 120 ]]' in wait_body
     assert 'SECONDS - started_at' in wait_body
     assert 'ps -p "$GLASSHIVE_RUNTIME_PID"' in wait_body
@@ -11352,8 +11352,16 @@ def test_parallel_work_compiler_defaults_automatic_and_emits_bounded_runtime_con
         env["WPR_API_TOKEN"],
     }
 
+@pytest.mark.parametrize("total,used,available,threshold,status,native_healthy,error,separate_free", [
+    (1000, 850, 150, 90, "warning", False, None, None),
+    (2 * 1024**4, 2 * 1024**4 - 16 * 1024**3, 16 * 1024**3, 99, "critical", True, None, None),
+    (10 * 1024**3, 8 * 1024**3, 2 * 1024**3, 99, "healthy", False, None, None),
+    (None, None, None, 99, "critical", False, "storage_probe_unavailable", None),
+    (2 * 1024**4, 2 * 1024**4 - 16 * 1024**3, 16 * 1024**3, 99, "critical", False, None, 2 * 1024**3),
+])
 def test_compiler_builds_real_prompt_registry_and_typed_disk_pressure_facts(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    total, used, available, threshold, status, native_healthy, error, separate_free,
 ) -> None:
     prompt_bundle = {
         "schema_version": 1,
@@ -11369,17 +11377,23 @@ def test_compiler_builds_real_prompt_registry_and_typed_disk_pressure_facts(
             },
         },
     }
-    monkeypatch.setattr(
-        config_compiler.shutil,
-        "disk_usage",
-        lambda _path: shutil._ntuple_diskusage(1000, 850, 150),
-    )
+    database_volume = tmp_path / "database-volume"
+    database_volume.mkdir()
+    def usage(path):
+        if error:
+            raise OSError("Synthetic probe unavailable")
+        free = separate_free if separate_free is not None and path == database_volume else available
+        return shutil._ntuple_diskusage(total, used, free)
+    monkeypatch.setattr(config_compiler.shutil, "disk_usage", usage)
 
     facts = config_compiler.build_parallel_work_readiness_facts(
         prompt_bundle,
         tmp_path,
-        threshold_percent=90,
+        threshold_percent=threshold,
         warning_margin_percent=10,
+        execution_mode="host",
+        min_available_disk_mb=4096,
+        native_storage_path=database_volume if separate_free is not None else None,
     )
 
     prompt = facts["promptLayers"]
@@ -11390,12 +11404,17 @@ def test_compiler_builds_real_prompt_registry_and_typed_disk_pressure_facts(
     assert len(prompt["registryHash"]) == 64
     assert facts["storagePressure"] == {
         "version": 1,
-        "status": "warning",
-        "usedPercent": 85.0,
-        "availableBytes": 150,
-        "thresholdPercent": 90.0,
+        "status": status,
+        "usedPercent": 100.0 if error else round(used * 100 / total, 3),
+        "availableBytes": 0 if error else available,
+        "thresholdPercent": float(threshold),
         "warningMarginPercent": 10.0,
+        **({"reason": error} if error else {}),
     }
+    assert facts["executionMode"] == "host"
+    assert facts["nativeStorage"] == {"version": 1, "healthy": native_healthy,
+        "availableBytes": None if error else separate_free if separate_free is not None else available,
+        "requiredBytes": 4096 * 1024**2, **({"errorCode": error} if error else {})}
 
 def test_local_parallel_work_emits_state_preserving_idle_compute_reaper_defaults() -> None:
     config = minimal_compile_config()

@@ -1694,123 +1694,10 @@ def _extract_voice_task_event(
     return task_event
 
 
-def format_insights_for_direct_speech(insights: list[dict[str, Any]]) -> str:
-    """
-    Deterministically format cortex insights for voice output (no extra LLM call).
-    This avoids the voice playground diverging from LibreChat's DB truth.
-    """
-    # === VIVENTIUM START ===
-    # Keep voice UX configurable; avoid hardcoded preambles or labels.
-    preamble = (os.getenv("VIVENTIUM_VOICE_INSIGHT_PREAMBLE", "") or "").strip()
-    include_names = (os.getenv("VIVENTIUM_VOICE_INSIGHT_INCLUDE_CORTEX_NAME", "") or "").strip()
-    include_names = include_names == "1"
-    # === VIVENTIUM END ===
-
-    lines: list[str] = []
-    for insight_obj in insights:
-        if not isinstance(insight_obj, dict):
-            continue
-        name = insight_obj.get("cortex_name") or "Background Analysis"
-        text = insight_obj.get("insight") or ""
-        if not isinstance(text, str):
-            continue
-        # === VIVENTIUM START ===
-        # Ensure follow-up speech removes plans/URLs/emails/markdown artifacts.
-        clean = sanitize_voice_followup_text(text)
-        # === VIVENTIUM END ===
-        if not clean:
-            continue
-        # Keep it speakable; avoid extremely long monologues.
-        if len(clean) > 700:
-            clean = clean[:700].rstrip() + "..."
-        if include_names and isinstance(name, str) and name.strip():
-            lines.append(f"{name.strip()}: {clean}")
-        else:
-            lines.append(clean)
-
-    if not lines:
-        return ""
-
-    if preamble:
-        return f"{preamble} {' '.join(lines)}"
-    return " ".join(lines)
-
-
 def _should_log_latency() -> bool:
     return (os.getenv("VIVENTIUM_VOICE_LOG_LATENCY", "") or "").strip().lower() in {
         "1", "true", "yes", "y", "on",
     }
-
-
-def _voice_abort_timeout_s() -> float:
-    raw = (os.getenv("VIVENTIUM_VOICE_ABORT_TIMEOUT_S", "") or "").strip()
-    try:
-        value = float(raw) if raw else 2.0
-    except ValueError:
-        value = 2.0
-    return max(0.25, min(value, 10.0))
-
-
-async def _abort_librechat_voice_stream(
-    *,
-    session: aiohttp.ClientSession,
-    origin: str,
-    stream_id: str,
-    headers: dict[str, str],
-    request_id: str,
-    started_at: float,
-    reason: str,
-    log_latency: bool,
-) -> None:
-    abort_url = f"{origin}/api/viventium/voice/stream/{stream_id}/abort"
-    try:
-        async with session.post(
-            abort_url,
-            headers=headers,
-            json={"reason": reason},
-            timeout=aiohttp.ClientTimeout(total=_voice_abort_timeout_s()),
-        ) as resp:
-            if resp.status >= 400:
-                logger.warning(
-                    "[LibreChatLLM] Voice abort failed status=%s request_id=%s "
-                    "stream_id=%s category=upstream_error",
-                    resp.status,
-                    request_id,
-                    stream_id,
-                )
-                return
-            if log_latency:
-                logger.info(
-                    "[VoiceLatency] abort_post_ms=%s request_id=%s stream_id=%s reason=%s",
-                    int((time.time() - started_at) * 1000),
-                    request_id,
-                    stream_id,
-                    reason,
-                )
-    except asyncio.CancelledError:
-        raise
-    except Exception as exc:
-        logger.warning(
-            "[LibreChatLLM] Voice abort request failed request_id=%s stream_id=%s error=%s",
-            request_id,
-            stream_id,
-            _summarize_error_for_log(str(exc)),
-        )
-
-
-async def _shielded_abort_librechat_voice_stream(**kwargs: Any) -> None:
-    abort_task = asyncio.create_task(_abort_librechat_voice_stream(**kwargs))
-    try:
-        await asyncio.shield(abort_task)
-    except asyncio.CancelledError:
-        current_task = asyncio.current_task()
-        if current_task is not None and hasattr(current_task, "uncancel"):
-            while current_task.cancelling():
-                current_task.uncancel()
-        try:
-            await asyncio.shield(abort_task)
-        finally:
-            raise
 
 
 async def _post_voice_admission_receipt(
@@ -1900,8 +1787,6 @@ class LibreChatLLM(llm.LLM):
         self._participant_reconnect_grace_s = max(
             0.0, float(participant_reconnect_grace_s)
         )
-        self._task_cancel_results: dict[str, dict[str, Any]] = {}
-        self._task_cancel_lock = asyncio.Lock()
         self._sent_speaker_revisions: dict[tuple[str, int], None] = {}
         self._sent_speaker_session_states: dict[tuple[Any, ...], None] = {}
         self._speaker_revision_lock = asyncio.Lock()
@@ -2325,13 +2210,6 @@ class LibreChatLLM(llm.LLM):
         while len(target) > max_entries:
             target.pop(next(iter(target)))
 
-    def record_current_trace_hop(self, hop: str, timestamp_ms: float) -> None:
-        trace = self._current_trace
-        if trace is None:
-            return
-        if trace.record(hop, timestamp_ms):
-            logger.info("[VoiceHop] %s", trace.log_payload(hop))
-
     def register_trace(self, trace: VoiceHopTrace) -> None:
         self._current_trace_id = trace.correlation_id
         self._current_trace = trace
@@ -2570,17 +2448,6 @@ class LibreChatLLM(llm.LLM):
                     self.schedule_trace_terminal(trace)
                 return correlation_id
         return ""
-
-    def log_current_trace_terminal_if_ready(self) -> None:
-        trace = self._current_trace
-        if (
-            trace is None
-            or trace.correlation_id in self._summarized_trace_ids
-            or not trace.has("tts_first_byte")
-            or not trace.has("audio_output")
-        ):
-            return
-        self.schedule_trace_terminal(trace)
 
     def finalize_trace_terminal(
         self, trace: VoiceHopTrace
@@ -3293,15 +3160,6 @@ class LibreChatLLM(llm.LLM):
         finally:
             self.schedule_trace_terminal(hop_trace, stream_terminal=True)
 
-    async def wait_for_background_continuations(self, *, timeout_s: float = 5.0) -> None:
-        tasks = list(self._background_continuations)
-        if not tasks:
-            return
-        await asyncio.wait_for(
-            asyncio.gather(*tasks, return_exceptions=True),
-            timeout=max(float(timeout_s), 0.01),
-        )
-
     async def close_background_continuations(self) -> None:
         self._speaker_delivery_closing = True
         for presentation in self._presentation_by_trace_id.values():
@@ -3561,13 +3419,6 @@ class LibreChatLLM(llm.LLM):
             ),
         }
 
-    async def get_call_mode(self) -> Optional[str]:
-        """Compatibility projection for callers that only need the active mode."""
-        state = await self.get_call_state()
-        if state is None or state.get("status") in {"ended", "failed"}:
-            return None
-        return str(state["mode"])
-
     async def verify_voice_engagement(self, receipt: dict[str, Any], *, retry_unavailable: bool = False) -> bool:
         """Ask Core to verify owner speech without exposing its private signing key."""
         if not isinstance(receipt, dict):
@@ -3628,79 +3479,6 @@ class LibreChatLLM(llm.LLM):
             and verdict.get("turnId") == turn_id
             and verdict.get("verified") is True
         )
-
-    async def cancel_task(self, task_id: str, *, reason: str = "user_requested") -> dict[str, Any]:
-        """Explicitly cancel one authoritative backend task, idempotently.
-
-        LiveKit TTS interruption and stream disposal intentionally do not call this method.
-        """
-        normalized_task_id = (task_id or "").strip()
-        if not normalized_task_id:
-            raise ValueError("task_id is required")
-        async with self._task_cancel_lock:
-            cached = self._task_cancel_results.get(normalized_task_id)
-            if cached is not None:
-                return cached
-            headers = {
-                "Content-Type": "application/json",
-                "X-VIVENTIUM-CALL-SESSION": self._auth.call_session_id,
-                "X-VIVENTIUM-CALL-SECRET": self._auth.call_secret,
-            }
-            if self._auth.job_id:
-                headers["X-VIVENTIUM-JOB-ID"] = self._auth.job_id
-            if self._auth.worker_id:
-                headers["X-VIVENTIUM-WORKER-ID"] = self._auth.worker_id
-            url = (
-                f"{self._origin}/api/viventium/voice/tasks/"
-                f"{quote(normalized_task_id, safe='')}/cancel"
-            )
-            started_at = time.monotonic()
-            async with aiohttp.ClientSession(
-                timeout=aiohttp.ClientTimeout(total=min(self._timeout_s, 10.0))
-            ) as session:
-                async with session.post(
-                    url,
-                    headers=headers,
-                    json={"reason": reason or "user_requested"},
-                ) as resp:
-                    if resp.status >= 400:
-                        body = await resp.text()
-                        raise RuntimeError(
-                            f"LibreChat voice task cancel failed: {resp.status} "
-                            f"{_summarize_error_for_log(body)}"
-                        )
-                    result = await resp.json()
-                    if not isinstance(result, dict):
-                        result = {"version": 1, "taskId": normalized_task_id, "state": "cancelling"}
-            if result.get("outcome") == "playout_stop_requested":
-                event = _extract_voice_task_event(
-                    {"event": "voice_task_event", "voiceTaskEvent": result.get("event")},
-                    expected_call_session_id=self._auth.call_session_id)
-                if (event is None or event["taskId"] != normalized_task_id
-                        or event["state"] != "completed"
-                        or event.get("presentation", {}).get("state") != "stop_requested"):
-                    raise RuntimeError("LibreChat voice playout Stop response is invalid")
-                await self._relay_task_event_once(event)
-                return result
-            self._task_cancel_results[normalized_task_id] = result
-            while len(self._task_cancel_results) > 4_096:
-                self._task_cancel_results.pop(next(iter(self._task_cancel_results)))
-            self._task_event_gate.mark_cancel_accepted(normalized_task_id)
-            for continuation in list(
-                self._continuations_by_task.get(normalized_task_id, set())
-            ):
-                continuation.cancel()
-            if self._task_cancel_handler is not None:
-                handler_result = self._task_cancel_handler(normalized_task_id, result)
-                if asyncio.iscoroutine(handler_result):
-                    await handler_result
-            logger.info(
-                "[VoiceTask] explicit_cancel_requested callSessionId=%s taskId=%s durationMs=%.3f",
-                self._auth.call_session_id,
-                normalized_task_id,
-                (time.monotonic() - started_at) * 1000.0,
-            )
-            return result
 
     def set_admission_notice_gate(self, allowed: Callable[[], bool]) -> None:
         self._admission_notice_allowed = allowed

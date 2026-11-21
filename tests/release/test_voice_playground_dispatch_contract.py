@@ -4,6 +4,7 @@ import re
 import sqlite3
 import subprocess
 import textwrap
+from functools import lru_cache
 from pathlib import Path
 
 
@@ -46,6 +47,7 @@ CALL_SESSION_VOICE_SETTINGS_HOOK_FILE = (
 )
 VOICE_ROUTE_HOOK_FILE = AGENT_STARTER_REACT_ROOT / "hooks" / "useVoiceRoute.ts"
 ROUTE_FILE = AGENT_STARTER_REACT_ROOT / "app" / "api" / "connection-details" / "route.ts"
+CALL_START_HOOK_FILE = AGENT_STARTER_REACT_ROOT / "hooks" / "useCallStart.ts"
 CALL_SESSION_VOICE_SETTINGS_ROUTE_FILE = (
     AGENT_STARTER_REACT_ROOT / "app" / "api" / "call-session-voice-settings" / "route.ts"
 )
@@ -81,6 +83,41 @@ TTS_ARTIFACT_BROWSER_QA_SCRIPT = (
 TYPESCRIPT_FILE = AGENT_STARTER_REACT_ROOT / "node_modules" / "typescript" / "lib" / "typescript.js"
 
 
+@lru_cache(maxsize=None)
+def _run_react_contract_suite(relative_path: str) -> None:
+    """Run the owning component's real-module checks, not obsolete source spellings.
+
+    The checked-out, lock-pinned component owns its Vitest resolver and synthetic browser
+    fixtures. Cache one completed suite per pytest process; never count an empty/skipped bank.
+    """
+    test_file = AGENT_STARTER_REACT_ROOT / relative_path
+    assert test_file.is_file(), f"Missing component contract: {relative_path}"
+    runner = AGENT_STARTER_REACT_ROOT / "node_modules" / "vitest" / "vitest.mjs"
+    assert runner.is_file(), "Install the pinned playground development dependencies first"
+    completed = subprocess.run(
+        ["node", str(runner), "run", relative_path, "--reporter=json", "--maxWorkers=1",
+         "--no-file-parallelism"],
+        cwd=AGENT_STARTER_REACT_ROOT,
+        text=True,
+        capture_output=True,
+        timeout=120,
+        check=False,
+    )
+    assert completed.returncode == 0, (
+        f"Component contract failed: {relative_path}\n{completed.stdout}\n{completed.stderr}"
+    )
+    report = json.loads(completed.stdout)
+    assert {Path(suite["name"]).resolve() for suite in report["testResults"]} == {
+        test_file.resolve()
+    }
+    assert report["success"] is True
+    assert report["numTotalTests"] > 0
+    assert report["numPassedTests"] == report["numTotalTests"]
+    assert report["numFailedTests"] == 0
+    assert report.get("numPendingTests", 0) == 0
+    assert report.get("numTodoTests", 0) == 0
+
+
 def _run_connection_details_route_case(
     *,
     env: dict[str, str],
@@ -90,7 +127,25 @@ def _run_connection_details_route_case(
     list_dispatch_error: bool = False,
     dispatch_job_status: int = 1,
     dispatch_worker_claimed: bool = True,
+    canonical_session: dict[str, object] | None = None,
 ) -> dict[str, object]:
+    # Synthetic backend state is a separate authority from the caller. Defaults preserve the
+    # assigned values of the earlier fixtures; authority negatives can supply a different record.
+    metadata = json.loads(str(request_body.get("agentMetadata") or "{}"))
+    call_id = metadata.get("callSessionId")
+    settings = next((row.get("json", {}) for row in fetch_responses
+                     if str(row["match"]).endswith("/voice-settings") and row["status"] == 200), {})
+    canonical = canonical_session if canonical_session is not None else {
+        "callSessionId": call_id,
+        "roomName": request_body.get("room_name") or f"room-{call_id}",
+        "gatewayAgentName": "librechat-voice-gateway",
+        "ownerParticipantIdentity": request_body.get("participant_identity") or f"owner-{call_id}",
+        "status": "created",
+        "requestedVoiceRoute": settings.get("requestedVoiceRoute") or metadata.get("requestedVoiceRoute") or {
+            "stt": {"provider": "assemblyai", "variant": "u3-rt-pro"},
+            "tts": {"provider": "local_chatterbox_turbo_mlx_8bit", "variant": "local"},
+        },
+    }
     script = textwrap.dedent(
         f"""
         const fs = require('fs');
@@ -99,18 +154,11 @@ def _run_connection_details_route_case(
         const ts = require({json.dumps(str(TYPESCRIPT_FILE))});
 
         const routePath = {json.dumps(str(ROUTE_FILE))};
-        const source = fs.readFileSync(routePath, 'utf8');
-        const transpiled = ts.transpileModule(source, {{
-          compilerOptions: {{
-            module: ts.ModuleKind.CommonJS,
-            target: ts.ScriptTarget.ES2022,
-            esModuleInterop: true,
-          }},
-          fileName: routePath,
-        }});
+        const componentRoot = {json.dumps(str(AGENT_STARTER_REACT_ROOT))};
 
         const caseData = {{
           env: {json.dumps(env)},
+          canonical: {json.dumps(canonical)},
           requestBody: {json.dumps(request_body)},
           fetchResponses: {json.dumps(fetch_responses)},
           existingDispatches: {json.dumps(existing_dispatches or [])},
@@ -119,6 +167,10 @@ def _run_connection_details_route_case(
           dispatchWorkerClaimed: {json.dumps(dispatch_worker_claimed)},
         }};
 
+        for (const key of Object.keys(process.env)) {{
+          if (key.startsWith('VIVENTIUM_') || key.startsWith('LIVEKIT_') ||
+              key === 'NEXT_PUBLIC_LIVEKIT_URL') delete process.env[key];
+        }}
         for (const [key, value] of Object.entries(caseData.env)) {{
           process.env[key] = value;
         }}
@@ -280,6 +332,11 @@ def _run_connection_details_route_case(
             method: init.method || 'GET',
             body: init.body || null,
           }});
+          if (urlText.endsWith(`/api/viventium/calls/${{caseData.canonical.callSessionId}}/state`)) {{
+            return {{ ok: true, status: 200,
+              async json() {{ return caseData.canonical; }},
+              async text() {{ return JSON.stringify(caseData.canonical); }} }};
+          }}
           const matchIndex = caseData.fetchResponses.findIndex((item) =>
             urlText.endsWith(String(item.match))
           );
@@ -322,82 +379,11 @@ def _run_connection_details_route_case(
           if (specifier === 'next/server') {{
             return {{ NextResponse }};
           }}
-          if (specifier === '@/lib/call-proxy') {{
-            return {{
-              parseCallIdentifier(value) {{
-                return typeof value === 'string' && /^[A-Za-z0-9_-]{{1,200}}$/.test(value)
-                  ? value
-                  : null;
-              }},
-            }};
-          }}
-          if (specifier === '@/lib/call-browser-capability') {{
-            const CALL_CAPABILITY_HEADER = 'X-VIVENTIUM-CALL-CAPABILITY';
-            return {{
-              CALL_CAPABILITY_HEADER,
-              readRequestCallBrowserCapability(request) {{
-                const value = request?.headers?.get(CALL_CAPABILITY_HEADER);
-                return typeof value === 'string' && value.length > 0 ? value : null;
-              }},
-            }};
-          }}
-          if (specifier === '@/lib/authoritative-call-session') {{
-            class AuthoritativeCallSessionError extends Error {{
-              constructor(code, message, status, retryable) {{
-                super(message);
-                this.code = code;
-                this.status = status;
-                this.retryable = retryable;
-              }}
-            }}
-            return {{
-              AuthoritativeCallSessionError,
-              async fetchAuthoritativeCallSession(callSessionId, browserCapability) {{
-                if (!browserCapability) {{
-                  throw new AuthoritativeCallSessionError(
-                    'auth_expired',
-                    'The call capability is missing or invalid.',
-                    401,
-                    false
-                  );
-                }}
-                let metadata = {{}};
-                try {{ metadata = JSON.parse(caseData.requestBody.agentMetadata || '{{}}'); }} catch {{}}
-                const settings = caseData.fetchResponses.find((item) =>
-                  String(item.match).endsWith(`/api/viventium/calls/${{callSessionId}}/voice-settings`)
-                );
-                const requestedVoiceRoute =
-                  settings?.json?.requestedVoiceRoute ||
-                  metadata.requestedVoiceRoute || {{
-                    stt: {{ provider: 'assemblyai', variant: 'u3-rt-pro' }},
-                    tts: {{ provider: 'local_chatterbox_turbo_mlx_8bit', variant: 'local' }},
-                  }};
-                return {{
-                  callSessionId,
-                  roomName: caseData.requestBody.room_name || `room-${{callSessionId}}`,
-                  gatewayAgentName: caseData.requestBody.agentName || 'librechat-voice-gateway',
-                  ownerParticipantIdentity:
-                    caseData.requestBody.participant_identity || `owner-${{callSessionId}}`,
-                  status: 'created',
-                  requestedVoiceRoute,
-                }};
-              }},
-              applyAuthoritativeCallSession(options, canonical) {{
-                options.room_name = canonical.roomName;
-                options.roomName = canonical.roomName;
-                options.participant_identity = canonical.ownerParticipantIdentity;
-                options.participantIdentity = canonical.ownerParticipantIdentity;
-                options.agentName = canonical.gatewayAgentName;
-                options.agentMetadata = JSON.stringify({{
-                  callSessionId: canonical.callSessionId,
-                  requestedVoiceRoute: canonical.requestedVoiceRoute,
-                }});
-              }},
-            }};
-          }}
           if (specifier === 'livekit-server-sdk') {{
             return {{
               AccessToken: FakeAccessToken,
+              RoomConfiguration: FakeRoomConfiguration,
+              RoomAgentDispatch: FakeRoomAgentDispatch,
               AgentDispatchClient: FakeAgentDispatchClient,
               RoomServiceClient: FakeRoomServiceClient,
             }};
@@ -414,16 +400,47 @@ def _run_connection_details_route_case(
               RoomConfiguration: FakeRoomConfiguration,
             }};
           }}
-          return require(specifier);
+          return undefined;
         }};
 
-        const routeModule = new Module(routePath, module);
-        routeModule.filename = routePath;
-        routeModule.paths = Module._nodeModulePaths(path.dirname(routePath));
-        routeModule.require = fakeRequire;
-        routeModule._compile(transpiled.outputText, routePath);
+        // Resolve the compatibility export and all real owning TS modules from the component,
+        // preserving its alias/relative-module graph. Only external LiveKit/Next I/O is faked.
+        const loaded = new Map();
+        function loadTypeScript(file) {{
+          const resolved = path.resolve(file);
+          if (!resolved.startsWith(componentRoot + path.sep)) throw Error('Module outside component');
+          if (loaded.has(resolved)) return loaded.get(resolved).exports;
+          const localModule = new Module(resolved, module);
+          localModule.filename = resolved;
+          localModule.paths = Module._nodeModulePaths(path.dirname(resolved));
+          loaded.set(resolved, localModule);
+          const nativeRequire = Module.createRequire(resolved);
+          localModule.require = (specifier) => {{
+            const mocked = fakeRequire(specifier);
+            if (mocked !== undefined) return mocked;
+            if (specifier.startsWith('@/') || specifier.startsWith('.')) {{
+              const target = specifier.startsWith('@/')
+                ? path.join(componentRoot, specifier.slice(2))
+                : path.resolve(path.dirname(resolved), specifier);
+              const sourcePath = [target, target + '.ts', target + '.tsx',
+                path.join(target, 'index.ts')].find((candidate) =>
+                  fs.existsSync(candidate) && fs.statSync(candidate).isFile());
+              if (!sourcePath) throw Error(`Unresolved component module: ${{specifier}}`);
+              return loadTypeScript(sourcePath);
+            }}
+            return nativeRequire(specifier);
+          }};
+          const compiled = ts.transpileModule(fs.readFileSync(resolved, 'utf8'), {{
+            compilerOptions: {{ module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022,
+              esModuleInterop: true, jsx: ts.JsxEmit.ReactJSX }}, fileName: resolved,
+          }});
+          localModule._compile(compiled.outputText, resolved);
+          return localModule.exports;
+        }}
+        const routeExports = loadTypeScript(routePath);
 
         const request = {{
+          url: 'https://playground.example.test/api/connection-details',
           headers: new Headers({{
             'content-type': 'application/json',
             'X-VIVENTIUM-CALL-CAPABILITY': 'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA',
@@ -433,7 +450,7 @@ def _run_connection_details_route_case(
           }},
         }};
 
-        Promise.resolve(routeModule.exports.POST(request))
+        Promise.resolve(routeExports.POST(request))
           .then((response) => {{
             process.stdout.write(
               JSON.stringify({{
@@ -512,156 +529,48 @@ def _single_explicit_dispatch(
 
 
 def test_playground_client_merges_deeplink_token_options_into_connection_details_request() -> None:
-    content = APP_FILE.read_text()
-
-    assert "const CONNECTION_DETAILS_CACHE_MS = 2_000;" in content
-    assert re.search(
-        r"function\s+getConnectionDetailsTokenSource\s*\(\s*"
-        r"fallbackOptions\?:\s*AgentTokenOptions\s*\)",
-        content,
-    )
-    assert "type ConnectionDetailsCacheEntry = {" in content
-    assert "const connectionDetailsCache = new Map<string, ConnectionDetailsCacheEntry>();" in content
-    assert "function stableCacheStringify(value: unknown): string {" in content
-    assert ".sort(([left], [right]) => left.localeCompare(right));" in content
-    assert "const mergedOptions = {" in content
-    assert "...(fallbackOptions ?? {})," in content
-    assert "...(options ?? {})," in content
-    assert "const cacheKey = stableCacheStringify(mergedOptions);" in content
-    assert "const cached = connectionDetailsCache.get(cacheKey);" in content
-    assert "if (cached.promise) {" in content
-    assert "return cached.promise;" in content
-    assert "Date.now() - cached.createdAt < CONNECTION_DETAILS_CACHE_MS" in content
-    assert "if (connectionDetailsCache.get(cacheKey)?.promise === connectionDetailsPromise)" in content
-    assert "connectionDetailsCache.delete(cacheKey);" in content
-    assert "body: JSON.stringify(mergedOptions)" in content
-    assert ": getConnectionDetailsTokenSource(effectiveTokenOptions);" in content
+    _run_react_contract_suite('lib/call-token-source.test.ts')
 
 
 def test_connection_details_route_accepts_only_call_session_identity_from_deeplink() -> None:
-    content = ROUTE_FILE.read_text()
-
-    assert "function extractDeepLinkFallbacks(req: Request)" in content
-    assert "const referer = req.headers.get('referer') || req.headers.get('referrer') || '';" in content
-    assert "const deepLinkFallbacks = extractDeepLinkFallbacks(req);" in content
-    assert "const currentCallSessionId = parseCallIdentifier(" in content
-    assert "const browserCapability = readRequestCallBrowserCapability(req);" in content
-    assert "const canonical = await fetchAuthoritativeCallSession(" in content
-    assert "currentCallSessionId," in content
-    assert "browserCapability" in content
-    assert "applyAuthoritativeCallSession(options, canonical);" in content
-    assert "!currentCallSessionId &&" in content
-    assert "!VIVENTIUM_LIBRECHAT_ORIGIN &&" in content
-    assert "!VIVENTIUM_CALL_SESSION_SECRET &&" in content
-    assert "!ALLOW_DIRECT_AGENT_DISPATCH &&" in content
-    assert "deepLinkFallbacks.agentName" in content
+    _run_react_contract_suite('app/api/token/authority.test.ts')
+    _run_react_contract_suite('app/api/connection-details/route.test.ts')
 
 
 def test_signed_call_session_deeplink_autoconnects_without_an_app_setup_step() -> None:
-    app = APP_FILE.read_text()
-    call_start = (AGENT_STARTER_REACT_ROOT / "lib" / "call-start.ts").read_text()
-
-    assert "autoConnect: params.get('autoConnect') === '1'," in call_start
-    assert "if (deepLink.autoConnect)" in app
-    assert "setAutoConnect(true);" in app
-    expected_guard = (
-        "if (!autoConnect || hasAutoStarted || !canStartCall || hasEnded || "
-        "callSessionState.authoritativeStatus === 'ended')"
-    )
-    assert re.sub(r"\s+", "", expected_guard) in re.sub(r"\s+", "", app)
-    assert "startCall().finally(() =>" in app
-    assert "Tap Start chat to turn on your mic" not in app
+    _run_react_contract_suite('components/app/app.test.tsx')
+    _run_react_contract_suite('hooks/useCallStart.test.tsx')
 
 
 def test_call_session_start_click_is_single_flight_and_disables_duplicate_starts() -> None:
-    content = APP_FILE.read_text()
-
-    assert "const [isStartInProgress, setIsStartInProgress] = useState(autoConnect && canStartCall);" in content
-    assert "const startPromiseRef = useRef<Promise<boolean> | null>(null);" in content
-    assert "if (startPromiseRef.current) {" in content
-    assert "return startPromiseRef.current;" in content
-    assert "setIsStartInProgress(true);" in content
-    assert "startPromiseRef.current = startPromise;" in content
-    assert "startPromiseRef.current = null;" in content
-    assert "const START_LATCH_WATCHDOG_MS = 1_000;" in content
-    compact = re.sub(r"\s+", "", content)
-    assert (
-        "consteffectiveCanStartCall=canStartCall&&!isStartInProgress&&!hasEnded"
-        "&&startError?.kind!=='auth_expired'"
-        "&&callSessionState.callStateIssue?.kind!=='auth_expired';"
-    ) in compact
-    assert "Starting call..." in content
+    _run_react_contract_suite('hooks/useCallStart.test.tsx')
+    _run_react_contract_suite('components/app/app.test.tsx')
 
 
 def test_voice_route_preflight_blocks_connection_until_the_exact_saved_route_is_valid() -> None:
-    content = APP_FILE.read_text()
-
-    # Settings reads are advisory; canonical server admission still precedes room entry.
-    assert "const voiceSettingsStillLoading = Boolean(expectedCallSessionId) && voiceSettings.isLoading;" in content
-    assert "!voiceSettings.isSaving &&" in content
-    assert "!callEnded &&" in content
-    assert "!callAuthExpired;" in content
-    assert "hasAuthoritativeRoute" in content
-    assert "Preparing your configured voice route..." in content
-    assert "Viventium did not switch providers automatically." in content
-    start = content.split("const startSession = useCallback(async () => {", 1)[1].split("\n  }, [", 1)[0]
-    direct = start.split("if (!shouldDeferMicrophoneUntilConnected) {", 1)[1].split("\n      }", 1)[0]
-    assert "await session.start({ signal: attempt.signal });" in direct
-    assert "return;" in direct
-    deferred = start.split("const microphoneEnabled =", 1)[1]
-    admission = deferred.split("if (expectedCallSessionId) {", 1)[1].split("\n      }", 1)[0]
-    assert "await fetchCallConnectionDetailsForStart(tokenSource, tokenOptions ?? {}, retry);" in admission
-    assert deferred.index("await fetchCallConnectionDetailsForStart(") < deferred.index("await session.start(")
-    assert "callSessionIsEndingForTokenSource(expectedCallSessionId)" in start
+    _run_react_contract_suite('app/api/token/authority.test.ts')
+    _run_react_contract_suite('components/app/app.test.tsx')
+    _run_react_contract_suite('hooks/useCallStart.test.tsx')
 
 
 def test_call_session_playground_extends_agent_join_timeout_for_local_cold_starts() -> None:
-    content = APP_FILE.read_text()
-
-    assert "const VIVENTIUM_CALL_AGENT_CONNECT_TIMEOUT_MS = 90_000;" in content
-    assert "agentConnectTimeoutMilliseconds: expectedCallSessionId" in content
-    assert "? VIVENTIUM_CALL_AGENT_CONNECT_TIMEOUT_MS" in content
+    hook = CALL_START_HOOK_FILE.read_text()
+    app = APP_FILE.read_text()
+    assert "export const CALL_AGENT_CONNECT_TIMEOUT_MS = 90_000;" in hook
+    assert "agentConnectTimeoutMilliseconds: CALL_AGENT_CONNECT_TIMEOUT_MS" in app
+    _run_react_contract_suite("lib/call-token-source.sdk.test.tsx")
 
 
 def test_explicit_dispatch_call_connects_room_before_enabling_microphone() -> None:
-    content = APP_FILE.read_text()
-
-    assert "const shouldDeferMicrophoneUntilConnected = Boolean(expectedCallSessionId || appConfig.agentName);" in content
-    assert "const startSession = useCallback(async () => {" in content
-    assert "await session.start({ signal: attempt.signal });" in content
-    assert "await session.start({" in content
-    assert "microphone: {" in content
-    assert "enabled: false," in content
-    assert "setIsMicrophoneStartupPending(true);" in content
-    assert "const MICROPHONE_START_TIMEOUT_MS = 15_000;" in content
-    start = content.split("const startSession = useCallback(async () => {", 1)[1].split("\n  }, [", 1)[0]
-    deferred = start.split("const microphoneEnabled =", 1)[1]
-    capture = deferred.split("if (microphoneEnabled) {", 1)[1].split("setIsMicrophoneStartupPending(false);", 1)[0]
-    assert "permissionState: await queryMicrophonePermissionState()," in capture
-    assert "capturedTracks = await session.room.localParticipant.createTracks({" in capture
-    assert "disable: stopCapturedTracks," in capture
-    assert deferred.index("createTracks(") < deferred.index("await fetchCallConnectionDetailsForStart(")
-    assert deferred.index("await fetchCallConnectionDetailsForStart(") < deferred.index("await session.start(")
-    assert "await enableCallMicrophone({" in content
-    publication = deferred.split("permissionState: 'granted',", 1)[1]
-    assert "await stopCapturedTracks();" in publication
-    assert "const publication = await session.room.localParticipant.setMicrophoneEnabled(true);" in publication
-    assert publication.index("await stopCapturedTracks();") < publication.index("setMicrophoneEnabled(true)")
-    assert deferred.index("await session.start(") < deferred.index("permissionState: 'granted',")
-    assert "return session.room.localParticipant.setMicrophoneEnabled(false);" in content
-    assert "current !== attempt && current && !current.signal.aborted" in content
-    assert "grantedTimeoutMs: MICROPHONE_START_TIMEOUT_MS," in content
-    assert "classifyCallIssue" in content
-    assert "const issue = classifyCallIssue(error);" in content
-    assert "setStartError(issue);" in content
-    assert "Turning on your microphone..." in content
-    assert "Turning on mic..." in content
-    assert "await session.end().catch((disconnectError) => {" in content
-    assert "useConnectionRecovery({" in content
-    recovery = content.split("const recoverCall = useCallback(async () => {", 1)[1].split("}, [startCall]);", 1)[0]
+    _run_react_contract_suite('hooks/useCallStart.test.tsx')
+    _run_react_contract_suite('lib/call-token-source.sdk.test.tsx')
+    app = APP_FILE.read_text()
+    recovery = app.split("const recoverCall = useCallback(async () => {", 1)[1].split(
+        "}, [startCall]);", 1
+    )[0]
     assert "if (!(await startCall())) throw new Error('Viventium call recovery failed.');" in recovery
-    assert "start: recoverCall," in content
-    assert "await startSession();" in content
+    recovery_options = app.split("useConnectionRecovery({", 1)[1].split("});", 1)[0]
+    assert "start: recoverCall," in recovery_options
 
 
 def test_voice_connection_recovery_preserves_background_reconnect_without_restarting_after_end_call() -> None:
@@ -1527,14 +1436,17 @@ def test_voice_browser_qa_cleanup_removes_every_call_owned_runtime_record() -> N
 def test_call_ui_uses_livekit_release_that_seeds_existing_agent_state() -> None:
     package = json.loads(AGENT_STARTER_PACKAGE.read_text())
     lock = AGENT_STARTER_LOCK.read_text()
-
-    assert package["dependencies"]["@livekit/components-react"] == "2.9.21"
-    assert package["dependencies"]["@livekit/protocol"] == "1.41.0"
-    assert package["dependencies"]["livekit-client"] == "2.18.2"
-    assert package["dependencies"]["livekit-server-sdk"] == "2.13.3"
-    assert "'@livekit/components-react@2.9.21':" in lock
-    assert "specifier: 1.41.0" in lock
-    assert "specifier: 2.18.2" in lock
+    expected = {
+        "@livekit/components-react": "2.9.25",
+        "@livekit/protocol": "1.48.0",
+        "livekit-client": "2.23.0",
+        "livekit-server-sdk": "2.18.0",
+    }
+    for name, version in expected.items():
+        assert package["dependencies"][name] == version
+        assert f"{name}@{version}" in lock
+    # Exercise the installed SDK's existing-agent, prewarm, disconnect and End consumer.
+    _run_react_contract_suite("lib/call-token-source.sdk.test.tsx")
 
 
 def test_call_session_hooks_normalize_transient_fetch_failures_and_retry_initial_loads() -> None:
@@ -1564,61 +1476,59 @@ def test_call_session_hooks_normalize_transient_fetch_failures_and_retry_initial
 
 
 def test_voice_settings_proxy_and_start_hydration_are_timeout_bounded() -> None:
-    proxy_route = CALL_SESSION_VOICE_SETTINGS_ROUTE_FILE.read_text()
-    authoritative_session = AUTHORITATIVE_CALL_SESSION_FILE.read_text()
-
-    assert "const VOICE_SETTINGS_PROXY_TIMEOUT_MS = 4500;" in proxy_route
-    assert "function getVoiceSettingsProxyTimeoutMs()" in proxy_route
-    assert "VIVENTIUM_VOICE_SETTINGS_PROXY_TIMEOUT_MS" in proxy_route
-    assert "controller.abort();" in proxy_route
-    assert "status: 504" in proxy_route
-    assert "Viventium could not load voice settings before the voice runtime responded." in proxy_route
-
-    assert "function canonicalRequestTimeoutMs()" in authoritative_session
-    assert "VIVENTIUM_CALL_SESSION_VOICE_SETTINGS_TIMEOUT_MS" in authoritative_session
-    assert "signal: controller.signal" in authoritative_session
-    assert "controller.abort();" in authoritative_session
-    assert "timedOut ? 504 : 503" in authoritative_session
+    _run_react_contract_suite('app/api/call-session-voice-settings/route.test.ts')
+    _run_react_contract_suite('app/api/token/authority.test.ts')
 
 
 def test_playground_client_retries_connection_details_fetch_and_hides_raw_browser_fetch_error() -> None:
-    content = APP_FILE.read_text()
-
-    assert "const CONNECTION_DETAILS_RETRY_MS = 1500;" in content
-    assert "const CONNECTION_DETAILS_MAX_ATTEMPTS = 2;" in content
-    assert "error instanceof TypeError && attempt + 1 < CONNECTION_DETAILS_MAX_ATTEMPTS" in content
-    assert "await wait(CONNECTION_DETAILS_RETRY_MS);" in content
-    assert "Viventium could not reach the voice runtime." in content
-    assert "const issue = classifyCallIssue(error);" in content
-    assert "setStartError(issue);" in content
+    _run_react_contract_suite('lib/call-token-source.test.ts')
+    _run_react_contract_suite('hooks/useCallStart.test.tsx')
 
 
 def test_cartesia_playground_selector_exposes_named_voices_not_model_choices() -> None:
-    content = VOICE_ROUTE_HOOK_FILE.read_text()
-
-    assert "const CARTESIA_MEGAN_VOICE_ID = 'e8e5fffb-252c-436d-b842-8879b84445b6';" in content
-    assert "const CARTESIA_LYRA_VOICE_ID = '6ccbfb76-1fc6-48f7-b71d-91ac6298247b';" in content
-    assert "{ id: CARTESIA_MEGAN_VOICE_ID, label: 'Megan' }" in content
-    assert "{ id: CARTESIA_LYRA_VOICE_ID, label: 'Lyra' }" in content
-    assert "variantLabel: 'Voice'" in content
-    assert "{ id: 'sonic-2', label: 'sonic-2' }" not in content
-    assert "{ id: 'sonic-3', label: 'sonic-3' }" not in content
+    _run_react_contract_suite('components/app/voice-picker.test.tsx')
 
 
 def test_connection_details_route_uses_the_server_owned_session_route_and_identity() -> None:
-    route = ROUTE_FILE.read_text()
-    authoritative = AUTHORITATIVE_CALL_SESSION_FILE.read_text()
+    _run_react_contract_suite('app/api/token/authority.test.ts')
 
-    assert "fetchAuthoritativeCallSession" in route
-    assert "applyAuthoritativeCallSession" in route
-    assert "roomName" in authoritative
-    assert "gatewayAgentName" in authoritative
-    assert "ownerParticipantIdentity" in authoritative
-    assert "requestedVoiceRoute" in authoritative
-    assert "options.room_name = canonical.roomName;" in authoritative
-    assert "options.participant_identity = canonical.ownerParticipantIdentity;" in authoritative
-    assert "options.agentName = canonical.gatewayAgentName;" in authoritative
-    assert "requestedVoiceRoute: canonical.requestedVoiceRoute" in authoritative
+    canonical = {
+        "callSessionId": "call-owned",
+        "roomName": "room-owned",
+        "gatewayAgentName": "librechat-voice-gateway",
+        "ownerParticipantIdentity": "owner-owned",
+        "status": "created",
+        "requestedVoiceRoute": {
+            "stt": {"provider": "assemblyai", "variant": "u3-rt-pro"},
+            "tts": {"provider": "cartesia", "variant": "saved-voice"},
+        },
+    }
+    configured = {
+        "LIVEKIT_API_KEY": "synthetic-key",
+        "LIVEKIT_API_SECRET": "synthetic-secret",
+        "LIVEKIT_URL": "ws://livekit.example.test",
+        "VIVENTIUM_LIBRECHAT_ORIGIN": "https://core.example.test",
+        "VIVENTIUM_CALL_SESSION_SECRET": "synthetic-call-secret",
+    }
+    request = {"room_name": "forged-room", "agentMetadata": json.dumps({
+        "callSessionId": "call-owned",
+        "requestedVoiceRoute": {"tts": {"provider": "untrusted-browser"}},
+    })}
+    for record, body, code in (
+        (canonical, request, "auth_expired"),
+        ({**canonical, "requestedVoiceRoute": None},
+         {**request, "room_name": "room-owned"}, "no_route"),
+    ):
+        result = _run_connection_details_route_case(
+            env=configured, request_body=body, fetch_responses=[], canonical_session=record,
+        )
+        assert result["response"]["status"] == 409
+        assert result["response"]["body"]["code"] == code
+        assert result["dispatchCalls"] == []
+        assert result["roomCalls"] == []
+        assert result["tokenRoomConfigs"] == []
+        assert len(result["fetchCalls"]) == 1
+        assert result["fetchCalls"][0]["url"].endswith("/calls/call-owned/state")
 
 
 def test_modern_playground_launcher_isolates_next_dev_output_and_allows_public_dev_origins() -> None:
@@ -2373,30 +2283,8 @@ def test_connection_details_route_rejects_expired_call_session_before_token_issu
 
 
 def test_connection_details_route_uses_public_livekit_only_for_configured_public_playground_origin() -> None:
-    content = ROUTE_FILE.read_text()
-
-    assert "const VIVENTIUM_PUBLIC_PLAYGROUND_URL = process.env.VIVENTIUM_PUBLIC_PLAYGROUND_URL;" in content
-    assert "const VIVENTIUM_PUBLIC_LIVEKIT_URL = process.env.VIVENTIUM_PUBLIC_LIVEKIT_URL;" in content
-    assert "function normalizeOrigin(value: string | undefined): string | null {" in content
-    assert "function requestOrigin(req: Request): string | null {" in content
-    assert "const forwardedProto = (req.headers.get('x-forwarded-proto') || '').trim();" in content
-    assert "function resolveBrowserLiveKitUrl(req: Request): string | undefined {" in content
-    browser_route = content.split("function resolveBrowserLiveKitUrl(req: Request): string | undefined {", 1)[1].split("function parseCallSessionIdFromAgentMetadata", 1)[0]
-    assert "let publicPlayground = VIVENTIUM_PUBLIC_PLAYGROUND_URL;" in browser_route
-    assert "let publicLivekitUrl = VIVENTIUM_PUBLIC_LIVEKIT_URL;" in browser_route
-    assert "publicPlayground = state.public_playground_url;" in browser_route
-    assert "publicLivekitUrl = state.public_livekit_url;" in browser_route
-    assert "const publicPlaygroundOrigin = normalizeOrigin(publicPlayground);" in browser_route
-    assert "if (publicPlaygroundOrigin && publicLivekitUrl && requestOrigin(req) === publicPlaygroundOrigin) {" in browser_route
-    assert (
-        "if(stateFile&&incomingOrigin===normalizeOrigin(VIVENTIUM_PUBLIC_PLAYGROUND_URL))returnundefined;"
-        in re.sub(r"\s+", "", browser_route)
-    )
-    assert "requestOrigin(req) === publicPlaygroundOrigin" in content
-    assert "return publicLivekitUrl;" in content
-    assert "return NEXT_PUBLIC_LIVEKIT_URL ?? LIVEKIT_URL;" in content
-    assert "const browserLiveKitUrl = resolveBrowserLiveKitUrl(req);" in content
-    assert "serverUrl: browserLiveKitUrl," in content
+    _run_react_contract_suite('lib/viventium/livekit-url.test.ts')
+    _run_react_contract_suite('app/api/token/authority.test.ts')
 
 
 

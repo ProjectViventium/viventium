@@ -125,8 +125,6 @@ def test_real_worker_initial_and_selected_callback_use_the_unwrapped_renderer():
                          openai_stt_model="synthetic-stt", mlx_audio_model_id="synthetic-tts",
                          cartesia_voice_id="synthetic-voice", elevenlabs_voice_id="synthetic-voice",
                          openai_tts_model="synthetic-tts", xai_voice="synthetic-voice",
-                         voice_min_endpointing_delay_s=0.1, voice_max_endpointing_delay_s=0.5,
-                         voice_min_interruption_duration_s=0.3, voice_min_interruption_words=1,
                      ))
     exec(compile(ast.fix_missing_locations(ast.Module(body=[initial], type_ignores=[])),
                  "<worker-initial-tts-seam>", "exec"), namespace)
@@ -637,6 +635,10 @@ def test_pinned_xai_pushes_share_one_segment_until_end_input():
                 stream.push_text("there.")
                 stream.end_input()
                 await asyncio.wait_for(stream._task, timeout=1)
+            # 1.8.11: the plugin keeps the finished socket in its own pool for the next reply,
+            # and closes it with the renderer.
+            assert connect.await_count == 1 and close.await_count == 0
+            await renderer.aclose()
             assert connect.await_count == close.await_count == 1
         assert len(segments) == 1
         assert sum(packet["type"] == "text.done" for packet in packets) == 1

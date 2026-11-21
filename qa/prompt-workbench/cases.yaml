@@ -6,6 +6,14 @@ sourceInventories:
   - qa/prompt-architecture/cases.md
   - qa/prompt-workbench/cases.md
 journeys:
+  - id: authored-style-parity
+    requirements: [GOV-001, GOV-003]
+    userAction: Set a synthetic saved preference for authored prose without em dashes. Compare direct, scheduled, and late-result replies on the configured primary and fallback models, including exact quotes, code, and a current style override.
+    surfaces: [Prompt Workbench, Web, Telegram, Scheduler]
+    expectedResult: Authored prose follows saved communication preferences and follows the explicit synthetic punctuation preference. Requested literal content and current overrides remain exact.
+    degradedAndRecovery: Missing model access or incomplete source-to-live lineage remains an evidence gap. Adapter cleanup does not prove stored model output obeyed the contract.
+    persistenceAndCleanup: The registered prompt and saved reply survive reload. Use synthetic QA accounts and preserve personal conversations and settings.
+    evidence: [paired exact-model outputs, prompt hashes, saved replies, real browser and channel receipts]
   - id: semantic-change
     requirements: [GOV-002]
     userAction: Propose one semantic prompt or model change and compare it with the current version.

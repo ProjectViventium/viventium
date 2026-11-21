@@ -954,13 +954,6 @@ def extract_raw_text_deltas(payload: dict[str, Any]) -> list[str]:
     return out
 
 
-def extract_text_deltas(payload: dict[str, Any]) -> list[str]:
-    """
-    Extract assistant text deltas from a LibreChat SSE payload with voice-safe citation cleanup.
-    """
-    return [sanitize_voice_delta_text(text) for text in extract_raw_text_deltas(payload) if text]
-
-
 def extract_cortex_insight(payload: dict[str, Any]) -> Optional[dict[str, Any]]:
     """
     Extract a completed cortex insight from an on_cortex_update event.
@@ -1021,79 +1014,3 @@ def extract_cortex_message_id(payload: dict[str, Any]) -> Optional[str]:
         return message_id.strip()
     return None
 # === VIVENTIUM END ===
-
-
-def format_insight_speech_prompt(insights: list[dict[str, Any]], recent_response: Optional[str] = None) -> str:
-    """
-    Format cortex insights for natural speech delivery.
-
-    This mirrors viventium_v1's format_subconscious_update_prompt() to create
-    a natural "aha moment" where the agent shares insights as if they just
-    occurred to them.
-    """
-    if not insights:
-        return ""
-
-    # Build summary of all insights
-    summary_lines: list[str] = []
-    for insight_obj in insights:
-        cortex_name = insight_obj.get("cortex_name", "background")
-        insight_text = insight_obj.get("insight", "")
-        if isinstance(insight_text, str) and insight_text.strip():
-            # Clean up the insight text for speech
-            clean_text = sanitize_voice_followup_text(insight_text)
-            if len(clean_text) > 500:
-                clean_text = clean_text[:500] + "..."
-            if clean_text:
-                summary_lines.append(f"- From {cortex_name}: {clean_text}")
-
-    if not summary_lines:
-        return ""
-
-    summary_text = "\n".join(summary_lines)
-
-    # Frame as natural background insights surfacing (generic, non-neuroscience)
-    # === VIVENTIUM START ===
-    # Feature: Voice follow-up prompt rules (override via env).
-    voice_rules = (os.getenv("VIVENTIUM_VOICE_FOLLOWUP_RULES", "") or "").strip()
-    if not voice_rules:
-        voice_rules = "\n".join(
-            [
-                "VOICE FOLLOW-UP RULES:",
-                "- Speak naturally in short sentences.",
-                "- Do not output planning steps or numbered lists.",
-                "- Do not include tool instructions or API field names.",
-                "- Do not read URLs or email addresses aloud; offer to send details.",
-                "- Use natural language for dates/times (no raw timestamps).",
-                "- Keep it to 1-3 sentences unless the user asked for more detail.",
-            ]
-        )
-    # === VIVENTIUM END ===
-    if recent_response:
-        prompt = f"""Right after you spoke, some additional background insights surfaced:
-
-{voice_rules}
-
-BACKGROUND INSIGHTS:
-{summary_text}
-
-These insights surfaced as you continued thinking about the conversation.
-
-If they add something meaningful to what you just said, continue speaking naturally - as if these thoughts just occurred to you mid-conversation.
-If you already covered this comprehensively, there's no need to repeat yourself - just say something brief like "Actually, that's about it."
-
-Respond naturally, as a continuation of your previous thought."""
-    else:
-        prompt = f"""As you've been thinking about the conversation, some additional insights have surfaced:
-
-{voice_rules}
-
-BACKGROUND INSIGHTS:
-{summary_text}
-
-These insights surfaced as you continued processing the conversation.
-
-Share them naturally as a continuation of the ongoing conversation - like you just had an "aha" moment.
-Keep it conversational and concise."""
-
-    return prompt

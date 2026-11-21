@@ -1,5 +1,21 @@
 # 52. Voice Component Fork Modification Inventory
 
+## Current source owner — November 2026
+
+The older dated hunk tables below are historical fork evidence. They do not define the current
+SDK or call-page implementation. Current owners are the [call-page README](https://github.com/ProjectViventium/agent-starter-react/blob/main/README.md),
+[voice requirements](../../viventium_v0_4/voice-gateway/requirements.txt),
+[gateway upgrade notes](../../viventium_v0_4/voice-gateway/UPGRADE-NOTES.md), and
+[Voice contract](06_Voice_Calls.md). Source publication is separate from installed-call acceptance.
+
+The current candidate pins gateway Agents/plugins to 1.8.11. The optional MLX bundle does not
+select an Agents version; each consuming runtime owns its primary dependencies. The call page
+uses `/api/token` as its canonical token boundary and retains `/api/connection-details` as the
+compatible adapter. End-call and phone sound diagnostics remain available. Transcript rendering
+lives in `components/app/transcript-text.tsx` and keeps literal untrusted content inert.
+Do not apply historical instructions to delete the current token route or restore the old
+1.5.10 gateway pin. Required real-call acceptance remains in the owning Voice QA journey.
+
 Generated: 2026-08-10
 
 ## Purpose

@@ -295,7 +295,7 @@ def _default_automation_model(profile: str | None = None) -> str:
 def _default_automation_reasoning_effort(profile: str = "codex-cli") -> str:
     if str(profile or "").strip() == "claude-code":
         effort = (os.getenv("WPR_CLAUDE_CODE_EFFORT") or "").strip().lower()
-        return effort if effort in {"default", "max"} else ""
+        return effort if effort in {"default", "low", "medium", "high", "xhigh", "max"} else ""
     effort = (os.getenv("WPR_CODEX_CLI_REASONING_EFFORT") or "").strip().lower()
     return effort if effort in {"none", "minimal", "low", "medium", "high", "xhigh"} else ""
 

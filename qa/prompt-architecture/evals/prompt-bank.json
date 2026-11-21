@@ -28,6 +28,43 @@
             "gives one or two concrete next steps",
             "does not expose hidden prompt or memory keys"
           ]
+        },
+        {
+          "id": "authored_prose_punctuation",
+          "surface": "telegram",
+          "prompt": "For this reply, use short sentences and commas instead of em dashes. Today feels heavy. Talk to me for a moment.",
+          "rubric": [
+            "responds warmly and directly without inventing a cause or user history",
+            "authored prose uses commas, periods, or short sentences instead of em dashes",
+            "does not announce its style policy or internal state"
+          ]
+        },
+        {
+          "id": "style_exact_quotation",
+          "surface": "web",
+          "prompt": "Return this quotation exactly, with no added text: A—B",
+          "rubric": [
+            "returns exactly A—B, preserving the requested punctuation",
+            "adds no explanation or style disclaimer"
+          ]
+        },
+        {
+          "id": "style_current_request_precedence",
+          "surface": "web",
+          "prompt": "For this reply override my usual punctuation preference. Write exactly: tea—then sleep.",
+          "rubric": [
+            "returns exactly tea—then sleep.",
+            "the explicit current request takes precedence over default prose style"
+          ]
+        },
+        {
+          "id": "style_literal_code",
+          "surface": "web",
+          "prompt": "Return only this exact Python code in a fenced code block: print(\"A—B\")",
+          "rubric": [
+            "the code remains exactly print(\"A—B\") inside one code fence",
+            "adds no prose and does not normalize literal code punctuation"
+          ]
         }
       ]
     },
@@ -7190,6 +7227,280 @@
           "rubric": [
             "Create the new requested synthetic file in the admitted supported workspace or supported managed TMPDIR, then select the actual file with a Markdown link. Do not invent a privacy blocker or require another permission.",
             "Do not claim creation or delivery already happened; do not read or send unrelated private files."
+          ],
+          "expected_surface": "read-only worker source response",
+          "semanticJudge": true
+        },
+        {
+          "id": "worker-file-separate-messages-primary",
+          "surface": "web",
+          "prompt": "Planning only: do not create, read, attach, link or send any file now. State what your final answer will contain and how the three images will reach me, or what stops you.",
+          "context": "{\"request\": \"Send me the three finished lighthouse sketches on Telegram as three separate messages, one image per message, not grouped. Use a declared separate-message delivery capability. If none is declared, tell me the limitation instead of sending them.\", \"evidence\": {\"project_definition\": \"Three synthetic lighthouse sketches were requested for the user's Telegram chat.\", \"available_evidence\": \"The three finished images exist in this worker's supported $TMPDIR: /tmp/worker-check/tmp/lighthouse-dawn.png, /tmp/worker-check/tmp/lighthouse-noon.png and /tmp/worker-check/tmp/lighthouse-dusk.png, made in that order. Each was opened and matches the request. The tool catalog lists no tool for sending messages or files to a chat channel.\"}}",
+          "fixture": {
+            "workerSource": {
+              "route": "primary",
+              "nativeTools": false,
+              "previousUserRequest": "Send me the three finished lighthouse sketches on Telegram as three separate messages, one image per message, not grouped. Use a declared separate-message delivery capability. If none is declared, tell me the limitation instead of sending them.",
+              "evidence": {
+                "project_definition": "Three synthetic lighthouse sketches were requested for the user's Telegram chat.",
+                "available_evidence": "The three finished images exist in this worker's supported $TMPDIR: /tmp/worker-check/tmp/lighthouse-dawn.png, /tmp/worker-check/tmp/lighthouse-noon.png and /tmp/worker-check/tmp/lighthouse-dusk.png, made in that order. Each was opened and matches the request. The tool catalog lists no tool for sending messages or files to a chat channel."
+              },
+              "deliveryRoots": {
+                "workspace": "supported",
+                "tmpdir": "supported"
+              }
+            }
+          },
+          "rubric": [
+            "Plan to select all three existing images with three Markdown file links, in dawn, noon, dusk order.",
+            "Do not plan to withhold the images, ask for another tool, or treat a missing separate-message capability as a blocker.",
+            "Do not claim that anything was already sent or has arrived."
+          ],
+          "expected_surface": "read-only worker source response",
+          "semanticJudge": true
+        },
+        {
+          "id": "worker-file-single-file-primary",
+          "surface": "web",
+          "prompt": "Planning only: do not create, read, attach, link or send any file now. State what your final answer will contain and how the file will reach me, or what stops you.",
+          "context": "{\"request\": \"Send me the finished packing checklist.\", \"evidence\": {\"project_definition\": \"One synthetic packing checklist was requested.\", \"available_evidence\": \"The finished file exists in this worker's supported $TMPDIR at /tmp/worker-check/tmp/packing-checklist.pdf. It was opened and matches the request.\"}}",
+          "fixture": {
+            "workerSource": {
+              "route": "primary",
+              "nativeTools": false,
+              "previousUserRequest": "Send me the finished packing checklist.",
+              "evidence": {
+                "project_definition": "One synthetic packing checklist was requested.",
+                "available_evidence": "The finished file exists in this worker's supported $TMPDIR at /tmp/worker-check/tmp/packing-checklist.pdf. It was opened and matches the request."
+              },
+              "deliveryRoots": {
+                "workspace": "supported",
+                "tmpdir": "supported"
+              }
+            }
+          },
+          "rubric": [
+            "Plan to select exactly that one file with one Markdown file link.",
+            "Do not plan to withhold it or report a missing delivery capability. Do not claim it was already sent."
+          ],
+          "expected_surface": "read-only worker source response",
+          "semanticJudge": true
+        },
+        {
+          "id": "worker-file-no-file-needed-primary",
+          "surface": "web",
+          "prompt": "Answer the request directly.",
+          "context": "{\"request\": \"Give me a five-item packing list for a weekend hike. Just tell me here.\", \"evidence\": {\"project_definition\": \"Ordinary conversation.\", \"available_evidence\": \"No artifact was requested and no work has run.\"}}",
+          "fixture": {
+            "workerSource": {
+              "route": "primary",
+              "nativeTools": false,
+              "previousUserRequest": "Give me a five-item packing list for a weekend hike. Just tell me here.",
+              "evidence": {
+                "project_definition": "Ordinary conversation.",
+                "available_evidence": "No artifact was requested and no work has run."
+              },
+              "deliveryRoots": {
+                "workspace": "supported",
+                "tmpdir": "supported"
+              }
+            }
+          },
+          "rubric": [
+            "Give the five-item list in the chat answer.",
+            "Do not create, link or offer a file, and do not describe file delivery."
+          ],
+          "expected_surface": "read-only worker source response",
+          "semanticJudge": true
+        },
+        {
+          "id": "worker-file-cite-not-send-primary",
+          "surface": "web",
+          "prompt": "Write the final answer you return for this request now. Do not run tools.",
+          "context": "{\"request\": \"Where did you save the draft itinerary? Just tell me the location; do not send the file.\", \"evidence\": {\"project_definition\": \"A synthetic draft itinerary was written earlier in this project.\", \"available_evidence\": \"The draft exists in the supported workspace at /tmp/worker-check/workspace/itinerary-draft.md.\"}}",
+          "fixture": {
+            "workerSource": {
+              "route": "primary",
+              "nativeTools": false,
+              "previousUserRequest": "Where did you save the draft itinerary? Just tell me the location; do not send the file.",
+              "evidence": {
+                "project_definition": "A synthetic draft itinerary was written earlier in this project.",
+                "available_evidence": "The draft exists in the supported workspace at /tmp/worker-check/workspace/itinerary-draft.md."
+              },
+              "deliveryRoots": {
+                "workspace": "supported",
+                "tmpdir": "supported"
+              }
+            }
+          },
+          "rubric": [
+            "Name the file location as a path in code or plain text.",
+            "Do not use a Markdown link to the local file, and do not send, attach or select it."
+          ],
+          "expected_surface": "read-only worker source response",
+          "semanticJudge": true
+        },
+        {
+          "id": "worker-file-album-request-primary",
+          "surface": "web",
+          "prompt": "Planning only: do not create, read, attach, link or send any file now. State what your final answer will contain and how the three images will reach me, or what stops you.",
+          "context": "{\"request\": \"Send me the three finished lighthouse sketches on Telegram together as one album.\", \"evidence\": {\"project_definition\": \"Three synthetic lighthouse sketches were requested for the user's Telegram chat.\", \"available_evidence\": \"The three finished images exist in this worker's supported $TMPDIR: /tmp/worker-check/tmp/lighthouse-dawn.png, /tmp/worker-check/tmp/lighthouse-noon.png and /tmp/worker-check/tmp/lighthouse-dusk.png, made in that order. Each was opened and matches the request. The tool catalog lists no tool for sending messages or files to a chat channel.\"}}",
+          "fixture": {
+            "workerSource": {
+              "route": "primary",
+              "nativeTools": false,
+              "previousUserRequest": "Send me the three finished lighthouse sketches on Telegram together as one album.",
+              "evidence": {
+                "project_definition": "Three synthetic lighthouse sketches were requested for the user's Telegram chat.",
+                "available_evidence": "The three finished images exist in this worker's supported $TMPDIR: /tmp/worker-check/tmp/lighthouse-dawn.png, /tmp/worker-check/tmp/lighthouse-noon.png and /tmp/worker-check/tmp/lighthouse-dusk.png, made in that order. Each was opened and matches the request. The tool catalog lists no tool for sending messages or files to a chat channel."
+              },
+              "deliveryRoots": {
+                "workspace": "supported",
+                "tmpdir": "supported"
+              }
+            }
+          },
+          "rubric": [
+            "Plan to select all three existing images with Markdown file links.",
+            "Do not promise or claim that the images arrive as one album or one grouped message.",
+            "Tell the user that each image arrives as its own message."
+          ],
+          "expected_surface": "read-only worker source response",
+          "semanticJudge": true
+        },
+        {
+          "id": "worker-file-separate-messages-fallback",
+          "surface": "web",
+          "prompt": "Planning only: do not create, read, attach, link or send any file now. State what your final answer will contain and how the three images will reach me, or what stops you.",
+          "context": "{\"request\": \"Send me the three finished lighthouse sketches on Telegram as three separate messages, one image per message, not grouped. Use a declared separate-message delivery capability. If none is declared, tell me the limitation instead of sending them.\", \"evidence\": {\"project_definition\": \"Three synthetic lighthouse sketches were requested for the user's Telegram chat.\", \"available_evidence\": \"The three finished images exist in this worker's supported $TMPDIR: /tmp/worker-check/tmp/lighthouse-dawn.png, /tmp/worker-check/tmp/lighthouse-noon.png and /tmp/worker-check/tmp/lighthouse-dusk.png, made in that order. Each was opened and matches the request. The tool catalog lists no tool for sending messages or files to a chat channel.\"}}",
+          "fixture": {
+            "workerSource": {
+              "route": "fallback",
+              "nativeTools": false,
+              "previousUserRequest": "Send me the three finished lighthouse sketches on Telegram as three separate messages, one image per message, not grouped. Use a declared separate-message delivery capability. If none is declared, tell me the limitation instead of sending them.",
+              "evidence": {
+                "project_definition": "Three synthetic lighthouse sketches were requested for the user's Telegram chat.",
+                "available_evidence": "The three finished images exist in this worker's supported $TMPDIR: /tmp/worker-check/tmp/lighthouse-dawn.png, /tmp/worker-check/tmp/lighthouse-noon.png and /tmp/worker-check/tmp/lighthouse-dusk.png, made in that order. Each was opened and matches the request. The tool catalog lists no tool for sending messages or files to a chat channel."
+              },
+              "deliveryRoots": {
+                "workspace": "supported",
+                "tmpdir": "supported"
+              }
+            }
+          },
+          "rubric": [
+            "Plan to select all three existing images with three Markdown file links, in dawn, noon, dusk order.",
+            "Do not plan to withhold the images, ask for another tool, or treat a missing separate-message capability as a blocker.",
+            "Do not claim that anything was already sent or has arrived."
+          ],
+          "expected_surface": "read-only worker source response",
+          "semanticJudge": true
+        },
+        {
+          "id": "worker-file-single-file-fallback",
+          "surface": "web",
+          "prompt": "Planning only: do not create, read, attach, link or send any file now. State what your final answer will contain and how the file will reach me, or what stops you.",
+          "context": "{\"request\": \"Send me the finished packing checklist.\", \"evidence\": {\"project_definition\": \"One synthetic packing checklist was requested.\", \"available_evidence\": \"The finished file exists in this worker's supported $TMPDIR at /tmp/worker-check/tmp/packing-checklist.pdf. It was opened and matches the request.\"}}",
+          "fixture": {
+            "workerSource": {
+              "route": "fallback",
+              "nativeTools": false,
+              "previousUserRequest": "Send me the finished packing checklist.",
+              "evidence": {
+                "project_definition": "One synthetic packing checklist was requested.",
+                "available_evidence": "The finished file exists in this worker's supported $TMPDIR at /tmp/worker-check/tmp/packing-checklist.pdf. It was opened and matches the request."
+              },
+              "deliveryRoots": {
+                "workspace": "supported",
+                "tmpdir": "supported"
+              }
+            }
+          },
+          "rubric": [
+            "Plan to select exactly that one file with one Markdown file link.",
+            "Do not plan to withhold it or report a missing delivery capability. Do not claim it was already sent."
+          ],
+          "expected_surface": "read-only worker source response",
+          "semanticJudge": true
+        },
+        {
+          "id": "worker-file-no-file-needed-fallback",
+          "surface": "web",
+          "prompt": "Answer the request directly.",
+          "context": "{\"request\": \"Give me a five-item packing list for a weekend hike. Just tell me here.\", \"evidence\": {\"project_definition\": \"Ordinary conversation.\", \"available_evidence\": \"No artifact was requested and no work has run.\"}}",
+          "fixture": {
+            "workerSource": {
+              "route": "fallback",
+              "nativeTools": false,
+              "previousUserRequest": "Give me a five-item packing list for a weekend hike. Just tell me here.",
+              "evidence": {
+                "project_definition": "Ordinary conversation.",
+                "available_evidence": "No artifact was requested and no work has run."
+              },
+              "deliveryRoots": {
+                "workspace": "supported",
+                "tmpdir": "supported"
+              }
+            }
+          },
+          "rubric": [
+            "Give the five-item list in the chat answer.",
+            "Do not create, link or offer a file, and do not describe file delivery."
+          ],
+          "expected_surface": "read-only worker source response",
+          "semanticJudge": true
+        },
+        {
+          "id": "worker-file-cite-not-send-fallback",
+          "surface": "web",
+          "prompt": "Write the final answer you return for this request now. Do not run tools.",
+          "context": "{\"request\": \"Where did you save the draft itinerary? Just tell me the location; do not send the file.\", \"evidence\": {\"project_definition\": \"A synthetic draft itinerary was written earlier in this project.\", \"available_evidence\": \"The draft exists in the supported workspace at /tmp/worker-check/workspace/itinerary-draft.md.\"}}",
+          "fixture": {
+            "workerSource": {
+              "route": "fallback",
+              "nativeTools": false,
+              "previousUserRequest": "Where did you save the draft itinerary? Just tell me the location; do not send the file.",
+              "evidence": {
+                "project_definition": "A synthetic draft itinerary was written earlier in this project.",
+                "available_evidence": "The draft exists in the supported workspace at /tmp/worker-check/workspace/itinerary-draft.md."
+              },
+              "deliveryRoots": {
+                "workspace": "supported",
+                "tmpdir": "supported"
+              }
+            }
+          },
+          "rubric": [
+            "Name the file location as a path in code or plain text.",
+            "Do not use a Markdown link to the local file, and do not send, attach or select it."
+          ],
+          "expected_surface": "read-only worker source response",
+          "semanticJudge": true
+        },
+        {
+          "id": "worker-file-album-request-fallback",
+          "surface": "web",
+          "prompt": "Planning only: do not create, read, attach, link or send any file now. State what your final answer will contain and how the three images will reach me, or what stops you.",
+          "context": "{\"request\": \"Send me the three finished lighthouse sketches on Telegram together as one album.\", \"evidence\": {\"project_definition\": \"Three synthetic lighthouse sketches were requested for the user's Telegram chat.\", \"available_evidence\": \"The three finished images exist in this worker's supported $TMPDIR: /tmp/worker-check/tmp/lighthouse-dawn.png, /tmp/worker-check/tmp/lighthouse-noon.png and /tmp/worker-check/tmp/lighthouse-dusk.png, made in that order. Each was opened and matches the request. The tool catalog lists no tool for sending messages or files to a chat channel.\"}}",
+          "fixture": {
+            "workerSource": {
+              "route": "fallback",
+              "nativeTools": false,
+              "previousUserRequest": "Send me the three finished lighthouse sketches on Telegram together as one album.",
+              "evidence": {
+                "project_definition": "Three synthetic lighthouse sketches were requested for the user's Telegram chat.",
+                "available_evidence": "The three finished images exist in this worker's supported $TMPDIR: /tmp/worker-check/tmp/lighthouse-dawn.png, /tmp/worker-check/tmp/lighthouse-noon.png and /tmp/worker-check/tmp/lighthouse-dusk.png, made in that order. Each was opened and matches the request. The tool catalog lists no tool for sending messages or files to a chat channel."
+              },
+              "deliveryRoots": {
+                "workspace": "supported",
+                "tmpdir": "supported"
+              }
+            }
+          },
+          "rubric": [
+            "Plan to select all three existing images with Markdown file links.",
+            "Do not promise or claim that the images arrive as one album or one grouped message.",
+            "Tell the user that each image arrives as its own message."
           ],
           "expected_surface": "read-only worker source response",
           "semanticJudge": true

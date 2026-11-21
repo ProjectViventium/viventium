@@ -1,5 +1,65 @@
 # Telegram Runtime Cases
 
+## Case TR-039: Accepted Work Survives A Provider Reply Failure
+
+- **Requirement:** Provider failure and accepted-work presentation in
+  `03_Telegram_Bridge.md`; existing Native identity, source and delivery fences.
+- **Expected outcome:** A known provider failure retains its public class in saved Native output,
+  FINAL and terminal replay. If the exact reply already accepted a new durable operation, FINAL
+  retains its server-owned receipt and Telegram follows the accepted work. A later terminal notice
+  says the reply was interrupted after acceptance, without asking to repeat the operation.
+- **Failure checks:** Missing, uncertain, action-only, legacy and changed-owner/source receipts;
+  changed response identity, invalid commit time, explicit cancellation, unavailable follow-up,
+  unknown internal errors and a partial preview. None may permit a second execution or expose
+  internal diagnostics. Public failure presentation must not loosen Native source authorization.
+- **Evidence:** Causal red/green provider and receipt tests, Mongo materialization and FINAL/replay,
+  Telegram bridge and preview checks, installed component identity, real fallback reply, exact
+  saved Native result and delivery acknowledgement, and chat reopen.
+- **Last run:** PARTIAL, local 2026-11-17. All 26 Native terminal integration cases, 198 shared
+  API cases, 123 schema cases, 167 request-controller cases, and 1,618 Telegram cases plus 15
+  subtests passed. The original interrupted request completed once with its image, caption and
+  audio visible in Telegram. After normal service recovery, a new real request completed on the
+  configured fallback at the configured effort and remained after reopening. A new live provider
+  failure after durable acceptance was not induced; that repaired presentation has integration
+  and bridge evidence, not a new visible-UI pass. External account limits remain distinct.
+
+## Case TR-038: Saved Files And One Truthful Completion
+
+- **Expected outcome:** A normal multi-file request, rapid correction, input upload, late result,
+  restart and resend preserve the accepted source and deliver the actual files. A missing upload
+  produces a truthful prerequisite and recovers after upload. Main receives verified file facts
+  beside the byte-exact result, without changing its delivery hash.
+- **Retained-file path:** A reply can select saved files without a new output envelope. Validate
+  the original publication and stored File bytes, then recheck both before saving. Use the proven
+  publisher binding when a persisted Agents message has no separate agent field. An intentional
+  silent Main response still carries the selected, authorized files.
+- **Single completion:** Concurrent goal aliases for one source, run, revision and digest share
+  the first publication. Replays reuse its saved reply and channel receipts. Different sources or
+  results stay separate. An authorization refusal before a send settles the unchanged unsent claim;
+  it cannot reset another active send permit.
+- **Style:** Exercise the configured primary and fallback with positive, exact-literal and adjacent
+  cases, including old conversational wording. Own prose follows current punctuation preferences;
+  required quotations, code and literal artifacts remain exact. An isolated pass does not replace
+  the real long-chat check.
+- **Failure checks:** Missing input, changed owner/source/file, unavailable source publication,
+  malformed or unsigned callbacks, expired notices, unavailable transport, lost permits and replay.
+  A completed file-only reply must pass dispatch with its exact owned saved attachment set.
+  A temporary source lookup failure must stay retryable rather than become an empty selection.
+  Preserve current stop, hold and supersession boundaries. Record a failed or blocked path as such.
+- **Evidence:** Visible Telegram text and file bubbles, download hashes, source/model lineage,
+  Native result identity, saved Main publication, channel receipt IDs, persistence and restart,
+  plus affected deterministic tests. Keep raw chats, identities and logs private.
+- **Last run:** PARTIAL, local 2026-11-17. Generation, correction, upload recovery, saved-reply
+  recovery, callback authorization/replay and cross-owner file rejection passed. After restart,
+  Telegram received both unchanged saved files, then exactly one requested CSV with no retry.
+  Replaying both saved results changed no messages or channel receipts. The final acknowledgment
+  stated the requested action truthfully and used no em dash; source, rendered, live and Native
+  authority agreed. File-only dispatch, multimodal preparation, stable result identity, retained
+  files, temporary proof failures and goal-alias duplication have causal tests and local repairs.
+  Full sign-off stays open for slow long-chat compaction, a stale proactive status from the earlier
+  prompt, unnecessary questions in primary-model evals, and blocked UI/provider checks. See the
+  [dated result](reports/2026-11-17-critical-request-delivery.md). No release claim.
+
 ## Case TR-037: A Live Poller Keeps Its Proven Process Identity
 
 - **Expected outcome:** Handoff and steady health use the existing native macOS working-directory

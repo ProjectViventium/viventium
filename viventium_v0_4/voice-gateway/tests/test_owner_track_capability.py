@@ -45,12 +45,17 @@ def observe(*, diarization=False, mode="call", owner_signed=True, identity="owne
                     else SpeechEventType.INTERIM_TRANSCRIPT), alternatives=[alternative])
                 tracker.finalize_turn(alternative.text)
     stream = SpeechStream()
+    # keyterms/chat_context: the 1.8.11 stt.StreamAdapter copies both from the listener it wraps.
     caps = (STTCapabilities(streaming=streaming, interim_results=False)
-            if sdk_default_capability else SimpleNamespace(streaming=streaming))
+            if sdk_default_capability else SimpleNamespace(streaming=streaming, keyterms=False,
+                                                           chat_context=False))
     if capability_present and not sdk_default_capability: caps.diarization = diarization
     provider = SimpleNamespace(capabilities=caps, stream=lambda **kwargs: stream)
+    closed_adapters = []
+    async def close_adapter(): closed_adapters.append(True)
+    # aclose: on 1.8.11 the node closes the adapter it created for a non-streaming listener.
     adapted = SimpleNamespace(capabilities=SimpleNamespace(diarization=wrapped_diarization),
-        stream=lambda **kwargs: stream)
+        stream=lambda **kwargs: stream, aclose=close_adapter)
     if prewrapped:
         provider.on = lambda *args: None
         provider = StreamAdapter(stt=provider,vad=object())
@@ -71,6 +76,8 @@ def observe(*, diarization=False, mode="call", owner_signed=True, identity="owne
         async for _ in agent.stt_node(audio(), None): pass
     with patch("livekit.agents.stt.StreamAdapter", return_value=adapted):
         asyncio.run(run())
+    # A temporary adapter exists only for a non-streaming listener, and is closed exactly once.
+    assert closed_adapters == ([True] if not streaming and not prewrapped else [])
     return tracker
 
 

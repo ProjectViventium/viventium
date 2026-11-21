@@ -142,3 +142,11 @@ the same positive, privacy-negative and ordinary-chat cases. Snapshots retain ex
 and composed frames privately. Tools-disabled semantic replay verifies the selected model, High
 effort, actual native instructions and call audit; real new-file delivery remains a separate gate.
 The runner uses the same approved synthetic-account and owner-exclusion guard as native-surface QA.
+
+The same family holds the separate-delivery cases for contract version 7: three existing images
+requested as separate messages with no send tool in the catalog (select all three, do not refuse),
+one requested file, a chat answer that needs no file, a location citation without sending, and an
+album request (select the files, promise no album). The file-selecting cases ask for a plan: this
+replay has no visible message to bind files to, so an answer that really links a local file is
+recorded as a transport failure, not a judgment. Real per-file Telegram delivery remains a
+separate gate.

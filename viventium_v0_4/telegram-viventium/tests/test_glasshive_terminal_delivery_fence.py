@@ -132,7 +132,7 @@ async def test_authorization_denial_fences_stale_delivery_before_telegram_send(
 
     assert await bridge._deliver_glasshive_delivery(_delivery()) is False
     assert telegram_messages == []
-    assert core.calls == [
+    assert core.calls[0:1] == [
         (
             "authorize",
             {
@@ -141,6 +141,9 @@ async def test_authorization_denial_fences_stale_delivery_before_telegram_send(
             },
         )
     ]
+    assert core.calls[1][0] == "status"
+    assert core.calls[1][1]["status"] == "failed"
+    assert "no send attempted" in core.calls[1][1]["error"]
 
 
 @pytest.mark.asyncio
@@ -159,7 +162,8 @@ async def test_expired_authorization_is_rejected_before_telegram_send(monkeypatc
 
     assert await bridge._deliver_glasshive_delivery(_delivery()) is False
     assert telegram_messages == []
-    assert [kind for kind, _payload in core.calls] == ["authorize"]
+    assert [kind for kind, _payload in core.calls] == ["authorize", "status"]
+    assert core.calls[-1][1]["status"] == "failed"
 
 
 @pytest.mark.asyncio
@@ -295,6 +299,7 @@ async def test_busy_authorization_replay_acquires_fresh_permit_and_sends_once(
     assert telegram_messages == [(406, "Generation A terminal result.")]
     assert [kind for kind, _payload in core.calls] == [
         "authorize",
+        "status",
         "authorize",
         "renew",
         "status",

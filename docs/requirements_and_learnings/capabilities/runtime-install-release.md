@@ -104,6 +104,9 @@ internals.
   source/live drift before mutation.
 - **ONB-011:** Use the smallest reviewable manifest and checks. Add another registry or launcher only
   after measured drift or isolation needs prove its value.
+- Codex companion readiness recognizes both sibling executables and the supported package
+  manifest's launcher directory. A packaged helper must remain within its package; an absent or
+  escaping helper cannot be reported ready.
 
 Health checks that inspect an HTTP response must consume it fully and retain transfer failures.
 Finding the artifact marker must not close the response pipe early and cause a healthy Core restart.
@@ -146,6 +149,8 @@ records the affected checks, rebuilt artifact and exact limits.
 - Local runtime, MCP, and UI readiness requires an exact listener from the selected checkout
   and expected service entrypoint. A healthy listener from another checkout is not readiness.
   Restart and watchdog recovery leave foreign or ambiguous listeners untouched.
+  Cold startup allows up to 60 seconds for the combined worker stack readiness check. Healthy
+  services return immediately; an explicit timeout override and the 120-second cap still apply.
 - Existing configuration, provider IDs, ports, and state paths remain stable. Stop the previous
   runtime before selecting the new checkout. A source rollback is not database rollback; verify
   schema compatibility or recover a consistent matching pre-upgrade state through the supported

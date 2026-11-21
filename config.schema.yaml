@@ -488,6 +488,7 @@ properties:
             type: integer
       turn_handling:
         type: object
+        description: Legacy gateway tuning retained for configuration compatibility. The pinned LiveKit Agents 1.8 gateway uses its documented SDK recipe.
         properties:
           min_endpointing_delay_s:
             type: number

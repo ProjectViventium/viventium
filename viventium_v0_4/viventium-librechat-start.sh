@@ -10529,10 +10529,10 @@ start_parallel_work_proxy_substrate() {
 }
 
 wait_for_glasshive_stack_ready() {
-  local timeout_seconds="${VIVENTIUM_GLASSHIVE_STARTUP_TIMEOUT_SECONDS:-30}"
+  local timeout_seconds="${VIVENTIUM_GLASSHIVE_STARTUP_TIMEOUT_SECONDS:-60}"
   local started_at="$SECONDS"
   if ! [[ "$timeout_seconds" =~ ^[0-9]+$ ]] || [[ "$timeout_seconds" -lt 1 ]]; then
-    timeout_seconds=30
+    timeout_seconds=60
   elif [[ "$timeout_seconds" -gt 120 ]]; then
     timeout_seconds=120
   fi
@@ -14085,17 +14085,6 @@ PY
           # Install deps if needed
           if [[ -f "requirements.txt" ]]; then
             needs_install=false
-            turn_detection_requested="$(printf '%s' "${VIVENTIUM_TURN_DETECTION:-}" | tr '[:upper:]' '[:lower:]')"
-            wants_voice_turn_detector=false
-            has_voice_turn_detector=false
-            voice_stt_provider_normalized="$(printf '%s' "${VIVENTIUM_STT_PROVIDER:-}" | tr '[:upper:]' '[:lower:]')"
-            if [[ "$voice_stt_provider_normalized" == "assemblyai" || "$voice_stt_provider_normalized" == "whisper_local" || "$voice_stt_provider_normalized" == "pywhispercpp" ]]; then
-              case "$turn_detection_requested" in
-                ""|turn_detector|semantic|semantic_turn_detector|multilingual)
-                  wants_voice_turn_detector=true
-                  ;;
-              esac
-            fi
             if voice_requirements_need_install "$voice_python" "requirements.txt"; then
               needs_install=true
             fi
@@ -14106,40 +14095,8 @@ PY
                 exit 1
               }
             fi
-            if "$voice_python" -m pip show livekit-plugins-turn-detector >/dev/null 2>&1; then
-              has_voice_turn_detector=true
-            fi
-            if [[ "$has_voice_turn_detector" == "true" ]]; then
-              if ! "$voice_python" - <<'PY' >/dev/null 2>&1
-from huggingface_hub import hf_hub_download
-from livekit.plugins.turn_detector.models import HG_MODEL, MODEL_REVISIONS, ONNX_FILENAME
-
-revision = MODEL_REVISIONS["multilingual"]
-hf_hub_download(
-    HG_MODEL,
-    ONNX_FILENAME,
-    subfolder="onnx",
-    revision=revision,
-    local_files_only=True,
-)
-hf_hub_download(
-    HG_MODEL,
-    "languages.json",
-    revision=revision,
-    local_files_only=True,
-)
-PY
-              then
-                echo -e "${YELLOW}[viventium]${NC} Pre-downloading voice turn detector model..."
-                "$voice_python" worker.py download-files >>"$LOG_DIR/voice_gateway_deps.log" 2>&1 || {
-                  if [[ "$wants_voice_turn_detector" == "true" ]]; then
-                    log_warn "Voice turn detector model pre-download failed; runtime will fall back to the provider-specific turn-taking profile if needed"
-                  else
-                    log_warn "Voice turn detector model pre-download failed; boot logs may still show plugin initialization errors until the cache is available"
-                  fi
-                }
-              fi
-            fi
+            # Agents 1.8 owns local turn inference through the pinned dependency. A leftover
+            # legacy turn-detector plugin/cache is not a gateway readiness prerequisite.
           fi
 
           # === VIVENTIUM START ===

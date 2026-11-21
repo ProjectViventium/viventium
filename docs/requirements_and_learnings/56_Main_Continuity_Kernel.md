@@ -71,9 +71,11 @@ The registered continuity-availability instruction applies independently of the 
 
 Every declared native graph route, including lazy handoffs and its
 configured graph fallbacks, uses the existing JSON `metadata.turn_context` carrier. Its default
-allocation is 128 KiB UTF-8. A larger allocation requires a positive complete-source fit against
-every declared route and uses only the proven remaining native body budget, up to the existing
-512 KiB hard ceiling. The factual converter removes the context header before transport
+allocation is 128 KiB UTF-8. A proven smaller remaining native budget reduces that allocation;
+the default is not a minimum. A larger allocation requires a positive complete-source fit against
+every declared route and uses only the proven remaining native body budget. An authenticated
+allocation has no separate 512 KiB application ceiling; the native harness owns final context
+admission. The factual converter removes the context header before transport
 and invocation hashing. Only Main applies its accepted-source manifest, authority stamps and
 invocation-fresh background-input guard; a specialist does not gain Main source authority. The
 lazy participant and its configured fallbacks retain the full factual context and its byte
@@ -443,7 +445,9 @@ Legacy callers without Core lineage retain their existing session behavior.
 
 Initial gates are:
 
-- a bootstrap uses at most 50% of the provider context window;
+- sizing uses the selected model window after output reserve, without a 50% bootstrap cutoff;
+- native CLI harnesses own final context admission and compaction; estimated byte budgets do not
+  reject or prune their protected source. Direct API capacity and explicit operator caps remain enforced;
 - compaction begins before 70% projected occupancy;
 - old, large tool results are pruned before conversational turns;
 - the current turn and last three conversational turns remain intact;
@@ -538,9 +542,11 @@ local model evaluation do not close `MC-008` or the real long-conversation journ
   carrier resolver. Final admission still allocates from the complete selected source and all declared
   routes; it re-renders accepted Core, includes the reviewed conversation capsule and peers, and fails
   closed on missing capacity or overflow. No stored summary, source, fidelity or native limit changes.
-  The stored summary contract remains bounded by 128 KiB. Actual native admission honors the
-  selected harness's effective half-window, explicit operator cap and existing 512 KiB hard
-  bound; a valid model/epoch-bound native observation can only reduce that window. The catalog
+  The stored summary contract remains bounded by 128 KiB. Native CLI sizing uses the selected model
+  window after output reserve and remains advisory unless an explicit operator cap applies;
+  the harness owns final admission and compaction. Direct API capacity remains enforced. A valid
+  model/epoch-bound observation can reduce the per-route allocation, without a separate 512 KiB
+  application clamp. The catalog
   limit is not a guarantee for an unknown smaller session window. Native Codex GPT-6.1 Sol uses
   its reported effective 475,000-token window; the Direct API route has its own catalog entry.
   An oversized indivisible packet still fails typed; whole-source reduction and fidelity review
@@ -1131,15 +1137,27 @@ session replay-budget receipt. Core reads it through its existing saved admissio
 result identity using the existing result transport timeout. No shorter observational timer may
 replace a still-pending lookup with the smaller discovery floor. Request cancellation releases
 Core immediately; the read-only result request retains its normal transport timeout. Provider,
-model, conversation, agent and current stable authority must agree. Only that request and route may use the observed allocation; other declared
+model, conversation, agent and current stable authority must agree. The authenticated receipt has
+no separate 512 KiB application clamp. Only that request and route may use the observed allocation; other declared
 fallbacks retain their own bounds. Missing, stale or unavailable receipts retain the discovery
 floor. The receipt neither reserves capacity nor guarantees later admission. Native still rejects
-protected-source overflow without admitting a partial source if its actual allocation shrinks.
+invalid or unavailable protected source without admitting a partial source. Native CLI sizing
+remains advisory; its harness owns genuine capacity errors.
 This adds no endpoint, database coupling, model call or shared user budget cache.
 The receipt reports Native's current admission policy, not a fresh token measurement for the new
 turn. Its calibration can remain historical when native evidence coverage is unproven; this path
 adds no age limit or automatic calibration-refresh guarantee. It does not certify downstream model
 capacity. Existing Native admission and protected-source failures remain authoritative.
+
+A completed configured fallback may supply its own authenticated receipt. Keep its actual model
+identity when applying the per-route minimum; do not discard it because the primary was requested.
+If a previously reviewed conversation prefix no longer fits beside current peer context, reuse the
+registered continuity-availability instruction and explicit retained-source gap marker. Keep every
+newer carried message whole, the verified covered-prefix ancestry, the saved summary and originals,
+and the existing idle reconciliation owner. Never slice the summary or silently substitute the
+128 KiB default for a smaller measured capacity. Required current-source or disclosure overflow
+still fails closed. Deterministic coverage belongs in the native allocation, history-budget and
+responsive continuity-view tests.
 
 Admission costs the fields rendered by the native
 history reader, the existing final native turn-context byte cap, source/delivery framing and the

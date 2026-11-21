@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "publication_state": "merged",
+  "publication_state": "review-head-pending-merge",
   "mongodb": {
     "version": "8.0.23",
     "architectures": {

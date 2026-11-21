@@ -87,17 +87,27 @@ Use stable `TGDOC-NNN` IDs for telegram document attachments cases.
 
 ## `TGDOC-004` - Unsupported File Fails Clearly
 
-- Requirement: unsupported binary/archive files must fail before the agent run with a visible
-  Telegram error.
+- Requirement: an explicitly denied file or a file unsupported by the selected provider's
+  upload, extraction or native workspace capabilities must fail before the agent run with a
+  visible Telegram error. The default admission list must not reject an otherwise authorized
+  opaque native workspace file.
 - Risk covered: unsupported files become inert attachments or produce a generic local API/server
   error.
-- Preconditions: local Telegram bridge and LibreChat API are running.
+- Preconditions: local Telegram bridge and LibreChat API are running; an explicit file policy
+  denies the test file, or the selected provider has no matching upload, extraction or native
+  workspace capability.
 - Steps:
-  1. Send a synthetic unsupported archive with a short caption.
+  1. Send a synthetic file rejected by that policy or provider with a short caption.
   2. Verify the Telegram user receives one clear attachment-processing error.
   3. Verify no assistant answer is generated from the caption alone.
-- Expected result: one clear failure message; no silent turn.
-- Forbidden result: generic HTTP/server error, no response, or caption-only agent answer.
+  4. Restore the default file policy and select a native workspace with both declared capabilities.
+     Send an opaque file and verify its original owner-scoped bytes reach the existing carrier.
+- Expected result: one clear failure message states that the request did not start and retains
+  the attachment failure reason. The original source group remains atomic. A native workspace
+  with both declared capabilities instead retains an admitted opaque file through its existing
+  owner-scoped byte carrier, without forced parsing. Explicit MIME restrictions still reject it.
+- Forbidden result: generic HTTP/server error, no response, caption-only agent answer, false
+  acceptance of a partial group, or a default parser whitelist blocking native file transport.
 - Evidence to capture: visible Telegram result summary, sanitized logs, and route/bridge test output.
 - Automation: `tests/test_librechat_bridge.py::test_start_chat_error_message_surfaces_attachment_processing_reason`,
   LibreChat `telegram.spec.js`.

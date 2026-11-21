@@ -2578,6 +2578,19 @@ Missing receipt proof stays explicitly unconfirmed and nonretryable; it must not
 rejection or automatic compensating Message. This uses existing control, callback and durable-effect
 owners and does not increase request budgets or weaken process-stop proof.
 
+A trusted local read failure before an action request certifies no work-action effect; it does not
+certify rejection after dispatch. The live managed-action path requires the current source admission
+and reads the exact retained native action body and its owner, run, key and digest receipt. It does
+not prepare context, upload files, refresh grants or execute a control.
+
+`prepareDurableEffectReconciliation` is an internal, directly tested helper for retained durable
+identity. It has no runtime consumer in this candidate; receipt recovery after the temporary
+generation job expires is not delivered by that helper. Its reservation CAS never permits dispatch
+or takes over an active lease. Every new dispatch still needs the current author.
+
+Recovery of an older ambiguous record needs separately reviewed proof from its exact execution
+boundary. A missing native receipt alone does not prove that no effect occurred.
+
 Pending control truth also survives its existing presentation projections: Voice records acceptance
 with confirmationPending and does not emit control.completed until completion is established.
 External durable receipts retain confirmation_pending as internal control data. A superseded

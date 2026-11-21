@@ -1,5 +1,5 @@
 # === VIVENTIUM START ===
-# Feature: Local whisper.cpp STT provider with VAD stream adapter (v1 parity)
+# Feature: Local whisper.cpp STT provider, made streaming by LiveKit's own VAD stream adapter
 # Added: 2026-01-11
 # === VIVENTIUM END ===
 
@@ -21,7 +21,6 @@ import sys
 import threading
 import time
 import urllib.request
-from collections.abc import AsyncIterable
 from pathlib import Path
 from typing import Any, List, Optional
 
@@ -37,28 +36,15 @@ from whisper_cpp_models import (
 
 import numpy as np
 from livekit.agents.stt import (
-    RecognizeStream,
     STT,
     STTCapabilities,
     SpeechData,
     SpeechEvent,
     SpeechEventType,
 )
-from livekit.agents.stt.stream_adapter import (
-    DEFAULT_STREAM_ADAPTER_API_CONNECT_OPTIONS,
-    StreamAdapter,
-)
-from livekit.agents.types import (
-    DEFAULT_API_CONNECT_OPTIONS,
-    APIConnectOptions,
-    NOT_GIVEN,
-    NotGivenOr,
-)
-from livekit.agents import utils as lk_utils
+from livekit.agents.stt.stream_adapter import StreamAdapter
 from livekit.agents.utils import AudioBuffer
-from livekit.agents.vad import VAD as VADBase, VADEventType
 from livekit.rtc.audio_frame import AudioFrame
-from silero_vad_config import get_silero_vad_kwargs
 
 try:
     from pywhispercpp.model import Model
@@ -72,14 +58,7 @@ _logger = logging.getLogger(__name__)
 _MODEL_CACHE: dict[str, Model] = {}
 _MODEL_EXECUTORS: dict[tuple[int, str], concurrent.futures.ThreadPoolExecutor] = {}
 _MODEL_EXECUTOR_LOCK = threading.Lock()
-_LOCAL_WHISPER_VAD_MIN_SILENCE_S = "0.5"
 _MODEL_WARMUP_DONE: set[str] = set()
-
-def _local_whisper_vad_env() -> dict[str, str]:
-    source = dict(os.environ)
-    if not (source.get("VIVENTIUM_STT_VAD_MIN_SILENCE") or "").strip():
-        source["VIVENTIUM_STT_VAD_MIN_SILENCE"] = _LOCAL_WHISPER_VAD_MIN_SILENCE_S
-    return source
 
 
 def _bool_env(name: str, fallback: bool = False) -> bool:
@@ -652,160 +631,18 @@ class PyWhisperCppSTT(STT):
         )
 
 
-class ViventiumInstrumentedStreamAdapterWrapper(RecognizeStream):
-    """StreamAdapter wrapper with high-resolution local STT stage timing."""
+def get_stt(
+    *,
+    model_name: Optional[str] = None,
+    language: Optional[str] = None,
+    vad: Optional[Any] = None,
+) -> StreamAdapter:
+    """Local Whisper as a streaming listener: LiveKit's own VAD stream adapter around it.
 
-    def __init__(
-        self,
-        stt: STT,
-        *,
-        vad: VADBase,
-        wrapped_stt: STT,
-        language: NotGivenOr[str],
-        conn_options: APIConnectOptions,
-    ) -> None:
-        super().__init__(
-            stt=stt,
-            conn_options=DEFAULT_STREAM_ADAPTER_API_CONNECT_OPTIONS,
-        )
-        self._vad = vad
-        self._wrapped_stt = wrapped_stt
-        self._wrapped_stt_conn_options = conn_options
-        self._language = language
-
-    async def _metrics_monitor_task(self, event_aiter: AsyncIterable[SpeechEvent]) -> None:
-        async for _ in event_aiter:
-            pass
-
-    async def _run(self) -> None:
-        vad_stream = self._vad.stream()
-
-        async def _forward_input() -> None:
-            async for input in self._input_ch:
-                if isinstance(input, self._FlushSentinel):
-                    vad_stream.flush()
-                    continue
-                vad_stream.push_frame(input)
-
-            vad_stream.end_input()
-
-        async def _recognize() -> None:
-            async for event in vad_stream:
-                if event.type == VADEventType.START_OF_SPEECH:
-                    if _latency_logging_enabled():
-                        _logger.info(
-                            "[VoiceLatencyDetail] stream_adapter_vad event=start_of_speech perf_ns=%s vad_timestamp_s=%.6f speech_s=%.6f silence_s=%.6f raw_speech_s=%.6f raw_silence_s=%.6f frames=%s",
-                            time.perf_counter_ns(),
-                            event.timestamp,
-                            event.speech_duration,
-                            event.silence_duration,
-                            event.raw_accumulated_speech,
-                            event.raw_accumulated_silence,
-                            len(event.frames),
-                        )
-                    self._event_ch.send_nowait(SpeechEvent(SpeechEventType.START_OF_SPEECH))
-                elif event.type == VADEventType.END_OF_SPEECH:
-                    vad_end_ns = time.perf_counter_ns()
-                    self._event_ch.send_nowait(
-                        SpeechEvent(
-                            type=SpeechEventType.END_OF_SPEECH,
-                        )
-                    )
-
-                    merge_start_ns = time.perf_counter_ns()
-                    merged_frames = lk_utils.merge_frames(event.frames)
-                    merge_end_ns = time.perf_counter_ns()
-
-                    sample_rate = int(getattr(merged_frames, "sample_rate", 0) or 0)
-                    num_channels = int(getattr(merged_frames, "num_channels", 0) or 0)
-                    audio_data = getattr(merged_frames, "data", b"") or b""
-                    audio_bytes = int(
-                        getattr(audio_data, "nbytes", len(audio_data))
-                    )
-                    audio_s = (
-                        audio_bytes / (sample_rate * num_channels * 2)
-                        if sample_rate > 0 and num_channels > 0
-                        else 0.0
-                    )
-
-                    recognize_start_ns = time.perf_counter_ns()
-                    t_event = await self._wrapped_stt.recognize(
-                        buffer=merged_frames,
-                        language=self._language,
-                        conn_options=self._wrapped_stt_conn_options,
-                    )
-                    recognize_end_ns = time.perf_counter_ns()
-
-                    text_chars = (
-                        len(t_event.alternatives[0].text)
-                        if len(t_event.alternatives) > 0
-                        else 0
-                    )
-                    sent_final = False
-                    final_send_ms = 0.0
-                    if len(t_event.alternatives) > 0 and t_event.alternatives[0].text:
-                        final_send_start_ns = time.perf_counter_ns()
-                        self._event_ch.send_nowait(
-                            SpeechEvent(
-                                type=SpeechEventType.FINAL_TRANSCRIPT,
-                                alternatives=[t_event.alternatives[0]],
-                            )
-                        )
-                        final_send_ms = _ms_since(final_send_start_ns)
-                        sent_final = True
-
-                    if _latency_logging_enabled():
-                        _logger.info(
-                            "[VoiceLatencyDetail] stream_adapter_final model=%s provider=%s sent_final=%s text_chars=%s vad_end_perf_ns=%s vad_timestamp_s=%.6f speech_s=%.6f silence_s=%.6f raw_speech_s=%.6f raw_silence_s=%.6f frames=%s audio_s=%.6f merge_ms=%.3f recognize_wait_ms=%.3f final_send_ms=%.3f total_after_vad_end_ms=%.3f",
-                            self._wrapped_stt.model,
-                            self._wrapped_stt.provider,
-                            sent_final,
-                            text_chars,
-                            vad_end_ns,
-                            event.timestamp,
-                            event.speech_duration,
-                            event.silence_duration,
-                            event.raw_accumulated_speech,
-                            event.raw_accumulated_silence,
-                            len(event.frames),
-                            audio_s,
-                            _ms_since(merge_start_ns, merge_end_ns),
-                            _ms_since(recognize_start_ns, recognize_end_ns),
-                            final_send_ms,
-                            _ms_since(vad_end_ns),
-                        )
-
-        tasks = [
-            asyncio.create_task(_forward_input(), name="forward_input"),
-            asyncio.create_task(_recognize(), name="recognize"),
-        ]
-        try:
-            await asyncio.gather(*tasks)
-        finally:
-            await lk_utils.aio.cancel_and_wait(*tasks)
-            await vad_stream.aclose()
-
-
-class ViventiumInstrumentedStreamAdapter(StreamAdapter):
-    def stream(
-        self,
-        *,
-        language: NotGivenOr[str] = NOT_GIVEN,
-        conn_options: APIConnectOptions = DEFAULT_API_CONNECT_OPTIONS,
-    ) -> RecognizeStream:
-        return ViventiumInstrumentedStreamAdapterWrapper(
-            self,
-            vad=self._vad,
-            wrapped_stt=self._stt,
-            language=language,
-            conn_options=conn_options,
-        )
-
-
-def get_stt(*, model_name: Optional[str] = None, language: Optional[str] = None) -> StreamAdapter:
-    """Get PyWhisperCpp STT wrapped in StreamAdapter with VAD for streaming support."""
-    from livekit.plugins.silero import VAD
-
+    whisper.cpp transcribes one finished utterance at a time. The SDK adapter cuts the audio into
+    utterances with the VAD, stamps when the speech ended, and tells the SDK the listener is
+    making progress. ``vad`` is the call's VAD; without one the stock Silero VAD is loaded.
+    """
     stt_kwargs = {
         "language": language or os.getenv("VIVENTIUM_STT_LANGUAGE", "en"),
     }
@@ -813,19 +650,11 @@ def get_stt(*, model_name: Optional[str] = None, language: Optional[str] = None)
         stt_kwargs["model_name"] = model_name
 
     stt = PyWhisperCppSTT(**stt_kwargs)
+    if vad is None:
+        from livekit.plugins.silero import VAD
 
-    vad_kwargs = get_silero_vad_kwargs(_local_whisper_vad_env())
-    _logger.info(
-        "Loading PyWhisperCpp StreamAdapter VAD min_speech=%ss min_silence=%ss activation=%s max_buffered_speech=%ss force_cpu=%s",
-        vad_kwargs["min_speech_duration"],
-        vad_kwargs["min_silence_duration"],
-        vad_kwargs["activation_threshold"],
-        vad_kwargs["max_buffered_speech"],
-        vad_kwargs["force_cpu"],
-    )
-    vad = VAD.load(**vad_kwargs)
-
-    return ViventiumInstrumentedStreamAdapter(stt=stt, vad=vad)
+        vad = VAD.load()
+    return StreamAdapter(stt=stt, vad=vad)
 
 
 __all__ = [

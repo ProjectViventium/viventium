@@ -5,6 +5,7 @@ requirementOwner:
   - docs/requirements_and_learnings/25_Scheduling_Telegram_UX_Fixes.md
 statusPolicy: Run results belong in dated, candidate-bound reports.
 reports:
+  - qa/telegram-channels/reports/2026-11-14-literal-punctuation.md
   - qa/telegram-channels/reports/2026-11-08-current-photo-identity.md
   - qa/telegram-channels/reports/2026-11-05-mp4-upload.md
   - qa/telegram-channels/reports/2026-11-05-round-video-note.md
@@ -26,6 +27,14 @@ relatedJourneys:
     journey: telegram-call-public-edge
     note: Telegram /call is entered here but owned by the Voice capability. Run that journey there; do not duplicate it in Telegram QA.
 journeys:
+  - id: telegram-literal-punctuation
+    requirements: [TGFORMAT-001]
+    userAction: Request ordinary prose, an exact quotation, literal code and an explicit punctuation override; inspect the main reply, preview and a later follow-up.
+    surfaces: [foreground Main, streaming preview, scheduled message, background follow-up, plain-text fallback]
+    expectedResult: Shared Main instructions apply the default prose preference; Telegram preserves the punctuation of the model output, including requested literals and overrides.
+    degradedAndRecovery: Provider or channel unavailability is reported separately from an empty response. Transport never repairs model style by rewriting literal content.
+    persistenceAndCleanup: Reopen the same conversation and inspect the later follow-up without changing saved preferences or accepted literal sources. Keep raw prompts and outputs private; retire only owned synthetic QA resources.
+    evidence: [exact-text adapter and follow-up regressions, current configured-model comparisons, visible Telegram preview and final reply, accepted source and delivery receipts, reopen and cleanup proof]
   - id: telegram-voice-preferences
     requirements: [TGVOICE-004, TGVOICE-006, TGVOICE-011, CORE-007]
     userAction: Open Telegram Preferences, inspect all three voice controls, change each independently, reopen and restart, then send voice notes and text with ordinary and text-only requests. Let a source-bound worker reply arrive later.
@@ -87,6 +96,15 @@ journeys:
     degradedAndRecovery: An unknown POST outcome is never retried as fresh execution. A newer source suppresses the old notice. Transport failure and provider failure keep distinct wording. Background acknowledgement retries back off and recover without log floods. Authenticated prepared input survives an ordering outage in its existing ingress ledger; only a recoverable retained receipt permits a waiting notice. A late startup callback cannot change the identity of a cancelled pre-native reply or prevent its successor from authoring the exact sources.
     persistenceAndCleanup: Restart retains exact source and terminal facts; a newer independent message does not mark old work completed. Remove only synthetic fixtures through their owning cleanup path.
     evidence: [visible outage and recovery, exact source and delivery receipts, canonical failure and presentation state, absence of tool replay, bounded typing start/stop logs, installed artifact identity, quiet-stream read-idle counterfactual and comment lifecycle]
+
+  - id: accepted-work-reply-failure
+    requirements: [CORE-002, CORE-007, CC-048]
+    userAction: Request durable work, let the conversational reply fail at a provider boundary, then inspect the accepted work and its later delivery. Continue the conversation and reopen the chat.
+    surfaces: [Telegram Desktop, Core Native FINAL and replay, durable work, configured fallback]
+    expectedResult: The exact server-owned new-work receipt survives the failed reply. Telegram keeps the existing follow-up and describes accepted work without asking for duplicate execution. The provider failure retains its public class and the result delivers once.
+    degradedAndRecovery: Missing, changed, uncertain, action-only and legacy receipts do not prove new work. Explicit cancellation stays terminal. Unknown diagnostics stay private. Failure presentation never changes Native source authorization or the configured model route.
+    persistenceAndCleanup: Saved terminal state and delivery acknowledgements survive service recovery and reopening. Preserve real accepted work and personal schedules; retire only synthetic fixtures through their owner.
+    evidence: [TR-039, causal provider and receipt cases, real completed work and fallback reply, exact source and delivery proof, installed artifact identity, chat reopen]
 
   - id: scheduled-text-with-optional-audio
     requirements: [CORE-007, TGVOICE-004, TGVOICE-006]

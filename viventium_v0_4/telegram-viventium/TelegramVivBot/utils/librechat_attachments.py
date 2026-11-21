@@ -15,18 +15,20 @@
 
 from __future__ import annotations
 
+import logging
 import re
 import urllib.parse
 from io import BytesIO
 from typing import Any, Awaitable, Callable, Optional
 
 import httpx
-from telegram import InputMediaPhoto
 from telegram.error import BadRequest, Forbidden, RetryAfter
 try:
     from utils.librechat_http import async_client_options_for_url
 except ModuleNotFoundError:
     from TelegramVivBot.utils.librechat_http import async_client_options_for_url
+
+logger = logging.getLogger(__name__)
 
 _LC_CODE_DOWNLOAD_PATH_RE = re.compile(
     r"^/?(?:.*?)(/api/files/code/download/([A-Za-z0-9_-]{21})/([A-Za-z0-9_-]{21}))"
@@ -128,9 +130,7 @@ async def send_librechat_attachments(
         fetch_bytes = fetch_librechat_bytes
 
     seen: set[str] = set()
-    images: list[tuple[bytes, str]] = []
-    videos: list[tuple[bytes, str]] = []
-    documents: list[tuple[bytes, str]] = []
+    deliveries: list[tuple[str, bytes, str]] = []
     unavailable = 0
     retrieval_failed = 0
     oversized = 0
@@ -147,6 +147,14 @@ async def send_librechat_attachments(
         except Exception as exc:
             exc.telegram_message_ids = list(message_ids)
             raise
+
+    def note_failure(method: str, outcome: str, exc: BaseException, size_bytes: int) -> None:
+        # The user-facing notice stays generic. This line names the method, outcome, error class
+        # and size only, so a later reader can tell a rejection from a dropped connection.
+        logger.warning(
+            "Telegram attachment send outcome=%s method=%s error=%s size_bytes=%s",
+            outcome, method, type(exc).__name__, size_bytes,
+        )
 
     def remember(result: Any, expected: int = 1) -> None:
         nonlocal unconfirmed, sent
@@ -226,67 +234,16 @@ async def send_librechat_attachments(
         safe_name = filename or (f"{file_id}.bin" if file_id else "attachment.bin")
         final_mime = (content_type or mime_type or "").split(";")[0].strip().lower()
         if final_mime.startswith("image/"):
-            images.append((blob, safe_name))
+            deliveries.append(("photo", blob, safe_name))
         elif final_mime == "video/mp4":
-            videos.append((blob, safe_name))
+            deliveries.append(("video", blob, safe_name))
         else:
-            documents.append((blob, safe_name))
+            deliveries.append(("document", blob, safe_name))
 
-    for i in range(0, len(images), 10):
-        batch = images[i : i + 10]
-        if not batch:
-            continue
-        await authorize()
-        try:
-            if len(batch) == 1:
-                result = await bot.send_photo(
-                    chat_id=telegram_chat_id,
-                    photo=batch[0][0],
-                    message_thread_id=message_thread_id,
-                    reply_to_message_id=reply_to_message_id,
-                )
-            else:
-                result = await bot.send_media_group(
-                    chat_id=telegram_chat_id,
-                    media=[InputMediaPhoto(media=blob) for blob, _ in batch],
-                    message_thread_id=message_thread_id,
-                    reply_to_message_id=reply_to_message_id,
-                )
-            remember(result, len(batch))
-        except BadRequest:
-            # A rejected photo/album was not sent. Preserve its original bytes as files.
-            documents.extend(batch)
-        except (Forbidden, RetryAfter):
-            rejected += len(batch)
-        except Exception:
-            unconfirmed += len(batch)
-            continue
-
-    for blob, safe_name in videos:
+    async def send_document(blob: bytes, safe_name: str) -> None:
+        nonlocal rejected, unconfirmed
         bio = BytesIO(blob)
         bio.name = safe_name
-        await authorize()
-        try:
-            result = await bot.send_video(
-                chat_id=telegram_chat_id,
-                message_thread_id=message_thread_id,
-                video=bio,
-                filename=safe_name,
-                reply_to_message_id=reply_to_message_id,
-                supports_streaming=True,
-            )
-            remember(result)
-        except BadRequest:
-            documents.append((blob, safe_name))
-        except (Forbidden, RetryAfter):
-            rejected += 1
-        except Exception:
-            unconfirmed += 1
-
-    for blob, safe_name in documents:
-        bio = BytesIO(blob)
-        bio.name = safe_name
-        bio.seek(0)
         await authorize()
         try:
             result = await bot.send_document(
@@ -297,11 +254,48 @@ async def send_librechat_attachments(
                 reply_to_message_id=reply_to_message_id,
             )
             remember(result)
-        except (BadRequest, Forbidden, RetryAfter):
+        except (BadRequest, Forbidden, RetryAfter) as exc:
+            note_failure("send_document", "rejected", exc, len(blob))
             rejected += 1
-        except Exception:
+        except Exception as exc:
+            note_failure("send_document", "unconfirmed", exc, len(blob))
             unconfirmed += 1
+
+    # === VIVENTIUM START === One message per selected file, in original link order.
+    # A definitively rejected media send may use the same bytes as a document in that position.
+    # An uncertain send cannot be retried as a different message.
+    for kind, blob, safe_name in deliveries:
+        if kind == "document":
+            await send_document(blob, safe_name)
             continue
+        method = "send_photo" if kind == "photo" else "send_video"
+        await authorize()
+        try:
+            if kind == "photo":
+                result = await bot.send_photo(
+                    chat_id=telegram_chat_id, photo=blob,
+                    message_thread_id=message_thread_id,
+                    reply_to_message_id=reply_to_message_id,
+                )
+            else:
+                bio = BytesIO(blob)
+                bio.name = safe_name
+                result = await bot.send_video(
+                    chat_id=telegram_chat_id, message_thread_id=message_thread_id,
+                    video=bio, filename=safe_name,
+                    reply_to_message_id=reply_to_message_id, supports_streaming=True,
+                )
+            remember(result)
+        except BadRequest as exc:
+            note_failure(method, "retry_as_document", exc, len(blob))
+            await send_document(blob, safe_name)
+        except (Forbidden, RetryAfter) as exc:
+            note_failure(method, "rejected", exc, len(blob))
+            rejected += 1
+        except Exception as exc:
+            note_failure(method, "unconfirmed", exc, len(blob))
+            unconfirmed += 1
+    # === VIVENTIUM END ===
 
     notices = []
     for count, detail in (

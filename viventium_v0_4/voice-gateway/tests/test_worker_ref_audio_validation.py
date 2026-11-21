@@ -23,7 +23,6 @@ from livekit.agents.worker import WorkerType
 
 import worker as worker_module
 from worker import (
-    _apply_xai_tts_streaming_latency_options,
     _apply_requested_voice_route,
     _build_room_options,
     _build_voice_capability_catalog,
@@ -184,71 +183,6 @@ class TestRefAudioValidation(unittest.TestCase):
                     sample_rate=44100,
                 )
 
-    def test_apply_xai_tts_streaming_latency_options_adds_query_param(self) -> None:
-        class FakeSession:
-            def __init__(self) -> None:
-                self.url = ""
-                self.headers = {}
-
-            async def ws_connect(self, url: str, headers: dict[str, str]) -> str:
-                self.url = url
-                self.headers = headers
-                return "connected"
-
-        fake_session = FakeSession()
-
-        class FakeTTS:
-            _opts = SimpleNamespace(voice="Eve", language="en")
-            _api_key = "synthetic_xai_key"
-
-            def _ensure_session(self) -> FakeSession:
-                return fake_session
-
-            async def _connect_ws(self, timeout: float) -> str:
-                return "unpatched"
-
-        fake_tts = FakeTTS()
-        _apply_xai_tts_streaming_latency_options(
-            fake_tts,
-            ws_url="wss://xai-tts.example.test/v1/tts",
-            sample_rate=44100,
-            optimize_streaming_latency=1,
-        )
-
-        result = asyncio.run(fake_tts._connect_ws(1.0))
-
-        self.assertEqual(result, "connected")
-        self.assertTrue(fake_session.url.startswith("wss://xai-tts.example.test/v1/tts?"))
-        self.assertIn("voice=Eve", fake_session.url)
-        self.assertIn("language=en", fake_session.url)
-        self.assertIn("sample_rate=44100", fake_session.url)
-        self.assertIn("optimize_streaming_latency=1", fake_session.url)
-        self.assertEqual(fake_session.headers["Authorization"], "Bearer synthetic_xai_key")
-
-    def test_apply_xai_tts_streaming_latency_options_warns_when_hook_missing(self) -> None:
-        class FakeSession:
-            async def ws_connect(self, url: str, headers: dict[str, str]) -> str:
-                return "connected"
-
-        class FakeTTS:
-            _opts = SimpleNamespace(voice="Eve", language="en")
-            _api_key = "synthetic_xai_key"
-
-            def _ensure_session(self) -> FakeSession:
-                return FakeSession()
-
-        fake_tts = FakeTTS()
-        with self.assertLogs("voice-gateway", level="WARNING") as logs:
-            _apply_xai_tts_streaming_latency_options(
-                fake_tts,
-                ws_url="wss://xai-tts.example.test/v1/tts",
-                sample_rate=44100,
-                optimize_streaming_latency=1,
-            )
-
-        self.assertFalse(hasattr(fake_tts, "_viventium_xai_tts_optimize_streaming_latency"))
-        self.assertIn("_connect_ws hook", "\n".join(logs.output))
-
     def test_load_env_uses_cold_start_timeout_for_local_whisper(self) -> None:
         with (
             patch.dict(os.environ, {"VIVENTIUM_STT_PROVIDER": "whisper_local"}, clear=True),
@@ -257,34 +191,6 @@ class TestRefAudioValidation(unittest.TestCase):
             env = load_env()
 
         self.assertEqual(env.voice_initialize_process_timeout_s, 120.0)
-
-    def test_load_env_sets_voice_endpointing_defaults(self) -> None:
-        with (
-            patch.dict(os.environ, {}, clear=True),
-            patch("worker._turn_detector_model_is_cached", return_value=False),
-        ):
-            env = load_env()
-
-        self.assertEqual(env.voice_min_interruption_duration_s, 0.5)
-        self.assertEqual(env.voice_turn_detection, "vad")
-        self.assertEqual(env.voice_min_endpointing_delay_s, 0.5)
-        self.assertEqual(env.voice_max_endpointing_delay_s, 3.0)
-
-    def test_load_env_respects_voice_endpointing_overrides(self) -> None:
-        with patch.dict(
-            os.environ,
-            {
-                "VIVENTIUM_VOICE_MIN_INTERRUPTION_DURATION_S": "0.8",
-                "VIVENTIUM_VOICE_MIN_ENDPOINTING_DELAY_S": "1.2",
-                "VIVENTIUM_VOICE_MAX_ENDPOINTING_DELAY_S": "4.5",
-            },
-            clear=True,
-        ):
-            env = load_env()
-
-        self.assertEqual(env.voice_min_interruption_duration_s, 0.8)
-        self.assertEqual(env.voice_min_endpointing_delay_s, 1.2)
-        self.assertEqual(env.voice_max_endpointing_delay_s, 4.5)
 
     def test_missing_path_rejected(self) -> None:
         valid, warning = _validate_ref_audio_path("/path/to/does_not_exist_ref_audio.wav")
@@ -353,14 +259,11 @@ class TestRefAudioValidation(unittest.TestCase):
 
         with (
             patch("worker.start_health_server"),
-            patch("worker._semantic_turn_detector_status", return_value=(True, "ready")),
             patch(
                 "worker.load_env",
                 return_value=SimpleNamespace(
                     livekit_agent_name="librechat-voice-gateway",
                     stt_provider="whisper_local",
-                    voice_turn_detection="turn_detector",
-                    voice_requested_turn_detection="turn_detector",
                     voice_initialize_process_timeout_s=120.0,
                     voice_idle_processes=1,
                     voice_worker_load_threshold=float("inf"),

@@ -16,7 +16,6 @@ from sse import (
     iter_sse_json_events,
     extract_cortex_message_id,
     extract_raw_text_deltas,
-    extract_text_deltas,
     sanitize_voice_delta_text,
     sanitize_voice_text,
     sanitize_voice_followup_text,
@@ -658,7 +657,7 @@ class TestSSEParser(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(display.feed("", final=True), "")
     # === VIVENTIUM END ===
 
-    def test_extract_text_deltas_preserves_space_only_chunks(self) -> None:
+    def test_sanitized_text_deltas_preserve_space_only_chunks(self) -> None:
         payload = {
             "event": "on_message_delta",
             "data": {
@@ -671,7 +670,7 @@ class TestSSEParser(unittest.IsolatedAsyncioTestCase):
                 }
             },
         }
-        deltas = extract_text_deltas(payload)
+        deltas = [sanitize_voice_delta_text(text) for text in extract_raw_text_deltas(payload)]
         self.assertEqual("".join(deltas), "quiet and")
 
     def test_extract_raw_text_deltas_preserves_voice_markup_for_debugging(self) -> None:

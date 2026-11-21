@@ -53,9 +53,9 @@ Older reports below retain their original scope and dates.
     order, and grouping. The Bee's generated file/media returns once and opens from Telegram or
     linked Active Work after control, fallback, and restart; unavailable inputs or delivery fail
     truthfully.
-    Generated single images use photos; albums contain two to ten images and a singleton tail uses
-    a photo. A definite photo rejection returns the same named bytes as documents. Ambiguous sends
-    never resend automatically; final rejection and uncertain delivery remain distinct.
+    Each generated image is its own photo message, in selection order, never an album. A definite
+    photo rejection returns that image's named bytes as a document. Ambiguous sends never resend
+    automatically; final rejection and uncertain delivery remain distinct.
 
 ## Evidence Rules
 

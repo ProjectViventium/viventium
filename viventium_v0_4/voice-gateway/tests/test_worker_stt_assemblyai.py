@@ -26,6 +26,7 @@ from worker import (  # noqa: E402
     _assemblyai_stt_model_variants,
     _build_assemblyai_stt_kwargs,
     _build_voice_capability_catalog,
+    _build_voice_route_metadata,
     _normalize_assemblyai_stt_model,
     build_stt_selection,
     load_env,
@@ -46,7 +47,8 @@ def _actual_assemblyai_events(labels):
     stream._speech_duration = 0.0
     stream._last_preflight_start_time = 0.0
     stream._session_id = 'synthetic-pending'
-    stream.start_time_offset = 0.0
+    # 1.8.11: the stream reads its time offset from its input channel (0.0 until audio is read).
+    stream._input_ch = SimpleNamespace(start_time_offset=0.0)
     stream.start_time = 1_790_000_000.0
     for index, label in enumerate(labels):
         start_ms = index * 4000
@@ -241,6 +243,36 @@ class TestAssemblyAISttModelSelection(unittest.TestCase):
             applied = _apply_requested_voice_route(env, requested, capabilities)
         self.assertEqual(applied.stt_provider, "assemblyai")
         self.assertEqual(applied.assemblyai_stt_model, "universal-streaming-multilingual")
+
+    @unittest.skipUnless(HAS_ASSEMBLYAI, "livekit-plugins-assemblyai not installed")
+    def test_published_voice_route_names_the_engine_this_call_uses(self):
+        # voiceRoute.stt.variant on the call page: the engine handed to the plugin, which is one
+        # of the ids the picker offers (it used to be the constant "universal-streaming").
+        requested = {
+            "stt": {"provider": "assemblyai", "variant": "universal-streaming-multilingual"},
+            "tts": {"provider": "openai", "variant": "gpt-4o-mini-tts"},
+        }
+        with patch.dict(os.environ, _assemblyai_env(VIVENTIUM_ASSEMBLYAI_STT_MODEL=""), clear=False):
+            configured = load_env()
+            capabilities = _build_voice_capability_catalog(configured)
+            applied = _apply_requested_voice_route(configured, requested, capabilities)
+            routes = {
+                name: _build_voice_route_metadata(
+                    env=env, capabilities=capabilities, stt_provider="assemblyai", tts_provider="openai",
+                    effective_tts_impl=None, fallback_tts_provider=None, fallback_tts_impl=None,
+                )["stt"]
+                for name, env in (("configured", configured), ("applied", applied))
+            }
+            plugin_models = {name: _build_assemblyai_stt_kwargs(env)["model"]
+                             for name, env in (("configured", configured), ("applied", applied))}
+        offered = {variant["id"] for variant in _assemblyai_stt_capability(configured)["variants"]}
+        self.assertEqual(routes["configured"]["variant"], "u3-rt-pro")
+        self.assertEqual(routes["applied"]["variant"], "universal-streaming-multilingual")
+        for name, route in routes.items():
+            self.assertEqual(route["variant"], plugin_models[name])
+            self.assertIn(route["variant"], offered)
+            self.assertEqual(route["provider"], "assemblyai")
+            self.assertEqual(route["variantType"], "Engine")
 
     @unittest.skipUnless(HAS_ASSEMBLYAI, "livekit-plugins-assemblyai not installed")
     def test_apply_requested_route_rejects_unknown_saved_variant(self):

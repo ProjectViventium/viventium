@@ -6,6 +6,7 @@ import functools
 import hashlib
 import importlib.util
 import json
+import copy
 import os
 import shlex
 import shutil
@@ -5590,6 +5591,33 @@ def test_typed_storage_warning_also_fails_closed(tmp_path: Path) -> None:
     assert {check.check_id: check.status for check in result.blocking_checks} == {
         "STORAGE-PRESSURE": "FAIL"
     }
+    # The same percentage remains telemetry when the selected Native byte budget is healthy.
+    facts.update(executionMode="host", nativeStorage={"version": 1, "healthy": True,
+        "availableBytes": 8 * 1024**3, "requiredBytes": 4 * 1024**3})
+    checks = gate._typed_readiness_checks(facts)
+    assert next(check for check in checks if check.check_id == "STORAGE-PRESSURE").status == "PASS"
+    invalid_version = copy.deepcopy(facts)
+    invalid_version["nativeStorage"]["version"] = True
+    assert next(check for check in gate._typed_readiness_checks(invalid_version)
+        if check.check_id == "STORAGE-PRESSURE").status == "UNKNOWN"
+    invalid_budget = copy.deepcopy(facts)
+    invalid_budget["nativeStorage"]["requiredBytes"] = "0"
+    assert next(check for check in gate._typed_readiness_checks(gate._public_readiness_facts(invalid_budget))
+        if check.check_id == "STORAGE-PRESSURE").status == "UNKNOWN"
+    identity = gate._readiness_identity(facts)
+    assert identity["storagePolicySha256"]
+    changed_budget = copy.deepcopy(facts)
+    changed_budget["nativeStorage"]["requiredBytes"] += 1
+    assert gate._readiness_identity(changed_budget)["storagePolicySha256"] != identity["storagePolicySha256"]
+    shortage = copy.deepcopy(facts)
+    shortage["nativeStorage"].update(healthy=False, availableBytes=2 * 1024**3)
+    assert next(check for check in gate._typed_readiness_checks(shortage)
+        if check.check_id == "STORAGE-PRESSURE").status == "FAIL"
+    assert not gate._storage_pressure_did_not_worsen(shortage, facts)
+    unknown = copy.deepcopy(facts)
+    unknown["nativeStorage"].update(healthy=False, availableBytes=None, errorCode="storage_probe_unavailable")
+    assert next(check for check in gate._typed_readiness_checks(unknown)
+        if check.check_id == "STORAGE-PRESSURE").status == "UNKNOWN"
 
 
 def test_release_gate_remeasures_stale_persisted_storage_pressure(
@@ -5671,6 +5699,22 @@ def test_storage_probe_uses_canonical_prompt_artifact_filesystem(
     assert isinstance(measured, dict)
     assert probed == [canonical_runtime.resolve()]
     assert measured["storagePressure"]["status"] == "healthy"
+    database_volume = tmp_path / "database-volume"
+    database_volume.mkdir()
+    (canonical_runtime / "runtime.env").write_text(
+        "WPR_DB_PATH=" + str(database_volume / "runtime.sqlite") + "\n", encoding="utf-8")
+    facts = _healthy_readiness_facts()
+    facts.update(executionMode="host", nativeStorage={"version": 1, "healthy": True,
+        "availableBytes": 8 * 1024**3, "requiredBytes": 4 * 1024**3})
+    probed.clear()
+    measured = gate._remeasure_storage_pressure(facts, alias_runtime / "prompt-bundle.json")
+    assert probed == [canonical_runtime.resolve(), database_volume]
+    assert measured["nativeStorage"] == {"version": 1, "healthy": False,
+        "availableBytes": 60_000, "requiredBytes": 4 * 1024**3}
+    (canonical_runtime / "runtime.env").unlink()
+    unknown = gate._remeasure_storage_pressure(facts, canonical_prompt)
+    assert unknown["nativeStorage"]["healthy"] is False
+    assert unknown["nativeStorage"]["errorCode"] == "storage_probe_unavailable"
 
 
 def test_release_gate_fails_closed_when_live_storage_probe_is_unavailable(

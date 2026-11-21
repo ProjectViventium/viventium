@@ -5004,6 +5004,29 @@ def test_failed_main_stream_without_output_shows_only_failure_and_acks_failed(mo
     assert robot.acks == [("turn-1", 1, "failed", "telegram:111")]
 
 
+def test_accepted_work_partial_reply_never_requests_repeating_the_work(monkeypatch, tmp_path):
+    monkeypatch.setenv(
+        "VIVENTIUM_TELEGRAM_RETRACTION_STORE_PATH", str(tmp_path / "retractions.sqlite3")
+    )
+    class AcceptedWorkRobot(_FailingMainStreamRobot):
+        async def ask_stream_async(self, *args, **kwargs):
+            yield {"type": "logical_turn", "logical_turn_id": "turn-1", "revision": 1}
+            yield {"type": "durable_effect", "effect_ref": "accepted-work"}
+            yield {"type": "assistant_preview", "text": "I have asked for the work."}
+            await asyncio.sleep(0.05)
+            yield {
+                "type": "bridge_error", "speak": False,
+                "error_class": "work_accepted_reply_interrupted",
+                "text": "Your work was accepted, but the reply was interrupted.",
+            }
+    robot = AcceptedWorkRobot()
+    context = _run_failing_main_stream(monkeypatch, robot)
+    assert [message["text"] for message in context.bot.current_messages.values()] == [
+        "Your work was accepted, but the reply was interrupted."
+    ]
+    assert robot.acks == [("turn-1", 1, "failed", "telegram:111")]
+
+
 @pytest.mark.parametrize(
     ("has_preview", "delete_fails"),
     [(False, False), (True, False), (True, True)],
@@ -6963,13 +6986,14 @@ def test_authored_preview_is_early_replaced_and_never_part_of_final(monkeypatch)
     assert all("Timezone: UTC.Final" not in row["text"] for row in context.bot.messages + context.bot.edits)
 
 
-# === VIVENTIUM START === Legacy presentation obeys the same Telegram album cardinality.
-@pytest.mark.parametrize(("reply", "expected_photo", "album_size"), [
-    ("![image](data:image/png;base64,c3ludGhldGljLWltYWdl)", b"synthetic-image", 0),
-    ("Image: https://example.invalid/result.png", "https://example.invalid/result.png", 0),
-    ("Images: https://example.invalid/one.png https://example.invalid/two.png", None, 2),
+# === VIVENTIUM START === Legacy presentation sends one photo message per image, never an album.
+@pytest.mark.parametrize(("reply", "expected_photos"), [
+    ("![image](data:image/png;base64,c3ludGhldGljLWltYWdl)", [b"synthetic-image"]),
+    ("Image: https://example.invalid/result.png", ["https://example.invalid/result.png"]),
+    ("Images: https://example.invalid/one.png https://example.invalid/two.png",
+     ["https://example.invalid/one.png", "https://example.invalid/two.png"]),
 ])
-def test_existing_image_presentations_use_photo_or_valid_album(monkeypatch, reply, expected_photo, album_size):
+def test_existing_image_presentations_send_one_photo_per_image(monkeypatch, reply, expected_photos):
     class Robot(_FakeRobot):
         async def ask_stream_async(self, *_args, **_kwargs):
             yield reply
@@ -6988,17 +7012,10 @@ def test_existing_image_presentations_use_photo_or_valid_album(monkeypatch, repl
         telegram_message_id=222, telegram_update_id=333,
     ))
 
-    if album_size:
-        assert not context.bot.photos
-        assert len(context.bot.media_groups) == 1
-        assert len(context.bot.media_groups[0]["media"]) == album_size
-        sent = context.bot.media_groups[0]
-    else:
-        assert not context.bot.media_groups
-        assert [item["photo"] for item in context.bot.photos] == [expected_photo]
-        sent = context.bot.photos[0]
-    assert sent["message_thread_id"] == 7
-    assert sent["reply_to_message_id"] == 222
+    assert not context.bot.media_groups
+    assert [item["photo"] for item in context.bot.photos] == expected_photos
+    assert all(item["message_thread_id"] == 7 and item["reply_to_message_id"] == 222
+               for item in context.bot.photos)
 # === VIVENTIUM END ===
 
 

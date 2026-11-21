@@ -1,5 +1,6 @@
 import asyncio
 import hashlib
+from contextlib import asynccontextmanager
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
@@ -15,8 +16,26 @@ def event(text="Use the existing draft.", participant="owner", stream_id="stream
                            info=SimpleNamespace(stream_id=stream_id))
 
 
+def with_user_turn_claim(session):
+    """Give a fake session LiveKit 1.8.11's ``AgentSession._claim_user_turn`` and record the order."""
+    session.order = []
+
+    @asynccontextmanager
+    async def claim():
+        session.order.append("claimed")
+        try:
+            yield
+        finally:
+            session.order.append("released")
+
+    session._claim_user_turn = claim
+    session.interrupt.side_effect = lambda *args, **kwargs: session.order.append("interrupt")
+    session.generate_reply.side_effect = lambda *args, **kwargs: session.order.append("reply")
+    return session
+
+
 def dispatch(ev):
-    session = SimpleNamespace(interrupt=AsyncMock(), generate_reply=MagicMock())
+    session = with_user_turn_claim(SimpleNamespace(interrupt=AsyncMock(), generate_reply=MagicMock()))
     asyncio.run(_handle_owner_text_input(session, ev, call_session_id="call-one",
                                         owner_participant_identity="owner"))
     return session
@@ -25,6 +44,8 @@ def dispatch(ev):
 def test_typed_owner_message_preserves_real_stream_identity_and_no_speaker_segments():
     session = dispatch(event())
     session.interrupt.assert_awaited_once()
+    # The SDK's typed-input contract: one user-turn claim around interrupt + reply.
+    assert session.order == ["claimed", "interrupt", "reply", "released"]
     message = session.generate_reply.call_args.kwargs["user_input"]
     context = ChatContext(items=[message])
     envelope = message.extra[TYPED_INPUT_EXTRA_KEY]
@@ -43,6 +64,34 @@ def test_unbound_input_never_interrupts_or_dispatches(ev):
     session = dispatch(ev)
     session.interrupt.assert_not_awaited()
     session.generate_reply.assert_not_called()
+    assert session.order == []
+
+
+def test_typed_input_holds_the_real_sdk_user_turn_across_interrupt_and_reply():
+    from livekit.agents import AgentSession
+
+    async def run():
+        session = AgentSession(vad=None, stt=None, tts=None)
+        seen, states = [], []
+        session.on("user_state_changed", lambda ev: states.append(ev.new_state))
+
+        async def interrupt():
+            seen.append(("interrupt", session.user_state, session._user_turn_claims))
+
+        def generate_reply(**kwargs):
+            seen.append(("reply", session.user_state, session._user_turn_claims, kwargs["input_modality"]))
+
+        session.interrupt, session.generate_reply = interrupt, generate_reply
+        before = session.user_state
+        await _handle_owner_text_input(session, event(), call_session_id="call-one",
+                                       owner_participant_identity="owner")
+        return before, seen, states, session.user_state, session._user_turn_claims
+
+    before, seen, states, after, claims = asyncio.run(run())
+    assert before == "listening"
+    assert seen == [("interrupt", "speaking", 1), ("reply", "speaking", 1, "text")]
+    assert states == ["speaking", "listening"]
+    assert (after, claims) == ("listening", 0)
 
 
 def test_later_audio_does_not_inherit_typed_input_authority():
@@ -94,6 +143,7 @@ class TextSession(rtc.EventEmitter):
         super().__init__()
         self.interrupt = AsyncMock()
         self.generate_reply = MagicMock()
+        with_user_turn_claim(self)
 
 
 class OwnerTextFixture:

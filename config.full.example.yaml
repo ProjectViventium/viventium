@@ -245,22 +245,16 @@ voice:
   # stt_provider: assemblyai
   # stt:
   #   secret_ref: keychain://viventium/assemblyai_api_key
-  #   # The shipped AssemblyAI `stt` path keeps local endpointing delay near zero and
-  #   # lets provider endpointing own turn timing. When these are left unset, the
-  #   # compiler emits the current documented Universal Streaming defaults so runtime
-  #   # behavior is explicit and reproducible. The existing config key below is kept
-  #   # for backward compatibility and maps to AssemblyAI's current `min_turn_silence`
-  #   # provider knob.
+  #   # Telegram transcription still consumes these shared endpointing values. The Agents 1.8
+  #   # call gateway uses its documented fixed recipe instead. These keys remain supported
+  #   # for Telegram and older configurations; they do not tune the new gateway.
   #   end_of_turn_confidence_threshold: 0.01
   #   min_end_of_turn_silence_when_confident_ms: 100
   #   max_turn_silence_ms: 1000
-  # Turn-taking / end-of-utterance tuning (all optional; sensible defaults apply when omitted).
-  # Balances two failure modes: do not cut the user off on a short reflective pause, but do not
-  # feel sluggish after a real stop. See docs/requirements_and_learnings/06_Voice_Calls.md.
-  turn_handling:
-    min_endpointing_delay_s: 0.35   # floor before the turn can end (keep short for snappiness)
-    max_endpointing_delay_s: 0.8    # ceiling the semantic detector may wait for more speech
-                                    # (lower = faster end-of-turn; default 1.8 felt slow at ~1.4s p50)
+  # Legacy gateway turn_handling values are accepted for compatibility but do not tune the
+  # pinned LiveKit Agents 1.8 recipe. See docs/requirements_and_learnings/06_Voice_Calls.md.
+  # Shared STT settings above still apply to Telegram transcription; the call gateway uses its
+  # documented provider-owned AssemblyAI endpointing and local audio turn detector.
   # Local mode is an all-local egress boundary. Apple Silicon resolves this explicit automatic
   # choice to the shipped local Chatterbox route; unsupported hosts fail closed during compile.
   tts_provider: browser

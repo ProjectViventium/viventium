@@ -247,13 +247,23 @@ class TestAudibleProvisionalDeliveryLifecycle(unittest.IsolatedAsyncioTestCase):
             nonlocal stream
             self.assertEqual(input_modality, "text")
             stream = llm.chat(chat_ctx=ChatContext(items=[user_input]))
+        from contextlib import asynccontextmanager
+        claims = []
+        @asynccontextmanager
+        async def claim_user_turn():  # LiveKit 1.8.11 AgentSession._claim_user_turn
+            claims.append("claimed")
+            try:
+                yield
+            finally:
+                claims.append("released" if stream is not None else "released-before-reply")
         session = SimpleNamespace(llm=llm, current_speech=handle,
-            interrupt=interrupt, generate_reply=generate_reply)
+            interrupt=interrupt, generate_reply=generate_reply, _claim_user_turn=claim_user_turn)
         event = SimpleNamespace(participant=SimpleNamespace(identity="owner"),
             info=SimpleNamespace(stream_id="typed-source"), text="Ordinary typed continuation.")
         await _handle_owner_text_input(session, event, call_session_id="call_1",
             owner_participant_identity="owner")
         self.assertIsNotNone(stream)
+        self.assertEqual(claims, ["claimed", "released"])
         self.assertNotEqual(stream._presentation.source_event_id, old.source_event_id)
         await asyncio.wait_for(old.delivery_ack_task, 0.25)
         self.assertEqual(llm.ack_delivery.await_args.kwargs["state"], "partial_removed")

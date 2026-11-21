@@ -3010,8 +3010,20 @@ def _public_readiness_facts(value: object) -> dict[str, object]:
             )
         return public_number(item)
 
+    native = value.get("nativeStorage")
     return {
         "contractVersion": public_number(value.get("contractVersion")),
+        **({"executionMode": value["executionMode"] if isinstance(value["executionMode"], str)
+            and value["executionMode"] in {"host", "docker"} else "unknown"} if "executionMode" in value else {}),
+        **({"nativeStorage": {
+            "version": public_number(native.get("version")),
+            "healthy": native.get("healthy") if isinstance(native.get("healthy"), bool) else None,
+            "availableBytes": native.get("availableBytes") if isinstance(native.get("availableBytes"), int)
+                and not isinstance(native.get("availableBytes"), bool) else None,
+            "requiredBytes": native.get("requiredBytes") if isinstance(native.get("requiredBytes"), int)
+                and not isinstance(native.get("requiredBytes"), bool) else None,
+            **({"errorCode": "storage_probe_unavailable"} if native.get("errorCode") else {}),
+        }} if isinstance(native, dict) else {}),
         "promptLayers": {
             key: public_prompt_value(key)
             for key in (
@@ -3070,6 +3082,49 @@ def _storage_pressure_shape_valid(storage: object) -> bool:
     )
 
 
+
+def _native_storage_shape_valid(value: object) -> bool:
+    if not isinstance(value, dict) or type(value.get("version")) is not int or value["version"] != 1 \
+            or not isinstance(value.get("healthy"), bool):
+        return False
+    required, available = value.get("requiredBytes"), value.get("availableBytes")
+    if not isinstance(required, int) or isinstance(required, bool) or not 0 <= required <= 2**53 - 1:
+        return False
+    if value.get("errorCode"):
+        return (value["errorCode"] == "storage_probe_unavailable" and available is None
+            and value["healthy"] is False)
+    return (isinstance(available, int) and not isinstance(available, bool)
+        and 0 <= available <= 2**53 - 1 and value["healthy"] == (available >= required))
+
+
+def _remeasure_native_storage(value: dict, runtime_dir: Path) -> dict:
+    """Read the DB filesystem from the same private, compiler-owned runtime contract."""
+    try:
+        env_path = runtime_dir / "runtime.env"
+        if env_path.is_symlink() or not env_path.is_file():
+            raise ValueError("runtime storage contract unavailable")
+        values = []
+        for line in env_path.read_text(encoding="utf-8").splitlines():
+            if not line.strip().startswith("WPR_DB_PATH="):
+                continue
+            words = shlex.split(line, comments=False, posix=True)
+            if len(words) != 1:
+                raise ValueError("runtime storage contract invalid")
+            values.append(words[0].split("=", 1)[1])
+        if len(values) != 1 or not values[0] or not Path(values[0]).is_absolute():
+            raise ValueError("runtime storage contract invalid")
+        probe = Path(values[0]).parent
+        usage = shutil.disk_usage(probe)
+        available = int(usage.free)
+        if int(usage.total) <= 0 or available < 0:
+            raise ValueError("invalid storage probe")
+        return {"version": 1, "healthy": available >= value["requiredBytes"],
+            "availableBytes": available, "requiredBytes": value["requiredBytes"]}
+    except (OSError, TypeError, ValueError):
+        return {"version": 1, "healthy": False, "availableBytes": None,
+            "requiredBytes": value["requiredBytes"], "errorCode": "storage_probe_unavailable"}
+
+
 def _remeasure_storage_pressure(
     readiness_facts: object,
     installed_prompt_bundle_path: Path | None,
@@ -3082,10 +3137,9 @@ def _remeasure_storage_pressure(
     assert isinstance(storage, dict)
     threshold_percent = float(storage["thresholdPercent"])
     warning_margin_percent = float(storage["warningMarginPercent"])
+    canonical_artifact = Path(installed_prompt_bundle_path).expanduser()
     try:
-        canonical_artifact = Path(installed_prompt_bundle_path).expanduser().resolve(
-            strict=True
-        )
+        canonical_artifact = canonical_artifact.resolve(strict=True)
         if not canonical_artifact.is_file():
             raise ValueError("prompt artifact is not a regular file")
         probe_path = canonical_artifact.parent
@@ -3121,9 +3175,14 @@ def _remeasure_storage_pressure(
     }
     effective_storage.pop("reason", None)
     effective_storage.update(reason)
+    native = readiness_facts.get("nativeStorage")
+    native_update = {}
+    if readiness_facts.get("executionMode") == "host" and _native_storage_shape_valid(native):
+        native_update = {"nativeStorage": _remeasure_native_storage(native, canonical_artifact.parent)}
     return {
         **readiness_facts,
         "storagePressure": effective_storage,
+        **native_update,
     }
 
 
@@ -3219,6 +3278,8 @@ def _typed_readiness_checks(
         "UNKNOWN",
         "storage_capability_invalid",
     )
+    storage_shape_valid = False
+    measured_status = storage_status = ""
     if isinstance(storage, dict):
         storage_status = str(storage.get("status") or "").strip().lower()
         used_percent = storage.get("usedPercent")
@@ -3246,6 +3307,18 @@ def _typed_readiness_checks(
                     "FAIL",
                     "storage_pressure",
                 )
+    if readiness_facts.get("executionMode") == "host":
+        native = readiness_facts.get("nativeStorage")
+        if not _native_storage_shape_valid(native):
+            storage_check = ReadinessCheck("STORAGE-PRESSURE", "UNKNOWN", "storage_capability_invalid")
+        elif native.get("errorCode") or (isinstance(storage, dict)
+            and storage.get("reason") == "storage_probe_unavailable"):
+            storage_check = ReadinessCheck("STORAGE-PRESSURE", "UNKNOWN", "storage_probe_unavailable")
+        elif storage_shape_valid and measured_status == storage_status:
+            storage_check = ReadinessCheck("STORAGE-PRESSURE", PASS if native["healthy"] else "FAIL",
+                "" if native["healthy"] else "storage_pressure")
+    elif "executionMode" in readiness_facts and readiness_facts["executionMode"] != "docker":
+        storage_check = ReadinessCheck("STORAGE-PRESSURE", "UNKNOWN", "storage_capability_invalid")
     return (prompt_check, storage_check)
 
 
@@ -3286,6 +3359,9 @@ def _readiness_identity(value: object) -> dict[str, str]:
         for key in ("version", "status", "usedPercent", "availableBytes", "reason")
         if key in storage
     }
+    if canonical.get("executionMode") == "host":
+        policy.update(executionMode="host", nativeRequiredBytes=canonical["nativeStorage"]["requiredBytes"])
+        measurement["nativeStorage"] = canonical["nativeStorage"]
     return {
         "factsSha256": _canonical_hash(canonical),
         "storagePolicySha256": _canonical_hash(policy),
@@ -5029,6 +5105,10 @@ def _stable_readiness_claim_inputs(value: object) -> dict[str, object]:
         for key, item in storage.items()
         if key not in {"status", "usedPercent", "availableBytes"}
     }
+    if public.get("executionMode") == "host":
+        if not _native_storage_shape_valid(public.get("nativeStorage")):
+            return {}
+        stable_storage.update(executionMode="host", nativeRequiredBytes=public["nativeStorage"]["requiredBytes"])
     return {
         "contractVersion": CONTRACT_VERSION,
         "promptLayers": prompt,
@@ -5085,6 +5165,14 @@ def _storage_pressure_did_not_worsen(
     assert isinstance(serialized_storage, dict)
     if current_storage.get("reason") == "storage_probe_unavailable":
         return False
+    current_public = _public_readiness_facts(current_readiness_facts)
+    previous_public = _public_readiness_facts(serialized_readiness_facts)
+    if current_public.get("executionMode") == "host" or previous_public.get("executionMode") == "host":
+        current_native, previous_native = current_public.get("nativeStorage"), previous_public.get("nativeStorage")
+        return bool(current_public.get("executionMode") == previous_public.get("executionMode") == "host"
+            and _native_storage_shape_valid(current_native) and _native_storage_shape_valid(previous_native)
+            and not current_native.get("errorCode")
+            and (current_native["healthy"] or not previous_native["healthy"]))
     pressure_rank = {"healthy": 0, "warning": 1, "critical": 2}
     return pressure_rank[str(current_storage["status"])] <= pressure_rank[
         str(serialized_storage["status"])
